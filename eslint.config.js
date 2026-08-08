@@ -16,6 +16,6 @@ export default [
     },
   },
   {
-    ignores: ['node_modules/', 'data/'],
+    ignores: ['node_modules/', 'data/', '.claude/', '.cursor/'],
   },
 ];
