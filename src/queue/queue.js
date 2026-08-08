@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-const VALID_STATUSES = ['queued', 'pricing', 'needs_review', 'drafting', 'drafted', 'error'];
+export const VALID_STATUSES = ['queued', 'pricing', 'needs_review', 'drafting', 'drafted', 'error'];
 
 function atomicWriteJson(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
