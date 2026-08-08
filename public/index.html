@@ -4,9 +4,52 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pokemon Auto-Lister</title>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <h1>Pokemon Auto-Lister</h1>
-    <p>Dashboard UI not yet implemented (see docs/autopilot/pokemon-auto-lister).</p>
+    <main class="page">
+      <section class="card add-panel">
+        <h2>Add a card</h2>
+        <label class="file-label" for="photo-input">Choose photos</label>
+        <input id="photo-input" type="file" accept="image/*" multiple capture="environment" />
+        <div id="photo-thumbnails" class="photo-thumbnails"></div>
+        <div class="marketplace-choices">
+          <label><input id="marketplace-mercari" type="checkbox" checked /> Mercari</label>
+          <label><input id="marketplace-ebay" type="checkbox" checked /> eBay</label>
+        </div>
+        <button id="add-card-btn" type="button" class="add-btn">Add</button>
+        <p id="add-card-status" class="add-card-status" role="status"></p>
+      </section>
+
+      <section class="card draft-activity">
+        <h1 class="header-title">// AUTO-LISTER — DRAFT ACTIVITY</h1>
+        <p class="header-status">
+          watches <strong>autolist-intake/</strong> · values the front photo · drafts at 0% over market for review
+          (never publishes) · <span class="draft-mode">DRAFT MODE</span> · service running
+        </p>
+
+        <div class="stats-strip">
+          <div class="stat"><span id="stat-drafts" class="stat-value">0</span><span class="stat-label">drafts</span></div>
+          <div class="stat"><span id="stat-total-value" class="stat-value">$0</span><span class="stat-label">total list value</span></div>
+          <div class="stat"><span id="stat-queue" class="stat-value">0</span><span class="stat-label">in queue</span></div>
+          <div class="stat"><span id="stat-needs-review" class="stat-value">0</span><span class="stat-label">needs review</span></div>
+          <div class="stat"><span id="stat-errors" class="stat-value">0</span><span class="stat-label">errors</span></div>
+          <div class="stat"><span id="stat-all-time" class="stat-value">0</span><span class="stat-label">all-time</span></div>
+        </div>
+
+        <table class="draft-activity-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>VALUE</th>
+              <th>LIST</th>
+              <th>PHOTOS</th>
+            </tr>
+          </thead>
+          <tbody id="draft-activity-body"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/app.js"></script>
   </body>
 </html>
