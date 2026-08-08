@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Gens-ai/autopilot/main/queue.schema.json",
+  "version": "1.0.0",
+  "queue": [
+    {
+      "taskFile": "docs/autopilot/pokemon-auto-lister/pokemon-auto-lister.json",
+      "addedAt": "2026-08-08T01:59:43Z",
+      "hold": false,
+      "notes": "",
+      "startedAt": null,
+      "completedAt": null
+    }
+  ]
+}

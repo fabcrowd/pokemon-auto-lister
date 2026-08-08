@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Gens-ai/autopilot/main/autopilot.schema.json",
+  "version": "1.0.0",
+  "model": null,
+  "project": {
+    "type": "node",
+    "conventions": {
+      "testFilePattern": "tests/**/*.test.js",
+      "testDirectory": "tests",
+      "sourceDirectory": "src"
+    }
+  },
+  "feedbackLoops": {
+    "typecheck": {
+      "command": "node --check src/index.js",
+      "enabled": false
+    },
+    "tests": {
+      "command": "npm test",
+      "enabled": true
+    },
+    "lint": {
+      "command": "npm run lint",
+      "enabled": true
+    }
+  },
+  "iterations": {
+    "tasks": 15,
+    "tests": 10,
+    "lint": 15,
+    "entropy": 10,
+    "command": 10
+  },
+  "server": {
+    "type": null,
+    "owner": null,
+    "repo": null,
+    "mcp": null
+  },
+  "codebase": {
+    "patterns": [
+      "ESM Node.js",
+      "JSON/CSV state under data/",
+      "Playwright real Chrome for Mercari only",
+      "Official APIs for eBay and TCGPlayer"
+    ],
+    "architecture": "queue + pricing pipeline + marketplace adapters + static LAN dashboard",
+    "dependencies": [
+      "playwright",
+      "pokegrade /value",
+      "ebay sell api",
+      "tcgplayer api"
+    ]
+  }
+}
