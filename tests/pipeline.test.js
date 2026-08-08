@@ -8,10 +8,10 @@ import { createQueue } from '../src/queue/queue.js';
 import { RetryablePokegradeError } from '../src/pokegrade/client.js';
 import { processCard } from '../src/pipeline/processCard.js';
 
-function withTempQueue(fn) {
+async function withTempQueue(fn) {
   const dir = mkdtempSync(path.join(tmpdir(), 'pipeline-test-'));
   try {
-    return fn(createQueue(dir));
+    return await fn(createQueue(dir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
