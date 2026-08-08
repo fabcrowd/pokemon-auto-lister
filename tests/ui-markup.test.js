@@ -65,3 +65,19 @@ test('styles.css defines the light card look and phone-friendly layout', () => {
   assert.match(css, /max-width/);
   assert.match(css, /\.draft-activity-table/);
 });
+
+test('needs review table has title, PG, TCG, EBAY, PRICE columns and an actions column', () => {
+  assert.match(html, /class="draft-activity-table needs-review-table"/);
+  assert.match(html, />PG</);
+  assert.match(html, />TCG</);
+  assert.match(html, />EBAY</);
+  assert.match(html, />PRICE</);
+  assert.match(html, />ACTIONS</);
+  assert.match(html, /id="needs-review-body"/);
+});
+
+test('app.js confirms and skips needs-review cards via fetch POST', () => {
+  assert.match(js, /\/api\/cards\/\$\{[^}]+\}\/confirm/);
+  assert.match(js, /\/api\/cards\/\$\{[^}]+\}\/skip/);
+  assert.match(js, /method:\s*['"]POST['"]/g);
+});
