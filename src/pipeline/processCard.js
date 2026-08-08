@@ -1,7 +1,7 @@
 import { RetryablePokegradeError } from '../pokegrade/client.js';
 import { decidePrice } from '../pricing/pricing.js';
 
-const MARKETPLACES = ['mercari', 'ebay'];
+export const MARKETPLACES = ['mercari', 'ebay'];
 
 export async function processCard(
   cardId,

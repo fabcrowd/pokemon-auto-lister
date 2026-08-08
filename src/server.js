@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 
 import { VALID_STATUSES } from './queue/queue.js';
 import { parseBoundary, parseMultipart } from './server/multipart.js';
+import { MARKETPLACES } from './pipeline/processCard.js';
 
 const CONTENT_TYPES = {
   '.html': 'text/html',
@@ -72,18 +73,27 @@ function readJsonBody(req) {
   });
 }
 
-const MARKETPLACES = ['mercari', 'ebay'];
-
-async function handleConfirmCard(id, req, res, { queue, createDraft }) {
+function loadNeedsReviewCard(id, queue, res) {
   let record;
   try {
     record = queue.get(id);
   } catch {
-    return sendJson(res, 404, { error: 'Card not found' });
+    sendJson(res, 404, { error: 'Card not found' });
+    return null;
   }
 
   if (record.status !== 'needs_review') {
-    return sendJson(res, 400, { error: 'Card is not awaiting review' });
+    sendJson(res, 400, { error: 'Card is not awaiting review' });
+    return null;
+  }
+
+  return record;
+}
+
+async function handleConfirmCard(id, req, res, { queue, createDraft }) {
+  const record = loadNeedsReviewCard(id, queue, res);
+  if (!record) {
+    return undefined;
   }
 
   const { price } = await readJsonBody(req);
@@ -108,15 +118,8 @@ async function handleConfirmCard(id, req, res, { queue, createDraft }) {
 }
 
 function handleSkipCard(id, res, { queue }) {
-  let record;
-  try {
-    record = queue.get(id);
-  } catch {
-    return sendJson(res, 404, { error: 'Card not found' });
-  }
-
-  if (record.status !== 'needs_review') {
-    return sendJson(res, 400, { error: 'Card is not awaiting review' });
+  if (!loadNeedsReviewCard(id, queue, res)) {
+    return undefined;
   }
 
   const updated = queue.setStatus(id, 'error');

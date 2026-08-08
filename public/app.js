@@ -159,6 +159,22 @@ function skipCard(id) {
   return postJson(`/api/cards/${id}/skip`);
 }
 
+function createActionButton(className, label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener('click', async () => {
+    try {
+      await onClick();
+      poll();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  });
+  return button;
+}
+
 async function refreshNeedsReview() {
   const res = await fetch('/api/cards?status=needs_review');
   if (!res.ok) {
@@ -193,34 +209,10 @@ async function refreshNeedsReview() {
     row.appendChild(priceCell);
 
     const actionsCell = document.createElement('td');
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.type = 'button';
-    confirmBtn.className = 'nr-confirm-btn';
-    confirmBtn.textContent = 'Confirm';
-    confirmBtn.addEventListener('click', async () => {
-      try {
-        await confirmCard(card.id, Number(priceInput.value));
-        poll();
-      } catch (err) {
-        window.alert(err.message);
-      }
-    });
-    actionsCell.appendChild(confirmBtn);
-
-    const skipBtn = document.createElement('button');
-    skipBtn.type = 'button';
-    skipBtn.className = 'nr-skip-btn';
-    skipBtn.textContent = 'Skip';
-    skipBtn.addEventListener('click', async () => {
-      try {
-        await skipCard(card.id);
-        poll();
-      } catch (err) {
-        window.alert(err.message);
-      }
-    });
-    actionsCell.appendChild(skipBtn);
+    actionsCell.appendChild(
+      createActionButton('nr-confirm-btn', 'Confirm', () => confirmCard(card.id, Number(priceInput.value))),
+    );
+    actionsCell.appendChild(createActionButton('nr-skip-btn', 'Skip', () => skipCard(card.id)));
 
     row.appendChild(actionsCell);
     tbody.appendChild(row);
