@@ -139,9 +139,98 @@ async function refreshDraftActivity() {
   });
 }
 
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const responseBody = await res.json().catch(() => ({}));
+    throw new Error(responseBody.error || `Request failed with ${res.status}`);
+  }
+}
+
+function confirmCard(id, price) {
+  return postJson(`/api/cards/${id}/confirm`, { price });
+}
+
+function skipCard(id) {
+  return postJson(`/api/cards/${id}/skip`);
+}
+
+async function refreshNeedsReview() {
+  const res = await fetch('/api/cards?status=needs_review');
+  if (!res.ok) {
+    return;
+  }
+  const cards = await res.json();
+
+  const tbody = document.getElementById('needs-review-body');
+  tbody.innerHTML = '';
+  cards.forEach((card) => {
+    const comps = card.pricedCache?.comps || {};
+    const list = suggestedListPrice(card.pricedCache?.suggested);
+
+    const row = document.createElement('tr');
+
+    const titleCell = document.createElement('td');
+    titleCell.textContent = card.title || 'Pokemon Card';
+    row.appendChild(titleCell);
+
+    [comps.pokegrade, comps.tcgplayer, comps.ebay].forEach((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = typeof value === 'number' ? money(value) : '—';
+      row.appendChild(cell);
+    });
+
+    const priceCell = document.createElement('td');
+    const priceInput = document.createElement('input');
+    priceInput.type = 'number';
+    priceInput.className = 'nr-price-input';
+    priceInput.value = list === null ? '' : list;
+    priceCell.appendChild(priceInput);
+    row.appendChild(priceCell);
+
+    const actionsCell = document.createElement('td');
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'nr-confirm-btn';
+    confirmBtn.textContent = 'Confirm';
+    confirmBtn.addEventListener('click', async () => {
+      try {
+        await confirmCard(card.id, Number(priceInput.value));
+        poll();
+      } catch (err) {
+        window.alert(err.message);
+      }
+    });
+    actionsCell.appendChild(confirmBtn);
+
+    const skipBtn = document.createElement('button');
+    skipBtn.type = 'button';
+    skipBtn.className = 'nr-skip-btn';
+    skipBtn.textContent = 'Skip';
+    skipBtn.addEventListener('click', async () => {
+      try {
+        await skipCard(card.id);
+        poll();
+      } catch (err) {
+        window.alert(err.message);
+      }
+    });
+    actionsCell.appendChild(skipBtn);
+
+    row.appendChild(actionsCell);
+    tbody.appendChild(row);
+  });
+}
+
 function poll() {
   refreshStats();
   refreshDraftActivity();
+  refreshNeedsReview();
 }
 
 poll();
