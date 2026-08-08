@@ -74,23 +74,18 @@ function money(value) {
   return `$${Number(value).toFixed(2)}`;
 }
 
+function numericValues(obj) {
+  return obj ? Object.values(obj).filter((value) => typeof value === 'number') : [];
+}
+
 function suggestedListPrice(suggested) {
-  if (!suggested) {
-    return null;
-  }
-  const values = Object.values(suggested).filter((value) => typeof value === 'number');
+  const values = numericValues(suggested);
   return values.length > 0 ? Math.max(...values) : null;
 }
 
 function baseValue(comps) {
-  if (!comps) {
-    return null;
-  }
-  const values = Object.values(comps).filter((value) => typeof value === 'number');
-  if (values.length === 0) {
-    return null;
-  }
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  const values = numericValues(comps);
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
 async function refreshStats() {

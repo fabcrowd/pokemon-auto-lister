@@ -19,6 +19,17 @@ export default [
     },
   },
   {
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: {
+        document: 'readonly',
+        window: 'readonly',
+        FormData: 'readonly',
+        setInterval: 'readonly',
+      },
+    },
+  },
+  {
     ignores: ['node_modules/', 'data/', '.claude/', '.cursor/'],
   },
 ];
