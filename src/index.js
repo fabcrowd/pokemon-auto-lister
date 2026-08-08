@@ -32,7 +32,7 @@ async function onEnqueue(cardId) {
 }
 
 const { host, port } = resolveListenOptions(process.env);
-const server = createServer({ queue, dataDir: DATA_DIR, onEnqueue });
+const server = createServer({ queue, dataDir: DATA_DIR, onEnqueue, createDraft });
 server.listen(port, host, () => {
   console.log(`Pokemon Auto-Lister dashboard listening on http://${host}:${port}`);
 });

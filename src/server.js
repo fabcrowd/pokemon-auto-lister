@@ -63,6 +63,66 @@ function listCards(queue, status) {
   return VALID_STATUSES.flatMap((s) => queue.listByStatus(s));
 }
 
+function readJsonBody(req) {
+  return readBody(req).then((buffer) => {
+    if (buffer.length === 0) {
+      return {};
+    }
+    return JSON.parse(buffer.toString('utf8'));
+  });
+}
+
+const MARKETPLACES = ['mercari', 'ebay'];
+
+async function handleConfirmCard(id, req, res, { queue, createDraft }) {
+  let record;
+  try {
+    record = queue.get(id);
+  } catch {
+    return sendJson(res, 404, { error: 'Card not found' });
+  }
+
+  if (record.status !== 'needs_review') {
+    return sendJson(res, 400, { error: 'Card is not awaiting review' });
+  }
+
+  const { price } = await readJsonBody(req);
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+    return sendJson(res, 400, { error: 'price must be a positive number' });
+  }
+
+  queue.setPriced(id, {
+    ...record.pricedCache,
+    suggested: { mercari: price, ebay: price },
+  });
+  const updated = queue.setStatus(id, 'drafting');
+
+  if (createDraft) {
+    const selected = MARKETPLACES.filter((marketplace) => updated[marketplace]);
+    for (const marketplace of selected) {
+      await createDraft(marketplace, updated);
+    }
+  }
+
+  return sendJson(res, 200, { id, status: updated.status });
+}
+
+function handleSkipCard(id, res, { queue }) {
+  let record;
+  try {
+    record = queue.get(id);
+  } catch {
+    return sendJson(res, 404, { error: 'Card not found' });
+  }
+
+  if (record.status !== 'needs_review') {
+    return sendJson(res, 400, { error: 'Card is not awaiting review' });
+  }
+
+  const updated = queue.setStatus(id, 'error');
+  return sendJson(res, 200, { id, status: updated.status });
+}
+
 function serveStatic(pathname, res, publicDir) {
   const relativePath = pathname === '/' ? '/index.html' : pathname;
   const resolved = path.resolve(path.join(publicDir, relativePath));
@@ -129,18 +189,31 @@ async function handleCreateCard(req, res, { queue, dataDir, onEnqueue }) {
   return sendJson(res, 201, { id });
 }
 
-export function createServer({ queue, dataDir = 'data', publicDir = path.join(process.cwd(), 'public'), onEnqueue } = {}) {
+export function createServer({
+  queue,
+  dataDir = 'data',
+  publicDir = path.join(process.cwd(), 'public'),
+  onEnqueue,
+  createDraft,
+} = {}) {
   if (!queue) {
     throw new Error('createServer requires a queue');
   }
 
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    const cardActionMatch = url.pathname.match(/^\/api\/cards\/([^/]+)\/(confirm|skip)$/);
 
     Promise.resolve()
       .then(() => {
         if (req.method === 'POST' && url.pathname === '/api/cards') {
           return handleCreateCard(req, res, { queue, dataDir, onEnqueue });
+        }
+        if (req.method === 'POST' && cardActionMatch && cardActionMatch[2] === 'confirm') {
+          return handleConfirmCard(cardActionMatch[1], req, res, { queue, createDraft });
+        }
+        if (req.method === 'POST' && cardActionMatch && cardActionMatch[2] === 'skip') {
+          return handleSkipCard(cardActionMatch[1], res, { queue });
         }
         if (req.method === 'GET' && url.pathname === '/api/stats') {
           return sendJson(res, 200, computeStats(queue));
