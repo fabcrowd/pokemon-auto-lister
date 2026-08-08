@@ -59,7 +59,8 @@ test('query is built from card name, set, and number when present', async () => 
   });
   const client = createEbaySoldsClient({ clientId: 'id', clientSecret: 'secret', fetchImpl });
   await client.getRecentSolds({ name: 'Pikachu', set: 'Base Set', number: '58/102' });
-  assert.ok(capturedUrl.includes(encodeURIComponent('Pikachu Base Set 58/102')));
+  const requestedQuery = new URL(capturedUrl).searchParams.get('q');
+  assert.equal(requestedQuery, 'Pikachu Base Set 58/102');
 });
 
 test('missing keys throws explicit configuration error', async () => {

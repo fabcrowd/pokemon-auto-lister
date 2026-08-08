@@ -14,6 +14,7 @@ export default [
         __filename: 'readonly',
         fetch: 'readonly',
         URLSearchParams: 'readonly',
+        URL: 'readonly',
       },
     },
   },
