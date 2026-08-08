@@ -19,7 +19,7 @@ export async function processCard(
     throw err;
   }
 
-  const identity = pokegradeResult.identity;
+  const { identity } = pokegradeResult;
   const [tcgplayerResult, ebayResult] = await Promise.all([
     tcgplayerClient.getMarketPrice(identity),
     ebaySoldsClient.getRecentSolds(identity),
