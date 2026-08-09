@@ -59,6 +59,34 @@ autolist-inbox/
 - Inbox drops flow through the exact same queue and pricing/draft pipeline
   as phone uploads.
 
+## Run at startup (Windows Task Scheduler)
+
+To keep the dashboard running across reboots and logons:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File src\service\windows\install.ps1
+```
+
+This registers a scheduled task (`PokemonAutoLister`) that starts `node src/index.js`
+using absolute paths at logon, and restarts it automatically (up to 3 times) if it
+crashes. The script warns if the project folder lives under `Desktop`, since Desktop
+items can be moved, OneDrive-synced, or deleted, which would break the task's
+hardcoded paths — relocate the project (e.g. `C:\apps\pokemon-auto-lister`) first.
+
+Remove the task with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File src\service\windows\uninstall.ps1
+```
+
+**LAN firewall**: allow inbound connections on `PORT` (from `.env`) through Windows
+Firewall so phones on the same Wi-Fi can reach the dashboard after a reboot.
+
+**Chrome requirement**: Mercari drafting drives a real Chrome browser (`channel:
+'chrome'`) via Playwright, so Chrome must be installed on the machine running the
+scheduled task, and a human needs to complete the first login in the persistent
+profile before Mercari drafts can be created unattended.
+
 ## Development
 
 ```bash
