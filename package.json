@@ -15,5 +15,8 @@
   },
   "devDependencies": {
     "eslint": "^9.39.5"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
   }
 }
