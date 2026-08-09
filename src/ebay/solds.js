@@ -1,5 +1,6 @@
 // https://developer.ebay.com/api-docs/buy/marketplace-insights/ — official sold-item comps, no scraping.
-const EBAY_OAUTH_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
+import { fetchEbayAccessToken } from './auth.js';
+
 const EBAY_ITEM_SALES_URL = 'https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search';
 const EBAY_OAUTH_SCOPE = 'https://api.ebay.com/oauth/api_scope/buy.marketplace.insights';
 const MAX_SOLDS = 5;
@@ -28,23 +29,13 @@ export function createEbaySoldsClient({
     if (accessToken) {
       return accessToken;
     }
-    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-    const response = await fetchImpl(EBAY_OAUTH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        scope: EBAY_OAUTH_SCOPE,
-      }).toString(),
+    accessToken = await fetchEbayAccessToken({
+      clientId,
+      clientSecret,
+      fetchImpl,
+      grantType: 'client_credentials',
+      scope: EBAY_OAUTH_SCOPE,
     });
-    if (!response.ok) {
-      throw new Error(`eBay auth failed: ${response.status}`);
-    }
-    const data = await response.json();
-    accessToken = data.access_token;
     return accessToken;
   }
 
