@@ -9,6 +9,10 @@ export const MYPAGE_URL = 'https://www.mercari.com/mypage/';
 export const SELL_URL = 'https://www.mercari.com/sell/';
 const LOGIN_URL_PATTERN = /\/login\//;
 
+function isOnLoginPage(page) {
+  return LOGIN_URL_PATTERN.test(page.url());
+}
+
 export async function launchMercariContext({ userDataDir, headless = false } = {}) {
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chrome',
@@ -24,12 +28,12 @@ export async function launchMercariContext({ userDataDir, headless = false } = {
 export async function isLoggedOut(page, { redirectWaitMs = 15000 } = {}) {
   await page.goto(MYPAGE_URL);
   await page.waitForTimeout(redirectWaitMs);
-  return LOGIN_URL_PATTERN.test(page.url());
+  return isOnLoginPage(page);
 }
 
 export async function waitForHumanLogin(page, { timeoutMs = 30 * 60 * 1000, pollIntervalMs = 5000 } = {}) {
   const start = Date.now();
-  while (LOGIN_URL_PATTERN.test(page.url())) {
+  while (isOnLoginPage(page)) {
     if (Date.now() - start > timeoutMs) {
       throw new Error('Timed out waiting for human Mercari login');
     }
