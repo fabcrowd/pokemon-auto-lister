@@ -15,6 +15,8 @@ export default [
         fetch: 'readonly',
         URLSearchParams: 'readonly',
         URL: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
       },
     },
   },

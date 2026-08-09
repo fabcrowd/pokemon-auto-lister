@@ -7,11 +7,11 @@ import path from 'node:path';
 import { createQueue } from '../src/queue/queue.js';
 import { scanInbox } from '../src/inbox/watcher.js';
 
-function withTempDirs(fn) {
+async function withTempDirs(fn) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'inbox-data-'));
   const inboxDir = mkdtempSync(path.join(tmpdir(), 'inbox-drop-'));
   try {
-    return fn({ queue: createQueue(dataDir), inboxDir });
+    return await fn({ queue: createQueue(dataDir), inboxDir });
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(inboxDir, { recursive: true, force: true });

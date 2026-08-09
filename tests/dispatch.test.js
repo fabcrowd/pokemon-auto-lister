@@ -7,10 +7,10 @@ import path from 'node:path';
 import { createQueue } from '../src/queue/queue.js';
 import { createDraftDispatcher } from '../src/dispatch/draftDispatch.js';
 
-function withTempQueue(fn) {
+async function withTempQueue(fn) {
   const dir = mkdtempSync(path.join(tmpdir(), 'dispatch-test-'));
   try {
-    return fn(createQueue(dir));
+    return await fn(createQueue(dir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -82,6 +82,16 @@ export function createQueue(dataDir) {
     return writeRecord(record);
   }
 
+  function recordDraftError(id, marketplace, message) {
+    const record = readRecord(id);
+    record.drafts[marketplace] = {
+      created: false,
+      error: message,
+      failedAt: new Date().toISOString(),
+    };
+    return writeRecord(record);
+  }
+
   function listByStatus(status) {
     const files = readdirSync(queueDir).filter((name) => name.endsWith('.json'));
     return files
@@ -89,5 +99,5 @@ export function createQueue(dataDir) {
       .filter((record) => record.status === status);
   }
 
-  return { enqueue, get, setStatus, setPriced, markDrafted, listByStatus };
+  return { enqueue, get, setStatus, setPriced, markDrafted, recordDraftError, listByStatus };
 }
