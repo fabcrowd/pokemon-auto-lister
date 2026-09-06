@@ -87,6 +87,10 @@ def rrf_score(ranks: Sequence[Optional[int]], k: int = 60) -> float:
     return total
 
 
+def _name_tokens(name: Any) -> set:
+    return {t.lower() for t in re.split(r"[\s\-]+", str(name or "")) if len(t) >= 3}
+
+
 def fuse_candidates(
     clip_ranked: Sequence[Dict[str, Any]],
     ocr: Optional[Dict[str, Optional[str]]] = None,
@@ -101,6 +105,7 @@ def fuse_candidates(
     ocr = ocr or {}
     ocr_number = ocr.get("number")
     ocr_set = (ocr.get("setCode") or "").lower() or None
+    ocr_name_tokens = _name_tokens(ocr.get("name"))
 
     filtered: List[Dict[str, Any]] = list(clip_ranked)
     if ocr_number:
@@ -138,6 +143,13 @@ def fuse_candidates(
         score = rrf_score([clip_rank, ocr_rank])
         if ocr_rank == 1:
             score += 0.05
+        # Name signal: boost on overlap, penalise on total mismatch
+        if ocr_name_tokens:
+            cand_tokens = _name_tokens(cand.get("name"))
+            if cand_tokens and ocr_name_tokens & cand_tokens:
+                score += 0.10
+            elif cand_tokens and not (ocr_name_tokens & cand_tokens):
+                score -= 0.05
         scored.append({**cand, "fuseScore": score, "clipRank": clip_rank})
 
     scored.sort(key=lambda c: c["fuseScore"], reverse=True)

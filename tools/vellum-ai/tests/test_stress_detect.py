@@ -183,6 +183,90 @@ class TestStressOverallScore(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Identification stress tests
+# ---------------------------------------------------------------------------
+
+# Import lazily so the class is defined even when the module isn't installed
+try:
+    from vellum_ai.identify_multi import identify_lot  # noqa: E402
+    _IDENTIFY_AVAILABLE = True
+except Exception:
+    _IDENTIFY_AVAILABLE = False
+
+MIN_ID_RATE_PER_LOT = 0.50   # each lot must identify >= 50% of detected cards
+MIN_ID_RATE_OVERALL = 0.60   # aggregate across all lots >= 60%
+
+
+class TestStressIdentify(unittest.TestCase):
+    """Identification pipeline stress-test: identify_lot over 10 real HiBid lots."""
+
+    def _assert_lot_id(self, lot_id: str) -> None:
+        if not _IDENTIFY_AVAILABLE:
+            self.skipTest("identify_multi not importable")
+        folder = _CACHE_ROOT / lot_id
+        if not folder.is_dir() or not any(folder.iterdir()):
+            self.skipTest(f"No cached images for {lot_id}")
+        result = identify_lot(folder)
+        if result.total_detected == 0:
+            self.skipTest(f"{lot_id}: detect step found 0 cards")
+        rate = result.identification_rate
+        self.assertGreaterEqual(
+            rate,
+            MIN_ID_RATE_PER_LOT,
+            f"[{lot_id}] identified {result.total_identified}/{result.total_detected} = {rate:.0%} < {MIN_ID_RATE_PER_LOT:.0%}",
+        )
+
+    def test_id_round_01_hibid_320425371(self): self._assert_lot_id("hibid_320425371")
+    def test_id_round_02_hibid_320425372(self): self._assert_lot_id("hibid_320425372")
+    def test_id_round_03_hibid_320425373(self): self._assert_lot_id("hibid_320425373")
+    def test_id_round_04_hibid_320425376(self): self._assert_lot_id("hibid_320425376")
+    def test_id_round_05_hibid_320425378(self): self._assert_lot_id("hibid_320425378")
+    def test_id_round_06_hibid_320425381(self): self._assert_lot_id("hibid_320425381")
+    def test_id_round_07_hibid_320425386(self): self._assert_lot_id("hibid_320425386")
+    def test_id_round_08_hibid_320425389(self): self._assert_lot_id("hibid_320425389")
+    def test_id_round_09_hibid_320425390(self): self._assert_lot_id("hibid_320425390")
+    def test_id_round_10_hibid_320425391(self): self._assert_lot_id("hibid_320425391")
+
+
+class TestStressIdentifyOverall(unittest.TestCase):
+    """Aggregate identification gate: >= 60% of detected cards identified across all lots."""
+
+    def test_overall_identification_rate(self) -> None:
+        if not _IDENTIFY_AVAILABLE:
+            self.skipTest("identify_multi not importable")
+        total_detected = 0
+        total_identified = 0
+        lot_lines = []
+        skipped = []
+        for lot_id in HIBID_LOTS:
+            folder = _CACHE_ROOT / lot_id
+            if not folder.is_dir() or not any(folder.iterdir()):
+                skipped.append(lot_id)
+                continue
+            result = identify_lot(folder)
+            if result.total_detected == 0:
+                skipped.append(lot_id)
+                continue
+            total_detected += result.total_detected
+            total_identified += result.total_identified
+            rate = result.identification_rate
+            lot_lines.append(
+                f"  {lot_id}: {result.total_identified}/{result.total_detected} = {rate:.0%}"
+            )
+        if total_detected == 0:
+            self.skipTest("No cards detected across any lot — check cached images")
+        overall = total_identified / total_detected
+        report = "\n".join(lot_lines)
+        if skipped:
+            report += f"\n  (skipped {len(skipped)} lots with no images)"
+        self.assertGreaterEqual(
+            overall,
+            MIN_ID_RATE_OVERALL,
+            f"Overall ID rate {total_identified}/{total_detected} = {overall:.0%} < {MIN_ID_RATE_OVERALL:.0%}\n{report}",
+        )
+
+
 if __name__ == "__main__":
     results = []
     skipped = []

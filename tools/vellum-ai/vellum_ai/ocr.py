@@ -38,9 +38,43 @@ def _crops(image_bgr: np.ndarray) -> List[np.ndarray]:
     ]
 
 
+def _crops_name(image_bgr: np.ndarray) -> List[np.ndarray]:
+    """Top-strip crops for the card name (largest text on the card)."""
+    h, w = image_bgr.shape[:2]
+    return [
+        image_bgr[: int(h * 0.12), :],
+        image_bgr[: int(h * 0.15), :],
+        image_bgr[int(h * 0.02) : int(h * 0.14), : int(w * 0.75)],
+    ]
+
+
+def _extract_name(text: str) -> str:
+    """Return the most plausible card name from raw OCR text.
+
+    Card names are typically 1-3 words, all ASCII letters (possibly with
+    dashes/spaces), and appear at the start of the strip text. We take
+    the first run of word-characters and cap at 4 tokens.
+    """
+    import re
+    tokens = [t for t in re.split(r"[^A-Za-z\-' ]+", text) if t.strip()]
+    if not tokens:
+        return ""
+    # Flatten multi-word first hit (e.g. "Umbreon EX")
+    name_tokens = []
+    for tok in tokens[:4]:
+        clean = tok.strip()
+        if not clean:
+            continue
+        name_tokens.append(clean)
+        if len(name_tokens) >= 2:
+            break
+    return " ".join(name_tokens).strip()
+
+
 def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
     """
-    OCR bottom regions. Prefers RapidOCR (ONNX); falls back to PaddleOCR / Tesseract.
+    OCR bottom regions for collector number; top strip for card name.
+    Prefers RapidOCR (ONNX); falls back to PaddleOCR / Tesseract.
     """
     parts: List[str] = []
     for crop in _crops(image_bgr):
@@ -51,6 +85,20 @@ def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
     parsed = parse_ocr_text(combined)
     parsed["confidence"] = 0.9 if parsed.get("number") else 0.0
     parsed["raw"] = combined
+
+    # Name OCR — best text from top-strip crops
+    name_candidates: List[str] = []
+    for crop in _crops_name(image_bgr):
+        text = _ocr_text(_preprocess(crop))
+        candidate = _extract_name(text)
+        if candidate:
+            name_candidates.append(candidate)
+    if name_candidates:
+        # Prefer the longest plausible result (more tokens = more confident)
+        parsed["name"] = max(name_candidates, key=len)
+    else:
+        parsed["name"] = None
+
     return parsed
 
 
