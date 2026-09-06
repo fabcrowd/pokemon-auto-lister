@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 from .detect_multi import detect_all_cards_with_crops
-from .pipeline import identify_image_bytes
+from .pipeline import identify_rectified_bytes
 from .tcg_lookup import resolve_card
 
 
@@ -105,7 +105,7 @@ def identify_all_from_bytes(
             ))
             continue
 
-        id_result = identify_image_bytes(crop_bytes)
+        id_result = identify_rectified_bytes(crop_bytes)
         identity = id_result.get("identity")
 
         # TCG API cross-reference: augment identity when OCR found a number

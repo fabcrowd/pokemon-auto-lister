@@ -15,6 +15,15 @@ from .rectify import blur_score, estimate_centering, glare_score
 from .retrieve import get_index
 
 
+def identify_rectified_bytes(front_bytes: bytes) -> Dict[str, Any]:
+    """Identify an already-rectified single-card crop (skips detect step)."""
+    array = np.frombuffer(front_bytes, dtype=np.uint8)
+    rectified = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    if rectified is None:
+        return _abstain("invalid_image")
+    return _identify_rectified(rectified)
+
+
 def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None) -> Dict[str, Any]:
     array = np.frombuffer(front_bytes, dtype=np.uint8)
     image = cv2.imdecode(array, cv2.IMREAD_COLOR)
@@ -25,12 +34,21 @@ def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None)
     if not detected["ok"]:
         return _abstain(detected["reason"] or "no_card_detected")
 
-    rectified = detected["rectified"]
+    result = _identify_rectified(detected["rectified"])
+    # Attach box from detect step to captureQa
+    if "captureQa" in result and detected.get("box"):
+        result["captureQa"]["box"] = detected["box"]
+    if "raw" in result:
+        result["raw"]["backProvided"] = back_bytes is not None
+    return result
+
+
+def _identify_rectified(rectified: np.ndarray) -> Dict[str, Any]:
+    """Run identification on a pre-rectified card image (no detect step)."""
     glare = glare_score(rectified)
     blur = blur_score(rectified)
     centering = estimate_centering(rectified)
 
-    # Holo foils routinely light up >8% of pixels — only reject extreme flash washout.
     if glare >= 0.35:
         return {
             **_abstain("glare_too_high"),
@@ -56,7 +74,6 @@ def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None)
         margin=default_margin(),
     )
 
-    # Collectr CSV fallback when CLIP catalog is missing or fusion abstains
     if fused.get("abstain") or not clip_hits:
         collectr = get_collectr_catalog()
         if collectr.available() and ocr.get("number"):
@@ -78,10 +95,9 @@ def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None)
                     "abstain": False,
                     "reason": "collectr-ocr",
                     "grading": {"centering": centering, "note": "AI centering QA — not a PSA grade"},
-                    "captureQa": {"glare": glare, "blur": blur, "box": detected.get("box")},
-                    "raw": {"ocr": ocr, "backProvided": back_bytes is not None, "resolve": "collectr-csv"},
+                    "captureQa": {"glare": glare, "blur": blur},
+                    "raw": {"ocr": ocr, "resolve": "collectr-csv"},
                 }
-            # Ambiguous number — expose candidates for review
             cands = collectr.candidates_for_number(
                 f"{ocr['number']}/{ocr['total']}" if ocr.get("total") else str(ocr["number"])
             )
@@ -95,8 +111,8 @@ def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None)
                     "abstain": True,
                     "reason": "collectr_ambiguous",
                     "grading": {"centering": centering, "note": "AI centering QA — not a PSA grade"},
-                    "captureQa": {"glare": glare, "blur": blur, "box": detected.get("box")},
-                    "raw": {"ocr": ocr, "backProvided": back_bytes is not None},
+                    "captureQa": {"glare": glare, "blur": blur},
+                    "raw": {"ocr": ocr},
                 }
 
     if not clip_hits and fused.get("abstain"):
@@ -118,8 +134,8 @@ def identify_image_bytes(front_bytes: bytes, back_bytes: Optional[bytes] = None)
         "abstain": bool(fused.get("abstain", True)),
         "reason": fused.get("reason"),
         "grading": {"centering": centering, "note": "AI centering QA — not a PSA grade"},
-        "captureQa": {"glare": glare, "blur": blur, "box": detected.get("box")},
-        "raw": {"ocr": ocr, "margin": fused.get("margin"), "backProvided": back_bytes is not None},
+        "captureQa": {"glare": glare, "blur": blur},
+        "raw": {"ocr": ocr, "margin": fused.get("margin")},
     }
 
 
