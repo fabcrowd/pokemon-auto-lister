@@ -1,0 +1,203 @@
+"""10-round stress test using real HiBid marketplace images.
+
+Each round loads a cached HiBid lot thumbnail (00.jpg) and HD image (01.jpg)
+then runs _contour_multi. A round PASSES when every available image in the lot
+detects >= MIN_CARDS_PER_IMAGE cards.
+
+Overall: >= 95% of rounds must pass.
+
+Prerequisites: run `python tools/vellum-ai/detect/harvest_marketplace.py`
+to populate data/detect-marketplace/hibid/ before running this suite.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from typing import List, NamedTuple, Optional
+
+import cv2
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ["VELLUM_AI_DETECT_ONNX"] = "/nonexistent/model.onnx"
+
+from vellum_ai.detect_multi import _contour_multi  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+MIN_CARDS_PER_IMAGE = 2   # every image in a lot must detect >= this many
+REQUIRED_PASS_RATE  = 0.95
+
+# ---------------------------------------------------------------------------
+# Real HiBid lots (populated by harvest_marketplace.py --lotsearch)
+# Exclude Wikimedia placeholder lots (320686833, fixture-pokemon-lot-2)
+# ---------------------------------------------------------------------------
+HIBID_LOTS = [
+    "hibid_320425371",
+    "hibid_320425372",
+    "hibid_320425373",
+    "hibid_320425376",
+    "hibid_320425378",
+    "hibid_320425381",
+    "hibid_320425386",
+    "hibid_320425389",
+    "hibid_320425390",
+    "hibid_320425391",
+]
+
+_CACHE_ROOT = Path(__file__).resolve().parents[3] / "data" / "detect-marketplace" / "hibid"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+class RoundResult(NamedTuple):
+    lot_id: str
+    images_tested: int
+    misses: List[str]   # images that failed MIN_CARDS_PER_IMAGE
+    passed: bool
+
+
+def _lot_images(lot_id: str) -> List[Path]:
+    """Return sorted image files for a lot (00.jpg, 01.jpg, ...) or []."""
+    folder = _CACHE_ROOT / lot_id
+    if not folder.is_dir():
+        return []
+    return sorted(
+        p for p in folder.iterdir()
+        if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+    )
+
+
+def _run_lot(lot_id: str) -> Optional[RoundResult]:
+    """
+    Return None when no cached images exist (caller skips).
+    Otherwise return RoundResult.
+
+    A round PASSES if at least one image in the lot detects >= MIN_CARDS_PER_IMAGE.
+    Individual close-up photos (showing 1 card) are acceptable within a multi-card lot.
+    """
+    images = _lot_images(lot_id)
+    if not images:
+        return None
+    counts: List[int] = []
+    misses: List[str] = []
+    for img_path in images:
+        frame = cv2.imread(str(img_path))
+        if frame is None:
+            misses.append(f"{img_path.name}: unreadable")
+            continue
+        n = len(_contour_multi(frame))
+        counts.append(n)
+        if n < MIN_CARDS_PER_IMAGE:
+            misses.append(f"{img_path.name}: {n} detected")
+    best = max(counts) if counts else 0
+    passed = best >= MIN_CARDS_PER_IMAGE
+    return RoundResult(
+        lot_id=lot_id,
+        images_tested=len(images),
+        misses=misses if not passed else [],
+        passed=passed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-round test class
+# ---------------------------------------------------------------------------
+
+class TestStressRealImages(unittest.TestCase):
+    """One test method per HiBid lot; each method is one stress-test round."""
+
+    def _assert_lot(self, lot_id: str) -> None:
+        result = _run_lot(lot_id)
+        if result is None:
+            self.skipTest(
+                f"No cached images for {lot_id}. "
+                "Run: python tools/vellum-ai/detect/harvest_marketplace.py"
+            )
+        self.assertTrue(
+            result.passed,
+            f"[{lot_id}] {len(result.misses)}/{result.images_tested} image(s) failed: "
+            + "; ".join(result.misses),
+        )
+
+    def test_round_01_hibid_320425371(self): self._assert_lot("hibid_320425371")
+    def test_round_02_hibid_320425372(self): self._assert_lot("hibid_320425372")
+    def test_round_03_hibid_320425373(self): self._assert_lot("hibid_320425373")
+    def test_round_04_hibid_320425376(self): self._assert_lot("hibid_320425376")
+    def test_round_05_hibid_320425378(self): self._assert_lot("hibid_320425378")
+    def test_round_06_hibid_320425381(self): self._assert_lot("hibid_320425381")
+    def test_round_07_hibid_320425386(self): self._assert_lot("hibid_320425386")
+    def test_round_08_hibid_320425389(self): self._assert_lot("hibid_320425389")
+    def test_round_09_hibid_320425390(self): self._assert_lot("hibid_320425390")
+    def test_round_10_hibid_320425391(self): self._assert_lot("hibid_320425391")
+
+
+# ---------------------------------------------------------------------------
+# Aggregate gate
+# ---------------------------------------------------------------------------
+
+class TestStressOverallScore(unittest.TestCase):
+    """Aggregate gate: >= 95% of rounds must pass."""
+
+    def test_overall_pass_rate_at_least_95_percent(self) -> None:
+        results = []
+        skipped = []
+        for lot_id in HIBID_LOTS:
+            r = _run_lot(lot_id)
+            if r is None:
+                skipped.append(lot_id)
+            else:
+                results.append(r)
+
+        if not results:
+            self.skipTest(
+                "No cached HiBid images found. "
+                "Run: python tools/vellum-ai/detect/harvest_marketplace.py"
+            )
+
+        passes = sum(r.passed for r in results)
+        total  = len(results)
+        rate   = passes / total
+
+        lines = []
+        for r in results:
+            status = "PASS" if r.passed else "FAIL"
+            miss_str = " | ".join(r.misses) if r.misses else "-"
+            lines.append(
+                f"  [{status}] {r.lot_id}: "
+                f"{r.images_tested} images tested | misses: {miss_str}"
+            )
+        if skipped:
+            lines.append(f"  [SKIP] {len(skipped)} lots had no cached images")
+        report = "\n".join(lines)
+
+        self.assertGreaterEqual(
+            rate,
+            REQUIRED_PASS_RATE,
+            f"Overall pass rate {passes}/{total} = {rate:.0%} < {REQUIRED_PASS_RATE:.0%}\n{report}",
+        )
+
+
+if __name__ == "__main__":
+    results = []
+    skipped = []
+    for lot_id in HIBID_LOTS:
+        r = _run_lot(lot_id)
+        if r is None:
+            print(f"[SKIP] {lot_id}: no cached images")
+            skipped.append(lot_id)
+            continue
+        status = "PASS" if r.passed else "FAIL"
+        miss_str = " | ".join(r.misses) if r.misses else "-"
+        print(f"[{status}] {lot_id}: {r.images_tested} images | misses: {miss_str}")
+        results.append(r)
+
+    if results:
+        passes = sum(r.passed for r in results)
+        total  = len(results)
+        print(f"\nScore: {passes}/{total} = {passes/total:.0%} (need {REQUIRED_PASS_RATE:.0%})")

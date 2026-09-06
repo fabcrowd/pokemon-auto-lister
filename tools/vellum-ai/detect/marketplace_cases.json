@@ -1,0 +1,53 @@
+{
+  "description": "Facebook Marketplace and HiBid lots used as multi-card detect fixtures. Prefer imageUrls from a live sniper worklist; listingUrl is the fallback hint.",
+  "cases": [
+    {
+      "source": "hibid",
+      "itemId": "hibid:320686833",
+      "title": "Pokemon card lot (live smoke lot)",
+      "listingUrl": "https://hibid.com/lot/320686833",
+      "imageUrls": [
+        "https://upload.wikimedia.org/wikipedia/commons/c/c1/Pokemon_collection.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/3/3e/POKEMON_card_battle.jpg"
+      ],
+      "identities": [],
+      "expected_min_cards": 2
+    },
+    {
+      "source": "hibid",
+      "itemId": "hibid:fixture-pokemon-lot-2",
+      "title": "Pokemon card lot fixture #2",
+      "listingUrl": "https://hibid.com/lot/fixture2",
+      "imageUrls": [
+        "https://upload.wikimedia.org/wikipedia/commons/c/c1/Pokemon_collection.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/3/3e/POKEMON_card_battle.jpg"
+      ],
+      "identities": [],
+      "expected_min_cards": 2
+    },
+    {
+      "source": "facebook",
+      "itemId": "facebook:1776567153539399",
+      "title": "Cincinnati Umbreon / collection smoke listing",
+      "listingUrl": "https://www.facebook.com/marketplace/item/1776567153539399",
+      "imageUrls": [
+        "https://upload.wikimedia.org/wikipedia/commons/c/c1/Pokemon_collection.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/3/3e/POKEMON_card_battle.jpg"
+      ],
+      "identities": [],
+      "expected_min_cards": 2
+    },
+    {
+      "source": "facebook",
+      "itemId": "facebook:946237095188044",
+      "title": "Cincinnati fs/ft multi-card listing",
+      "listingUrl": "https://www.facebook.com/marketplace/item/946237095188044",
+      "imageUrls": [
+        "https://upload.wikimedia.org/wikipedia/commons/c/c1/Pokemon_collection.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/3/3e/POKEMON_card_battle.jpg"
+      ],
+      "identities": [],
+      "expected_min_cards": 2
+    }
+  ]
+}
