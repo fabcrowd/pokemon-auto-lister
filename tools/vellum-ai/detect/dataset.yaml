@@ -1,0 +1,11 @@
+# YOLO dataset for VellumAI card detector (role-aware).
+# 0 = full card face (safe identity / listing front)
+# 1 = corner / close-up (never use as front)
+# 2 = card back (Poké Ball reverse)
+path: ../../data/vellum-detect
+train: images/train
+val: images/val
+names:
+  0: full_card
+  1: corner_closeup
+  2: card_back

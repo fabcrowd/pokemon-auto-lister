@@ -43,12 +43,12 @@ function requestJson(server, { method, path: reqPath, body, headers = {} }) {
   });
 }
 
-async function withServer(fn, { createDraft } = {}) {
+async function withServer(fn, { createDraft, onEnqueue } = {}) {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'needs-review-test-data-'));
   const publicDir = mkdtempSync(path.join(tmpdir(), 'needs-review-test-public-'));
 
   const queue = createQueue(dataDir);
-  const server = createServer({ queue, dataDir, publicDir, createDraft });
+  const server = createServer({ queue, dataDir, publicDir, createDraft, onEnqueue });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -60,8 +60,16 @@ async function withServer(fn, { createDraft } = {}) {
   }
 }
 
-function needsReviewRecord(queue) {
-  const id = queue.enqueue({ title: 'Charizard', mercari: true, ebay: false });
+function needsReviewRecord(queue, extra = {}) {
+  const id = queue.enqueue({
+    title: 'Charizard',
+    mercari: true,
+    ebay: false,
+    photos: ['/tmp/front.jpg', '/tmp/back.jpg'],
+    frontImagePath: '/tmp/front.jpg',
+    backImagePath: '/tmp/back.jpg',
+    ...extra,
+  });
   queue.setPriced(id, {
     identity: { name: 'Charizard' },
     comps: { pokegrade: 100, tcgplayer: 80, ebay: 90 },
@@ -160,5 +168,64 @@ test('POST /api/cards/:id/confirm returns 404 for an unknown card', async () => 
 
     assert.equal(res.statusCode, 404);
     assert.ok(res.body.error);
+  });
+});
+
+test('POST /api/cards/:id/photos/roles swaps front and back within the batch', async () => {
+  await withServer(async ({ server, queue }) => {
+    const id = needsReviewRecord(queue);
+
+    const res = await requestJson(server, {
+      method: 'POST',
+      path: `/api/cards/${id}/photos/roles`,
+      body: { frontImagePath: '/tmp/back.jpg', backImagePath: '/tmp/front.jpg' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.frontImagePath, '/tmp/back.jpg');
+    assert.equal(res.body.backImagePath, '/tmp/front.jpg');
+    assert.deepEqual(res.body.photos, ['/tmp/back.jpg', '/tmp/front.jpg']);
+    assert.equal(queue.get(id).frontImagePath, '/tmp/back.jpg');
+  });
+});
+
+test('POST /api/cards/:id/photos/roles reprocesses identity when front changes', async () => {
+  const reprocessed = [];
+  await withServer(
+    async ({ server, queue }) => {
+      const id = needsReviewRecord(queue, {
+        photos: ['/tmp/front.jpg', '/tmp/back.jpg', '/tmp/corner.jpg'],
+        frontImagePath: '/tmp/corner.jpg',
+        backImagePath: '/tmp/back.jpg',
+      });
+
+      const res = await requestJson(server, {
+        method: 'POST',
+        path: `/api/cards/${id}/photos/roles`,
+        body: { frontImagePath: '/tmp/front.jpg' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(reprocessed, [id]);
+      assert.equal(queue.get(id).frontImagePath, '/tmp/front.jpg');
+    },
+    {
+      onEnqueue: async (id) => {
+        reprocessed.push(id);
+      },
+    },
+  );
+});
+
+test('POST /api/cards/:id/photos/roles rejects a path not on the card', async () => {
+  await withServer(async ({ server, queue }) => {
+    const id = needsReviewRecord(queue);
+    const res = await requestJson(server, {
+      method: 'POST',
+      path: `/api/cards/${id}/photos/roles`,
+      body: { frontImagePath: '/tmp/other.jpg' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.error, /frontImagePath must be one of the card photos/);
   });
 });

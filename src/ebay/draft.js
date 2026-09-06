@@ -27,6 +27,8 @@ export function createEbayDraftClient({
   paymentPolicyId = process.env.EBAY_PAYMENT_POLICY_ID,
   returnPolicyId = process.env.EBAY_RETURN_POLICY_ID,
 } = {}) {
+  let lastConnect = null;
+
   async function createEbayDraft(card, { config = {} } = {}) {
     const token = await authClient.getAccessToken();
     const sku = card.id;
@@ -77,5 +79,26 @@ export function createEbayDraftClient({
     return { offerId: offer.offerId, sku };
   }
 
-  return { createEbayDraft };
+  function getStatus() {
+    const configured = Boolean(clientId && clientSecret && refreshToken);
+    return {
+      configured,
+      connected: Boolean(lastConnect?.ok),
+      at: lastConnect?.at || null,
+      error: lastConnect?.error || null,
+    };
+  }
+
+  async function connect() {
+    try {
+      await authClient.getAccessToken();
+      lastConnect = { ok: true, at: new Date().toISOString(), error: null };
+      return getStatus();
+    } catch (err) {
+      lastConnect = { ok: false, at: new Date().toISOString(), error: err.message };
+      throw err;
+    }
+  }
+
+  return { createEbayDraft, connect, getStatus };
 }

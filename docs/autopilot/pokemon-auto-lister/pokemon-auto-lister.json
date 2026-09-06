@@ -67,29 +67,31 @@
         "test": {
           "description": "Add tests/smoke.test.js asserting package.json scripts and listing-defaults.json shape/multipliers default to 1.0",
           "file": "tests/smoke.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Create scaffold files and autopilot.json feedbackLoops for node --test (or vitest) + lint",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Keep root tidy; ensure README points at PRD and how to run dashboard",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "npm install && npm test succeeds",
         "Config defaults match PRD (0% over market)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "2",
       "category": "functional",
       "priority": "high",
       "description": "On-disk card queue with durable state transitions and per-marketplace draft idempotency",
-      "dependsOn": ["1"],
+      "dependsOn": [
+        "1"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -120,33 +122,37 @@
         "test": {
           "description": "Write tests/queue.test.js covering enqueue, transitions, idempotent markDrafted, retry after crash, listByStatus — use temp data dir",
           "file": "tests/queue.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement src/queue/queue.js with atomic JSON file updates under configurable dataDir",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Extract atomicWriteJson helper if duplicated",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Queue tests pass with isolated temp directories",
         "No duplicate drafts on replay"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "3",
       "category": "functional",
       "priority": "high",
       "description": "Pricing engine: blend PokeGrade, TCGPlayer market, eBay median solds; multipliers; 15% Needs-review rule",
-      "dependsOn": ["1"],
+      "dependsOn": [
+        "1"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
-        "existingFiles": ["config/listing-defaults.json"],
+        "existingFiles": [
+          "config/listing-defaults.json"
+        ],
         "relatedTests": [],
         "patterns": [
           "Pure functions for compare/blend — easy unit tests",
@@ -173,29 +179,31 @@
         "test": {
           "description": "tests/pricing.test.js covers agree, disagree >15%, low confidence, missing source, per-marketplace multipliers",
           "file": "tests/pricing.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement decidePrice() and formatListPrice() in src/pricing/pricing.js",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Clarify relativeSpread helper; avoid magic numbers — export THRESHOLD=0.15",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Unit tests encode PRD Question-12 rule A",
         "Default multipliers yield 0% over market"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "4",
       "category": "integration",
       "priority": "high",
       "description": "PokeGrade /value client with forever cache by image content hash",
-      "dependsOn": ["1"],
+      "dependsOn": [
+        "1"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -224,29 +232,31 @@
         "test": {
           "description": "tests/pokegrade.test.js with mocked fetch: success parse, cache hit, 5xx no cache, missing key",
           "file": "tests/pokegrade.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement client + file cache; read PGAI_KEY from env",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Normalize response mapping in one place for downstream identity fields",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Cache file grows only on successful uncached calls",
         "Docs link pokegrade.ai/developers"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "5",
       "category": "integration",
       "priority": "high",
       "description": "TCGPlayer official market/mid price client resolved from card identity",
-      "dependsOn": ["1"],
+      "dependsOn": [
+        "1"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -274,29 +284,31 @@
         "test": {
           "description": "tests/tcgplayer.test.js mocked success, not-found null, auth failure",
           "file": "tests/tcgplayer.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement TCGPlayer auth + product search + pricing endpoints wiring",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Isolate identity→query string builder for reuse with eBay solds query",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "No scraping code paths",
         "Env vars documented in .env.example"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "6",
       "category": "integration",
       "priority": "high",
       "description": "eBay recent solds client returning last up to 5 sold prices and median",
-      "dependsOn": ["1"],
+      "dependsOn": [
+        "1"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -324,29 +336,35 @@
         "test": {
           "description": "tests/ebay-solds.test.js mocked solds, empty, median math",
           "file": "tests/ebay-solds.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement eBay solds fetch + median helper",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Share eBay OAuth helper with draft listing module when added",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Median of [10,20,30,40,50] is 30",
         "CI never hits live eBay"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "7",
       "category": "functional",
       "priority": "high",
       "description": "Worker pipeline: price card → decide → needs_review or enqueue drafts for selected marketplaces",
-      "dependsOn": ["2", "3", "4", "5", "6"],
+      "dependsOn": [
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ],
       "testType": "integration",
       "codeAnalysis": {
         "approach": "create",
@@ -375,29 +393,32 @@
         "test": {
           "description": "tests/pipeline.test.js with fake clients: auto path, needs_review path, retryable failure",
           "file": "tests/pipeline.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement processCard orchestrating queue + pricing + clients",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Keep marketplace drivers behind createDraft(marketplace) interface for req 11-12",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Pipeline tests pass without network",
         "Card JSON includes comps for dashboard"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "8",
       "category": "functional",
       "priority": "high",
       "description": "HTTP server: LAN bind, multipart Add-card API, queue stats API, static public/",
-      "dependsOn": ["2", "7"],
+      "dependsOn": [
+        "2",
+        "7"
+      ],
       "testType": "integration",
       "codeAnalysis": {
         "approach": "create",
@@ -408,7 +429,9 @@
           "HOST 0.0.0.0 for LAN phones"
         ],
         "targetFiles": {
-          "modify": ["src/index.js"],
+          "modify": [
+            "src/index.js"
+          ],
           "create": [
             "src/server.js",
             "tests/server.test.js",
@@ -427,29 +450,31 @@
         "test": {
           "description": "tests/server.test.js using http inject/supertest-style: enqueue, validation errors, stats shape",
           "file": "tests/server.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement server.js + wire process loop kick on enqueue",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Split routes if server.js grows past ~200 lines",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "curl/phone can hit LAN IP",
         "Uploaded files land under data/uploads/"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "9",
       "category": "ui",
       "priority": "high",
       "description": "Dashboard: Add-a-card panel (mobile) + Auto-list Draft Activity matching UI reference",
-      "dependsOn": ["8"],
+      "dependsOn": [
+        "8"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -463,7 +488,9 @@
           "Status: DRAFT MODE · service running · never publishes · 0% over market"
         ],
         "targetFiles": {
-          "modify": ["public/index.html"],
+          "modify": [
+            "public/index.html"
+          ],
           "create": [
             "public/styles.css",
             "public/app.js",
@@ -483,29 +510,32 @@
         "test": {
           "description": "tests/ui-markup.test.js asserts key selectors/classes/copy exist in public HTML/JS strings",
           "file": "tests/ui-markup.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Build static dashboard against reference PNG; wire to /api/*",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Tighten CSS variables; remove unused markup",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Visual check against draft-activity-ui-reference.png",
         "Phone on Wi-Fi can upload"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "10",
       "category": "ui",
       "priority": "high",
       "description": "Needs review UI: show comps, edit suggested price, confirm to draft",
-      "dependsOn": ["9", "7"],
+      "dependsOn": [
+        "9",
+        "7"
+      ],
       "testType": "integration",
       "codeAnalysis": {
         "approach": "create",
@@ -535,28 +565,30 @@
         "test": {
           "description": "tests/needs-review.test.js API: confirm with price, reject invalid, skip",
           "file": "tests/needs-review.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Add /api/cards/:id/confirm and /skip plus UI section",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Reuse comps rendering between Draft Activity and Needs review",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Manual: force >15% spread fixture → appears in Needs review → confirm creates draft job"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "11",
       "category": "integration",
       "priority": "high",
       "description": "Mercari draft-only Playwright driver using real Chrome persistent profile",
-      "dependsOn": ["7"],
+      "dependsOn": [
+        "7"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -590,34 +622,41 @@
         "test": {
           "description": "tests/mercari-draft.test.js with fake Playwright page: fill fields, assert no publish click, login wait behavior",
           "file": "tests/mercari-draft.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement browser.js + draft.js against Mercari sell form selectors (document selectors in comments)",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Centralize selectors map for easier updates when Mercari changes DOM",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Manual smoke on real Mercari once with human login",
         "CI uses fakes only"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "12",
       "category": "integration",
       "priority": "high",
       "description": "eBay draft-only Sell/Inventory API path",
-      "dependsOn": ["7", "6"],
+      "dependsOn": [
+        "7",
+        "6"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
-        "existingFiles": ["src/ebay/solds.js"],
-        "relatedTests": ["tests/ebay-solds.test.js"],
+        "existingFiles": [
+          "src/ebay/solds.js"
+        ],
+        "relatedTests": [
+          "tests/ebay-solds.test.js"
+        ],
         "patterns": [
           "Official APIs only — no Playwright for eBay listing",
           "Draft/unpublished; map condition and shipping from config"
@@ -642,29 +681,33 @@
         "test": {
           "description": "tests/ebay-draft.test.js mocked Sell API: create draft, error handling, no publish call",
           "file": "tests/ebay-draft.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Implement OAuth + inventory/offer draft flow; document required eBay policies in README",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Share auth token refresh with solds module",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "README lists eBay developer setup + account-deletion exemption note",
         "Sandbox or mocked path green in CI"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "13",
       "category": "functional",
       "priority": "medium",
       "description": "Marketplace dispatcher + optional autolist-inbox/ folder watcher",
-      "dependsOn": ["11", "12", "8"],
+      "dependsOn": [
+        "11",
+        "12",
+        "8"
+      ],
       "testType": "integration",
       "codeAnalysis": {
         "approach": "create",
@@ -675,7 +718,10 @@
           "Inbox folders become queue items with photo files"
         ],
         "targetFiles": {
-          "modify": ["src/pipeline/processCard.js", "src/index.js"],
+          "modify": [
+            "src/pipeline/processCard.js",
+            "src/index.js"
+          ],
           "create": [
             "src/dispatch/draftDispatch.js",
             "src/inbox/watcher.js",
@@ -694,29 +740,31 @@
         "test": {
           "description": "tests/dispatch.test.js and tests/inbox.test.js for selection, partial failure, inbox enqueue idempotency",
           "file": "tests/dispatch.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Wire draftDispatch + chokidar-or-poll inbox watcher",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Document inbox folder layout in README",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Drop folder into autolist-inbox/ appears on dashboard",
         "Checkbox ebay-only skips Mercari driver"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "14",
       "category": "functional",
       "priority": "medium",
       "description": "Windows Task Scheduler service install script + reboot survival",
-      "dependsOn": ["8"],
+      "dependsOn": [
+        "8"
+      ],
       "testType": "unit",
       "codeAnalysis": {
         "approach": "create",
@@ -728,7 +776,9 @@
           "Run at logon + restart on failure"
         ],
         "targetFiles": {
-          "modify": ["README.md"],
+          "modify": [
+            "README.md"
+          ],
           "create": [
             "src/service/windows/install.ps1",
             "src/service/windows/uninstall.ps1",
@@ -746,21 +796,21 @@
         "test": {
           "description": "tests/windows-service-script.test.js asserts install.ps1 contains TaskName, absolute path placeholders, Desktop warning",
           "file": "tests/windows-service-script.test.js",
-          "passes": false
+          "passes": true
         },
         "implement": {
           "description": "Write install/uninstall PowerShell using schtasks or Register-ScheduledTask",
-          "passes": false
+          "passes": true
         },
         "refactor": {
           "description": "Keep scripts idempotent (re-install updates action)",
-          "passes": false
+          "passes": true
         }
       },
       "verification": [
         "Manual: install → reboot or logoff/logon → process running → dashboard up"
       ],
-      "passes": false
+      "passes": true
     }
   ]
 }

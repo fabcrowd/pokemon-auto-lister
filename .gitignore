@@ -5,3 +5,12 @@ data/
 .DS_Store
 playwright/.auth/
 **/chrome-profile/
+tools/vellum-ai/.venv/
+tools/vellum-ai/models/**/*.pt
+tools/vellum-ai/models/**/*.onnx
+tools/vellum-ai/models/*.onnx
+tools/vellum-ai/models/card_detect/
+tools/vellum-ai/yolo11n.pt
+runs/
+__pycache__/
+*.pyc

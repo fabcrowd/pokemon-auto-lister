@@ -63,7 +63,7 @@ test('query is built from card name, set, and number when present', async () => 
   assert.equal(requestedQuery, 'Pikachu Base Set 58/102');
 });
 
-test('missing keys throws explicit configuration error', async () => {
+test('missing keys returns empty solds without calling the network', async () => {
   const client = createEbaySoldsClient({
     clientId: '',
     clientSecret: '',
@@ -71,9 +71,9 @@ test('missing keys throws explicit configuration error', async () => {
       throw new Error('network should not be called');
     },
   });
-  await assert.rejects(
-    () => client.getRecentSolds({ name: 'Pikachu', set: 'Base Set', number: '58/102' }),
-    /eBay configuration error/,
+  assert.deepEqual(
+    await client.getRecentSolds({ name: 'Pikachu', set: 'Base Set', number: '58/102' }),
+    { prices: [], median: null },
   );
 });
 

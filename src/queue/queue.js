@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-export const VALID_STATUSES = ['queued', 'pricing', 'needs_review', 'drafting', 'drafted', 'error'];
+import { recordPostedPhotos } from '../photos/postedLedger.js';
+
+export const VALID_STATUSES = ['queued', 'pricing', 'needs_review', 'drafting', 'drafted', 'listed', 'error'];
 
 function atomicWriteJson(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
@@ -78,8 +80,29 @@ export function createQueue(dataDir) {
       draftedAt: new Date().toISOString(),
       ...draftInfo,
     };
-    record.status = 'drafted';
-    return writeRecord(record);
+    // Prefer listed if another marketplace already listed; otherwise drafted.
+    if (record.status !== 'listed') {
+      record.status = 'drafted';
+    }
+    const saved = writeRecord(record);
+    recordPostedPhotos(dataDir, saved);
+    return saved;
+  }
+
+  function markListed(id, marketplace, listingInfo = {}) {
+    const record = readRecord(id);
+    if (record.drafts[marketplace]?.created && record.drafts[marketplace]?.listingUrl) {
+      return record;
+    }
+    record.drafts[marketplace] = {
+      created: true,
+      listedAt: new Date().toISOString(),
+      ...listingInfo,
+    };
+    record.status = 'listed';
+    const saved = writeRecord(record);
+    recordPostedPhotos(dataDir, saved);
+    return saved;
   }
 
   function recordDraftError(id, marketplace, message) {
@@ -89,15 +112,71 @@ export function createQueue(dataDir) {
       error: message,
       failedAt: new Date().toISOString(),
     };
+    // Return to needs_review so the dashboard can show the error and retry Go.
+    record.status = 'needs_review';
     return writeRecord(record);
   }
 
-  function listByStatus(status) {
-    const files = readdirSync(queueDir).filter((name) => name.endsWith('.json'));
-    return files
-      .map((name) => JSON.parse(readFileSync(path.join(queueDir, name), 'utf8')))
-      .filter((record) => record.status === status);
+  function updatePhotoRoles(id, { frontImagePath, backImagePath, photos }) {
+    const record = readRecord(id);
+    if (frontImagePath !== undefined) {
+      record.frontImagePath = frontImagePath;
+    }
+    if (backImagePath !== undefined) {
+      record.backImagePath = backImagePath;
+    }
+    if (Array.isArray(photos)) {
+      record.photos = photos;
+    }
+    return writeRecord(record);
   }
 
-  return { enqueue, get, setStatus, setPriced, markDrafted, recordDraftError, listByStatus };
+  /**
+   * Shallow-merge top-level fields (and replace nested objects when provided).
+   * Does not change status unless `status` is in fields.
+   */
+  function patch(id, fields = {}) {
+    const record = readRecord(id);
+    const { status, ...rest } = fields;
+    Object.assign(record, rest);
+    if (status !== undefined) {
+      if (!VALID_STATUSES.includes(status)) {
+        throw new Error(`Invalid status: ${status}`);
+      }
+      record.status = status;
+    }
+    return writeRecord(record);
+  }
+
+  function clearMarketplaceDraft(id, marketplace) {
+    const record = readRecord(id);
+    if (record.drafts && record.drafts[marketplace]) {
+      delete record.drafts[marketplace];
+    }
+    return writeRecord(record);
+  }
+
+  function listAll() {
+    const files = readdirSync(queueDir).filter((name) => name.endsWith('.json'));
+    return files.map((name) => JSON.parse(readFileSync(path.join(queueDir, name), 'utf8')));
+  }
+
+  function listByStatus(status) {
+    return listAll().filter((record) => record.status === status);
+  }
+
+  return {
+    enqueue,
+    get,
+    setStatus,
+    setPriced,
+    markDrafted,
+    markListed,
+    recordDraftError,
+    updatePhotoRoles,
+    patch,
+    clearMarketplaceDraft,
+    listAll,
+    listByStatus,
+  };
 }

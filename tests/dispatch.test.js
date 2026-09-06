@@ -16,6 +16,28 @@ async function withTempQueue(fn) {
   }
 }
 
+test('createDraftDispatcher marks Mercari with listingUrl as listed', async () => {
+  await withTempQueue(async (queue) => {
+    const id = queue.enqueue({ title: 'Charizard', mercari: true, ebay: false });
+    const record = queue.get(id);
+    const createDraft = createDraftDispatcher({
+      queue,
+      drivers: {
+        mercari: async () => ({
+          listingUrl: 'https://www.mercari.com/item/m999/',
+          published: true,
+        }),
+      },
+    });
+
+    await createDraft('mercari', record);
+
+    const updated = queue.get(id);
+    assert.equal(updated.status, 'listed');
+    assert.equal(updated.drafts.mercari.listingUrl, 'https://www.mercari.com/item/m999/');
+  });
+});
+
 test('createDraftDispatcher routes to the driver matching the marketplace only', async () => {
   await withTempQueue(async (queue) => {
     const id = queue.enqueue({ title: 'Charizard', mercari: true, ebay: false });

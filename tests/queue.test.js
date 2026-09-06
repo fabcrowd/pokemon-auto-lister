@@ -29,7 +29,7 @@ test('enqueue persists a card under data/queue and returns an id', () => {
 test('setStatus transitions through all defined states', () => {
   withTempQueue((queue) => {
     const id = queue.enqueue({ title: 'Blastoise' });
-    for (const status of ['pricing', 'needs_review', 'drafting', 'drafted', 'error']) {
+    for (const status of ['pricing', 'needs_review', 'drafting', 'drafted', 'listed', 'error']) {
       const record = queue.setStatus(id, status);
       assert.equal(record.status, status);
     }
@@ -46,6 +46,19 @@ test('markDrafted is idempotent per marketplace', () => {
 
     const second = queue.markDrafted(id, 'mercari', { draftId: 'should-not-apply' });
     assert.equal(second.drafts.mercari.draftId, 'abc123');
+  });
+});
+
+test('markListed records listingUrl and sets status listed', () => {
+  withTempQueue((queue) => {
+    const id = queue.enqueue({ title: 'Mewtwo' });
+    const listed = queue.markListed(id, 'mercari', {
+      listingUrl: 'https://www.mercari.com/item/m123/',
+    });
+    assert.equal(listed.status, 'listed');
+    assert.equal(listed.drafts.mercari.created, true);
+    assert.equal(listed.drafts.mercari.listingUrl, 'https://www.mercari.com/item/m123/');
+    assert.ok(listed.drafts.mercari.listedAt);
   });
 });
 

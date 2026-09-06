@@ -8,27 +8,52 @@
   </head>
   <body>
     <main class="page">
-      <section class="card add-panel">
-        <h2>Add a card</h2>
-        <label class="file-label" for="photo-input">Choose photos</label>
-        <input id="photo-input" type="file" accept="image/*" multiple capture="environment" />
-        <div id="photo-thumbnails" class="photo-thumbnails"></div>
-        <div class="marketplace-choices">
-          <label><input id="marketplace-mercari" type="checkbox" checked /> Mercari</label>
-          <label><input id="marketplace-ebay" type="checkbox" checked /> eBay</label>
+      <div id="collectr-banner" class="collectr-banner" hidden></div>
+      <div id="identity-banner" class="collectr-banner" hidden></div>
+
+      <div id="live-toast" class="live-toast" hidden role="status" aria-live="polite"></div>
+
+      <section class="card add-panel" id="inbox-panel">
+        <h2>Add new cards</h2>
+        <p class="section-note">
+          Shared Albums on Windows often do not download. Use <strong>Download photos</strong> to pull
+          recent shots from your iCloud Photos library into the inbox, then <strong>Add new cards</strong>.
+          Use <strong>Rescan all cards</strong> to regroup every inbox photo and re-run identity on
+          existing (non-listed) cards.
+        </p>
+        <p id="inbox-folder-path" class="inbox-folder-path" aria-live="polite">Inbox: …</p>
+        <p id="inbox-photos-source" class="inbox-pending" aria-live="polite">Photos source: …</p>
+        <p id="inbox-pending" class="inbox-pending" aria-live="polite">Pending new cards: —</p>
+        <div class="marketplace-connect" id="marketplace-connect">
+          <div class="connect-row">
+            <button id="connect-mercari-btn" type="button" class="secondary-btn connect-btn">Connect to Mercari</button>
+            <span id="mercari-connect-status" class="connect-status">Mercari: not connected</span>
+          </div>
+          <div class="connect-row">
+            <button id="connect-ebay-btn" type="button" class="secondary-btn connect-btn">Connect to eBay</button>
+            <span id="ebay-connect-status" class="connect-status">eBay: not connected</span>
+          </div>
         </div>
-        <button id="add-card-btn" type="button" class="add-btn">Add</button>
+        <div class="marketplace-choices">
+          <label><input id="marketplace-mercari" type="checkbox" checked /> List on Mercari</label>
+          <label><input id="marketplace-ebay" type="checkbox" checked /> List on eBay</label>
+        </div>
+        <button id="download-photos-btn" type="button" class="add-btn">Download photos</button>
+        <button id="add-new-cards-btn" type="button" class="secondary-btn">Add new cards</button>
+        <button id="rescan-inbox-btn" type="button" class="secondary-btn">Rescan all cards</button>
+        <button id="rescan-prices-btn" type="button" class="secondary-btn">Rescan listing prices</button>
         <p id="add-card-status" class="add-card-status" role="status"></p>
       </section>
 
       <section class="card draft-activity">
-        <h1 class="header-title">// AUTO-LISTER — DRAFT ACTIVITY</h1>
+        <h1 class="header-title"><span class="header-slashes">//</span> AUTO-LISTER — CURRENT LISTINGS</h1>
         <p class="header-status">
-          watches <strong>autolist-intake/</strong> · values the front photo · drafts at 0% over market for review
-          (never publishes) · <span class="draft-mode">DRAFT MODE</span> · service running
+          inbox <strong id="header-inbox-label">autolist-inbox/</strong> · values the front photo · posts Mercari live at 0% over market
+          · flags listings outside <strong>±5%</strong> of posted · <span class="live-mode">LIVE MODE</span>
         </p>
 
         <div class="stats-strip">
+          <div class="stat"><span id="stat-listed" class="stat-value">0</span><span class="stat-label">live</span></div>
           <div class="stat"><span id="stat-drafts" class="stat-value">0</span><span class="stat-label">drafts</span></div>
           <div class="stat"><span id="stat-total-value" class="stat-value">$0</span><span class="stat-label">total list value</span></div>
           <div class="stat"><span id="stat-queue" class="stat-value">0</span><span class="stat-label">in queue</span></div>
@@ -40,10 +65,12 @@
         <table class="draft-activity-table">
           <thead>
             <tr>
-              <th>Title</th>
-              <th>VALUE</th>
-              <th>LIST</th>
-              <th>PHOTOS</th>
+              <th>Card</th>
+              <th>POSTED</th>
+              <th>MARKET</th>
+              <th>DELTA</th>
+              <th>HEALTH</th>
+              <th>STATUS</th>
             </tr>
           </thead>
           <tbody id="draft-activity-body"></tbody>
@@ -52,20 +79,103 @@
 
       <section class="card needs-review">
         <h2>Needs Review</h2>
-        <table class="draft-activity-table needs-review-table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>PG</th>
-              <th>TCG</th>
-              <th>EBAY</th>
-              <th>PRICE</th>
-              <th>ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody id="needs-review-body"></tbody>
-        </table>
+        <p class="section-note">
+          Auto-list only when comps agree within 15%. Price drift beyond ±5% of the posted amount also lands here —
+          fix front/back if needed, then hit <strong>Go</strong> / <strong>Repost</strong> to post live on Mercari
+          (ends the old listing manually if still live).
+        </p>
+        <div id="needs-review-body" class="needs-review-list"></div>
       </section>
+
+      <section class="card scalper-panel" id="scalper-panel">
+        <div class="scalper-header">
+          <h1 class="header-title">
+            <span class="header-slashes">//</span> SCALPER — MERCARI HEARTS
+          </h1>
+          <span id="scalper-armed-badge" class="scalper-badge scalper-badge-off">OFF</span>
+        </div>
+        <p id="scalper-status" class="header-status">
+          scans Mercari searches · PokeGrade first photo · hearts clear underpriced slabs · never buys
+        </p>
+
+        <div class="scalper-thresholds" id="scalper-thresholds" aria-label="Deal thresholds">
+          <span class="threshold-chip threshold-heart">≥1.25× heart</span>
+          <span class="threshold-chip threshold-worklist">1.15–1.25× worklist</span>
+          <span class="threshold-chip threshold-suspect">≥5× suspect</span>
+        </div>
+
+        <div class="stats-strip scalper-stats">
+          <div class="stat"><span id="sniper-hearted" class="stat-value">0</span><span class="stat-label">hearted</span></div>
+          <div class="stat"><span id="sniper-worklist-count" class="stat-value">0</span><span class="stat-label">worklist</span></div>
+          <div class="stat"><span id="sniper-suspects" class="stat-value">0</span><span class="stat-label">suspect</span></div>
+          <div class="stat"><span id="sniper-seen" class="stat-value">0</span><span class="stat-label">seen</span></div>
+          <div class="stat"><span id="sniper-cycle-hearted" class="stat-value">—</span><span class="stat-label">last cycle ♥</span></div>
+          <div class="stat"><span id="sniper-interval" class="stat-value">—</span><span class="stat-label">interval</span></div>
+        </div>
+
+        <p id="scalper-cycle-note" class="scalper-cycle-note muted">No scan yet — enable with SNIPER_ENABLED=true.</p>
+
+        <div class="scalper-strategies" id="scalper-strategies" hidden>
+          <h3 class="scalper-subhead">Strategies</h3>
+          <div id="scalper-strategy-chips" class="strategy-chips"></div>
+        </div>
+
+        <h3 class="scalper-subhead">Recent hearts</h3>
+        <p class="scalper-lane-note">Auto-hearted on Mercari (≥1.25× market). Open the listing to buy yourself.</p>
+        <div class="scalper-table-wrap">
+          <table class="scalper-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Card</th>
+                <th>ASK</th>
+                <th>MKT</th>
+                <th>RATIO</th>
+                <th>STRAT</th>
+              </tr>
+            </thead>
+            <tbody id="sniper-recent-hearts"></tbody>
+          </table>
+        </div>
+
+        <h3 class="scalper-subhead">Offer worklist</h3>
+        <p class="scalper-lane-note">Near-misses (1.15–1.25×) — worth a human look; not auto-hearted.</p>
+        <div class="scalper-table-wrap">
+          <table class="scalper-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Card</th>
+                <th>ASK</th>
+                <th>MKT</th>
+                <th>RATIO</th>
+                <th>STRAT</th>
+              </tr>
+            </thead>
+            <tbody id="sniper-worklist-items"></tbody>
+          </table>
+        </div>
+
+        <h3 class="scalper-subhead">Suspect outliers</h3>
+        <p class="scalper-lane-note">Extreme ratios (≥5×) — often wrong ID / junk listing. Not hearted.</p>
+        <div class="scalper-table-wrap">
+          <table class="scalper-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Card</th>
+                <th>ASK</th>
+                <th>MKT</th>
+                <th>RATIO</th>
+                <th>STRAT</th>
+              </tr>
+            </thead>
+            <tbody id="sniper-suspect-items"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="collectr-attribution" id="collectr-attribution">Powered by Collectr</p>
     </main>
     <script src="/app.js"></script>
   </body>

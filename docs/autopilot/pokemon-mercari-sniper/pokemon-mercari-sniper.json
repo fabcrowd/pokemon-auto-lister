@@ -1,0 +1,84 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Gens-ai/autopilot/main/tasks.schema.json",
+  "name": "pokemon-mercari-sniper",
+  "description": "Internal Mercari deal sniper (auto-heart): scan strategies, PokeGrade grade/raw comps, heart ≥1.25× deals; sibling module to sell-side auto-lister.",
+  "goals": [
+    "Scan Mercari searches on an interval; price new listings via PokeGrade first-photo CDN",
+    "Auto-heart clear underpriced deals; track worklist and suspect outliers",
+    "Share Mercari Chrome session with sell-side via mutex; never buy or send offers",
+    "Expose read-only Scalper status on the LAN dashboard"
+  ],
+  "nonGoals": [
+    "Auto-buy, offers, or messaging",
+    "eBay/Vinted watchers, ledger UI, fee P&L",
+    "Second Chrome profile or Task Scheduler job",
+    "Changing sell-side pricing or queue"
+  ],
+  "technicalNotes": "Node ESM sibling under src/sniper/. SNIPER_ENABLED gate. State in data/sniper/. Reuse pokegrade client + mercari browser. Tests with fakes only.",
+  "_tdd": true,
+  "requirements": [
+    {
+      "id": "1",
+      "category": "functional",
+      "priority": "high",
+      "description": "Deal math: heart ≥1.25×, worklist 1.15–1.25×, suspect ≥5×, skip below",
+      "acceptance": [
+        "decideDeal(market, ask, thresholds) returns heart | worklist | suspect | skip"
+      ]
+    },
+    {
+      "id": "2",
+      "category": "functional",
+      "priority": "high",
+      "description": "Durable seen vs hearted state under data/sniper/; crash-safe no double-heart",
+      "acceptance": [
+        "hearted checked before click; seen marked only after durable success"
+      ]
+    },
+    {
+      "id": "3",
+      "category": "functional",
+      "priority": "high",
+      "description": "PokeGrade graded comps + evaluateImageUrl + item-id cache",
+      "acceptance": [
+        "Sell path still uses raw value + image hash cache; sniper can cache by item id"
+      ]
+    },
+    {
+      "id": "4",
+      "category": "functional",
+      "priority": "high",
+      "description": "Mercari search scan + ItemLike heart (fakes in CI)",
+      "acceptance": [
+        "Parse first money token; skip SOLD; never use discounted struck-through price alone"
+      ]
+    },
+    {
+      "id": "5",
+      "category": "functional",
+      "priority": "high",
+      "description": "Shared Mercari page mutex for sell drafts and sniper",
+      "acceptance": [
+        "withMercariPage serializes; no second profile launch"
+      ]
+    },
+    {
+      "id": "6",
+      "category": "functional",
+      "priority": "high",
+      "description": "Sniper cycle + scheduler wired behind SNIPER_ENABLED",
+      "acceptance": [
+        "Default off; when enabled runs strategies from config/sniper-strategies.json"
+      ]
+    },
+    {
+      "id": "7",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Read-only Scalper status API + dashboard panel",
+      "acceptance": [
+        "GET /api/sniper returns last cycle, heart counts, recent hearts/worklist"
+      ]
+    }
+  ]
+}

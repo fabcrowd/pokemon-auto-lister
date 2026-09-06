@@ -6,8 +6,10 @@
   "description": "Personal Windows toolkit that turns phone photos into Mercari and eBay drafts (never published).",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node --env-file=.env src/index.js",
     "test": "node --test",
+    "test:vellum": "node scripts/run-vellum-tests.mjs",
+    "vellum-ai": "node scripts/run-vellum-ai.mjs",
     "lint": "eslint ."
   },
   "engines": {
@@ -17,6 +19,7 @@
     "eslint": "^9.39.5"
   },
   "dependencies": {
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "sharp": "^0.35.3"
   }
 }

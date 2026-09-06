@@ -216,6 +216,7 @@ test('GET /api/stats aggregates queue, needsReview, errors, drafts, allTime, tot
     assert.equal(res.body.needsReview, 1);
     assert.equal(res.body.errors, 1);
     assert.equal(res.body.drafts, 1);
+    assert.equal(res.body.listed, 0);
     assert.equal(res.body.allTime, 4);
     assert.equal(res.body.totalListValue, 45);
   });
@@ -254,4 +255,52 @@ test('unknown API route returns 404', async () => {
     const res = await requestJson(server, { method: 'GET', path: '/api/does-not-exist' });
     assert.equal(res.statusCode, 404);
   });
+});
+
+test('GET /api/sniper returns disabled status by default', async () => {
+  await withServer(async ({ server }) => {
+    const res = await requestJson(server, { method: 'GET', path: '/api/sniper' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.enabled, false);
+    assert.equal(res.body.heartedCount, 0);
+    assert.ok(Array.isArray(res.body.recentHearts));
+    assert.ok(Array.isArray(res.body.suspects));
+    assert.ok(res.body.thresholds);
+  });
+});
+
+test('GET /api/sniper uses getSniperStatus when provided', async () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'server-sniper-'));
+  const publicDir = mkdtempSync(path.join(tmpdir(), 'server-sniper-pub-'));
+  try {
+    const queue = createQueue(dataDir);
+    const server = createServer({
+      queue,
+      dataDir,
+      publicDir,
+      getSniperStatus: () => ({
+        enabled: true,
+        running: false,
+        intervalMs: 600000,
+        strategies: [{ id: 'raw', mode: 'raw-crack', query: 'pokemon psa 8' }],
+        seenCount: 3,
+        heartedCount: 1,
+        worklistCount: 1,
+        suspectCount: 0,
+        recentHearts: [{ itemId: 'm1', ask: 40, market: 60, ratio: 1.5 }],
+        worklist: [],
+        lastCycle: { hearted: 1, finishedAt: '2026-08-09T00:00:00.000Z' },
+      }),
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const res = await requestJson(server, { method: 'GET', path: '/api/sniper' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.enabled, true);
+    assert.equal(res.body.heartedCount, 1);
+    assert.equal(res.body.recentHearts[0].itemId, 'm1');
+    await new Promise((resolve) => server.close(resolve));
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(publicDir, { recursive: true, force: true });
+  }
 });

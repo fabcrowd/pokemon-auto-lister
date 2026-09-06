@@ -1,0 +1,14 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+numpy>=1.26.0
+Pillow>=10.0.0
+opencv-python-headless>=4.8.0
+# Optional heavy deps — install when training / running full ID:
+# ultralytics>=8.3.0
+# onnxruntime>=1.17.0
+# open-clip-torch>=2.24.0
+# faiss-cpu>=1.8.0
+# paddleocr>=2.7.0  # optional; oneDNN PIR issues on some Windows CPU builds
+rapidocr-onnxruntime>=1.3.0
+# torch  # install appropriate CPU/CUDA wheel separately

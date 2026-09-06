@@ -68,7 +68,7 @@ export function createTcgplayerClient({
 
   async function getMarketPrice(identity) {
     if (!publicKey || !privateKey) {
-      throw new Error('TCGPlayer configuration error: TCGPLAYER_PUBLIC_KEY/TCGPLAYER_PRIVATE_KEY are not set');
+      return null;
     }
 
     const cacheKey = identityCacheKey(identity);

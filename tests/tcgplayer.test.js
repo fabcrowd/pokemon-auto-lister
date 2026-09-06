@@ -52,7 +52,7 @@ test('unmatched product returns null without throwing', async () => {
   assert.equal(result, null);
 });
 
-test('missing keys throws explicit configuration error', async () => {
+test('missing keys returns null without calling the network', async () => {
   const client = createTcgplayerClient({
     publicKey: '',
     privateKey: '',
@@ -60,9 +60,9 @@ test('missing keys throws explicit configuration error', async () => {
       throw new Error('network should not be called');
     },
   });
-  await assert.rejects(
-    () => client.getMarketPrice({ name: 'Pikachu', set: 'Base Set', number: '58/102' }),
-    /TCGPlayer configuration error/,
+  assert.equal(
+    await client.getMarketPrice({ name: 'Pikachu', set: 'Base Set', number: '58/102' }),
+    null,
   );
 });
 

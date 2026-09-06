@@ -41,7 +41,7 @@ export function createEbaySoldsClient({
 
   async function getRecentSolds(identity) {
     if (!clientId || !clientSecret) {
-      throw new Error('eBay configuration error: EBAY_CLIENT_ID/EBAY_CLIENT_SECRET are not set');
+      return { prices: [], median: null };
     }
 
     const token = await authenticate();
