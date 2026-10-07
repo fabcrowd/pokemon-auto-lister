@@ -6,15 +6,18 @@ const rescanInboxBtn = document.getElementById('rescan-inbox-btn');
 const rescanPricesBtn = document.getElementById('rescan-prices-btn');
 const connectMercariBtn = document.getElementById('connect-mercari-btn');
 const connectEbayBtn = document.getElementById('connect-ebay-btn');
+const connectCollectricsBtn = document.getElementById('connect-collectrics-btn');
 const statusEl = document.getElementById('add-card-status');
 
 async function refreshMarketplaceStatus() {
   const mercariEl = document.getElementById('mercari-connect-status');
   const ebayEl = document.getElementById('ebay-connect-status');
   try {
-    const [mercariRes, ebayRes] = await Promise.all([
+    const collectricsEl = document.getElementById('collectrics-connect-status');
+    const [mercariRes, ebayRes, collectricsRes] = await Promise.all([
       fetch('/api/mercari/status'),
       fetch('/api/ebay/status'),
+      fetch('/api/collectrics/status'),
     ]);
     if (mercariRes.ok && mercariEl) {
       const m = await mercariRes.json();
@@ -30,6 +33,22 @@ async function refreshMarketplaceStatus() {
       } else {
         mercariEl.textContent = 'Mercari: not connected';
         mercariEl.className = 'connect-status';
+      }
+    }
+    if (collectricsRes?.ok && collectricsEl) {
+      const c = await collectricsRes.json();
+      if (c.loggedIn) {
+        collectricsEl.textContent = 'Collectrics: connected';
+        collectricsEl.className = 'connect-status connect-ok';
+      } else if (c.connecting) {
+        collectricsEl.textContent = 'Collectrics: waiting for login in Chrome…';
+        collectricsEl.className = 'connect-status connect-wait';
+      } else if (c.error) {
+        collectricsEl.textContent = `Collectrics: error — ${c.error}`;
+        collectricsEl.className = 'connect-status connect-bad';
+      } else {
+        collectricsEl.textContent = 'Collectrics: not connected';
+        collectricsEl.className = 'connect-status';
       }
     }
     if (ebayRes.ok && ebayEl) {
@@ -69,6 +88,26 @@ if (connectMercariBtn) {
       statusEl.textContent = `Error: ${err.message}`;
     } finally {
       connectMercariBtn.disabled = false;
+    }
+  });
+}
+
+if (connectCollectricsBtn) {
+  connectCollectricsBtn.addEventListener('click', async () => {
+    connectCollectricsBtn.disabled = true;
+    statusEl.textContent = 'Opening Collectrics Chrome — log in on the dashboard if asked…';
+    try {
+      const res = await fetch('/api/collectrics/connect', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Collectrics connect failed (${res.status})`);
+      }
+      statusEl.textContent = data.message || 'Collectrics connect started';
+      await refreshMarketplaceStatus();
+    } catch (err) {
+      statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      connectCollectricsBtn.disabled = false;
     }
   });
 }
@@ -1002,18 +1041,51 @@ function formatRatio(ratio) {
   return `${ratio.toFixed(2)}×`;
 }
 
-function mercariItemUrl(itemId) {
-  if (!itemId) {
-    return null;
+function sniperSource(item) {
+  if (item?.source) {
+    return item.source;
   }
-  return `https://www.mercari.com/item/${itemId}/`;
+  const id = String(item?.itemId || '');
+  if (id.startsWith('hibid:')) {
+    return 'hibid';
+  }
+  if (id.startsWith('facebook:')) {
+    return 'facebook';
+  }
+  return 'mercari';
 }
 
-function mercariThumbUrl(itemId) {
-  if (!itemId) {
+function sniperRawId(itemId) {
+  return String(itemId || '').replace(/^(hibid|facebook|mercari):/, '');
+}
+
+function sniperListingUrl(item) {
+  if (item?.listingUrl) {
+    return item.listingUrl;
+  }
+  const id = sniperRawId(item?.itemId);
+  if (!id) {
     return null;
   }
-  return `https://u-mercari-images.mercdn.net/photos/${itemId}_1.jpg`;
+  const source = sniperSource(item);
+  if (source === 'hibid') {
+    return `https://hibid.com/lot/${id}`;
+  }
+  if (source === 'facebook') {
+    return `https://www.facebook.com/marketplace/item/${id}`;
+  }
+  return `https://www.mercari.com/item/${id}/`;
+}
+
+function sniperThumbUrl(item) {
+  if (item?.imageUrl) {
+    return item.imageUrl;
+  }
+  if (sniperSource(item) === 'mercari') {
+    const id = sniperRawId(item?.itemId);
+    return id ? `https://u-mercari-images.mercdn.net/photos/${id}_1.jpg` : null;
+  }
+  return null;
 }
 
 function sniperCardLabel(item) {
@@ -1021,7 +1093,7 @@ function sniperCardLabel(item) {
   if (identity?.name) {
     return [identity.name, identity.number, identity.set].filter(Boolean).join(' · ');
   }
-  return item.itemId || 'Mercari listing';
+  return item.title || item.itemId || 'Listing';
 }
 
 function sniperModeLabel(mode) {
@@ -1088,7 +1160,9 @@ function renderSniperTable(tbody, items, emptyText, lane) {
 
     const thumbCell = document.createElement('td');
     thumbCell.className = 'scalper-thumb-cell';
-    const thumbUrl = mercariThumbUrl(item.itemId);
+    const thumbPair = document.createElement('div');
+    thumbPair.className = 'scalper-thumb-pair';
+    const thumbUrl = sniperThumbUrl(item);
     if (thumbUrl) {
       const img = document.createElement('img');
       img.className = 'scalper-thumb';
@@ -1099,7 +1173,23 @@ function renderSniperTable(tbody, items, emptyText, lane) {
       img.addEventListener('error', () => {
         img.replaceWith(document.createTextNode(''));
       });
-      thumbCell.appendChild(img);
+      thumbPair.appendChild(img);
+    }
+    if (item.officialArtUrl) {
+      const art = document.createElement('img');
+      art.className = 'scalper-thumb scalper-thumb-official';
+      art.src = item.officialArtUrl;
+      art.alt = 'Official art';
+      art.title = 'Official art (verify ID)';
+      art.loading = 'lazy';
+      art.referrerPolicy = 'no-referrer';
+      art.addEventListener('error', () => {
+        art.replaceWith(document.createTextNode(''));
+      });
+      thumbPair.appendChild(art);
+    }
+    if (thumbPair.childNodes.length) {
+      thumbCell.appendChild(thumbPair);
     }
     row.appendChild(thumbCell);
 
@@ -1107,14 +1197,14 @@ function renderSniperTable(tbody, items, emptyText, lane) {
     cardCell.className = 'scalper-card-cell';
     const link = document.createElement('a');
     link.className = 'scalper-item-link';
-    link.href = mercariItemUrl(item.itemId) || '#';
+    link.href = sniperListingUrl(item) || '#';
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = sniperCardLabel(item);
     cardCell.appendChild(link);
     const meta = document.createElement('div');
     meta.className = 'scalper-item-meta';
-    const parts = [item.itemId, formatRelativeTime(item.at)].filter(Boolean);
+    const parts = [sniperSource(item), item.itemId, formatRelativeTime(item.at)].filter(Boolean);
     meta.textContent = parts.join(' · ');
     cardCell.appendChild(meta);
     row.appendChild(cardCell);
@@ -1150,7 +1240,8 @@ function renderStrategyChips(container, strategies) {
     const chip = document.createElement('span');
     chip.className = 'strategy-chip';
     const grade = strategy.grade != null ? ` PSA ${strategy.grade}` : '';
-    chip.textContent = `${sniperModeLabel(strategy.mode)}${grade}: ${strategy.query || strategy.id}`;
+    const market = strategy.marketplace && strategy.marketplace !== 'mercari' ? ` · ${strategy.marketplace}` : '';
+    chip.textContent = `${sniperModeLabel(strategy.mode)}${grade}${market}: ${strategy.query || strategy.id}`;
     container.appendChild(chip);
   });
 }
@@ -1225,7 +1316,7 @@ async function refreshSniper() {
 
     if (!data.enabled) {
       statusEl.innerHTML =
-        'scans Mercari searches · PokeGrade first photo · hearts clear underpriced slabs · <strong>off</strong> (set SNIPER_ENABLED=true)';
+        'scans Mercari, HiBid, and Facebook Marketplace · PokeGrade photos + title/description vs ask · <strong>off</strong> (set SNIPER_ENABLED=true)';
       intervalEl.textContent = '—';
       cycleHeartedEl.textContent = '—';
       cycleNoteEl.textContent = 'Sniper disabled — sell-side lister still runs normally.';
@@ -1233,7 +1324,7 @@ async function refreshSniper() {
       const mins = Math.max(1, Math.round((data.intervalMs || 600000) / 60000));
       intervalEl.textContent = `${mins}m`;
       statusEl.innerHTML =
-        `scans Mercari every <strong>${mins} min</strong> · PokeGrade first photo · hearts ≥1.25× · <span class="live-mode">never buys</span>`;
+        `scans Mercari / HiBid / Facebook every <strong>${mins} min</strong> · PokeGrade photos + title/description vs ask · ≥1.25× · <span class="live-mode">never buys or bids</span>`;
 
       const last = data.lastCycle;
       if (last?.finishedAt) {
@@ -1265,6 +1356,442 @@ async function refreshSniper() {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatPct(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '—';
+  }
+  const rounded = value.toFixed(1);
+  return `${value > 0 ? '+' : ''}${rounded}%`;
+}
+
+function pctClass(value) {
+  if (typeof value !== 'number') {
+    return '';
+  }
+  if (value > 0) {
+    return 'research-pos';
+  }
+  if (value < 0) {
+    return 'research-neg';
+  }
+  return '';
+}
+
+function researchEmptyRow(colspan, text) {
+  return `<tr><td class="scalper-empty" colspan="${colspan}">${text}</td></tr>`;
+}
+
+function renderResearchSets(tbody, sets) {
+  if (!tbody) {
+    return;
+  }
+  if (!Array.isArray(sets) || sets.length === 0) {
+    tbody.innerHTML = researchEmptyRow(5, 'No set rankings yet — run research.');
+    return;
+  }
+  tbody.innerHTML = sets
+    .map((set) => {
+      const change = set.change7d ?? set.changeSinceLast;
+      return `<tr>
+        <td>
+          <div class="scalper-card-cell">${escapeHtml(set.set || 'Unknown set')}</div>
+          <div class="scalper-item-meta">${escapeHtml(set.setCode || '')} · ${set.cardCount ?? 0} cards</div>
+        </td>
+        <td>${typeof set.totalMarket === 'number' ? money(set.totalMarket) : '—'}</td>
+        <td>${typeof set.sealedMarket === 'number' ? money(set.sealedMarket) : '—'}</td>
+        <td class="${pctClass(change)}">${formatPct(change)}</td>
+        <td>${typeof set.score === 'number' ? set.score.toFixed(1) : '—'}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+function renderResearchCards(tbody, cards) {
+  if (!tbody) {
+    return;
+  }
+  if (!Array.isArray(cards) || cards.length === 0) {
+    tbody.innerHTML = researchEmptyRow(5, 'No card movers yet — run research (needs JUSTTCG_API_KEY for live 7d/30d).');
+    return;
+  }
+  tbody.innerHTML = cards
+    .map((card) => {
+      const flags = Array.isArray(card.flags) && card.flags.length ? ` · ${card.flags.join(', ')}` : '';
+      return `<tr>
+        <td>
+          <div class="scalper-card-cell">${escapeHtml(card.name || 'Unknown card')}</div>
+          <div class="scalper-item-meta">${escapeHtml([card.number, card.set].filter(Boolean).join(' · '))}${escapeHtml(flags)}</div>
+        </td>
+        <td>${typeof card.price === 'number' ? money(card.price) : '—'}</td>
+        <td class="${pctClass(card.change7d)}">${formatPct(card.change7d)}</td>
+        <td class="${pctClass(card.change30d)}">${formatPct(card.change30d)}</td>
+        <td>${typeof card.score === 'number' ? card.score.toFixed(1) : '—'}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+async function refreshResearch() {
+  const statusEl = document.getElementById('research-status');
+  const badgeEl = document.getElementById('research-badge');
+  const cardCountEl = document.getElementById('research-card-count');
+  const setCountEl = document.getElementById('research-set-count');
+  const lastRunEl = document.getElementById('research-last-run');
+  const sourcesEl = document.getElementById('research-sources');
+  const setsBody = document.getElementById('research-sets-body');
+  const cardsBody = document.getElementById('research-cards-body');
+  if (!statusEl || !setsBody || !cardsBody) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/research');
+    if (!res.ok) {
+      return;
+    }
+    const data = await res.json();
+    if (cardCountEl) cardCountEl.textContent = String((data.cards || []).length);
+    if (setCountEl) setCountEl.textContent = String((data.sets || []).length);
+    if (lastRunEl) {
+      lastRunEl.textContent = data.lastRun ? formatRelativeTime(data.lastRun) : '—';
+    }
+    if (sourcesEl) {
+      sourcesEl.textContent = (data.sources || []).length ? data.sources.join('+') : '—';
+    }
+    if (badgeEl) {
+      badgeEl.classList.remove('scalper-badge-off', 'scalper-badge-armed', 'scalper-badge-scanning');
+      if (data.running) {
+        badgeEl.textContent = 'RUNNING';
+        badgeEl.classList.add('scalper-badge-scanning');
+      } else if (data.lastRun) {
+        badgeEl.textContent = 'READY';
+        badgeEl.classList.add('scalper-badge-armed');
+      } else {
+        badgeEl.textContent = 'IDLE';
+        badgeEl.classList.add('scalper-badge-off');
+      }
+    }
+    if (data.running) {
+      statusEl.textContent = 'Research run in progress…';
+    } else if (data.error) {
+      statusEl.textContent = `Last run ${data.lastRun ? formatRelativeTime(data.lastRun) : ''}: ${data.error}`;
+    } else if (data.lastRun) {
+      statusEl.textContent = `Last run ${formatRelativeTime(data.lastRun)} · ${(data.sources || []).join(', ') || 'no sources'}`;
+    } else {
+      statusEl.textContent = 'No research run yet.';
+    }
+    renderResearchSets(setsBody, data.sets);
+    renderResearchCards(cardsBody, data.cards);
+  } catch {
+    // ignore poll errors
+  }
+}
+
+const runResearchBtn = document.getElementById('run-research-btn');
+if (runResearchBtn) {
+  runResearchBtn.addEventListener('click', async () => {
+    runResearchBtn.disabled = true;
+    const statusEl = document.getElementById('research-status');
+    if (statusEl) statusEl.textContent = 'Running research…';
+    try {
+      const res = await fetch('/api/research/run', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Research failed (${res.status})`);
+      }
+      if (statusEl) {
+        statusEl.textContent = `Ranked ${data.cards?.length ?? 0} cards · ${data.sets?.length ?? 0} sets`;
+      }
+      await refreshResearch();
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      runResearchBtn.disabled = false;
+    }
+  });
+}
+
+/** @type {{ files: File[], frontIndex: number, urls: string[] }} */
+const scannerState = { files: [], frontIndex: 0, urls: [] };
+
+function formatMoney(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '—';
+  }
+  return `$${value.toFixed(2)}`;
+}
+
+function renderScannerThumbs() {
+  const root = document.getElementById('scanner-thumbs');
+  const runBtn = document.getElementById('scanner-run-btn');
+  if (!root) {
+    return;
+  }
+  scannerState.urls.forEach((url) => URL.revokeObjectURL(url));
+  scannerState.urls = scannerState.files.map((file) => URL.createObjectURL(file));
+  root.innerHTML = '';
+  scannerState.files.forEach((file, index) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `scanner-thumb-btn${index === scannerState.frontIndex ? ' is-front' : ''}`;
+    btn.title = index === scannerState.frontIndex ? 'Front (selected)' : 'Tap to set as front';
+    const img = document.createElement('img');
+    img.src = scannerState.urls[index];
+    img.alt = file.name || `Photo ${index + 1}`;
+    btn.appendChild(img);
+    btn.addEventListener('click', () => {
+      scannerState.frontIndex = index;
+      renderScannerThumbs();
+    });
+    root.appendChild(btn);
+  });
+  if (runBtn) {
+    runBtn.disabled = scannerState.files.length === 0;
+  }
+}
+
+function renderScannerResult(data) {
+  const root = document.getElementById('scanner-result');
+  const shell = document.getElementById('pokedex-shell');
+  if (!root) {
+    return;
+  }
+  root.hidden = false;
+  root.innerHTML = '';
+  if (shell) {
+    shell.classList.toggle('is-lit', Boolean(data?.ok));
+    shell.classList.toggle('is-warn', !data?.ok);
+  }
+
+  const identity = data.identity;
+  const title = identity?.name
+    ? [identity.name, identity.number, identity.set].filter(Boolean).join(' · ')
+    : 'No identity';
+
+  const layout = document.createElement('div');
+  layout.className = 'scanner-result-layout';
+
+  // ── Photo pair: uploaded shot + official art ─────────────────────────────
+  const photoPair = document.createElement('div');
+  photoPair.className = 'scanner-photo-pair';
+
+  if (data.scanDir != null && data.frontIndex != null) {
+    const uploaded = document.createElement('img');
+    uploaded.className = 'scanner-photo scanner-photo-uploaded';
+    uploaded.src = `/api/scan-photo?dir=${encodeURIComponent(data.scanDir)}&index=${data.frontIndex}`;
+    uploaded.alt = 'Your scan';
+    uploaded.title = 'Your scan';
+    photoPair.appendChild(uploaded);
+  }
+
+  if (data.officialArtUrl) {
+    const art = document.createElement('img');
+    art.className = 'scanner-photo scanner-photo-official';
+    art.src = data.officialArtUrl;
+    art.alt = 'Official art';
+    art.loading = 'lazy';
+    art.referrerPolicy = 'no-referrer';
+    photoPair.appendChild(art);
+  }
+
+  layout.appendChild(photoPair);
+
+  // ── Meta column ──────────────────────────────────────────────────────────
+  const meta = document.createElement('div');
+  meta.className = 'scanner-result-meta';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'scanner-title-row';
+  const h = document.createElement('p');
+  h.className = 'scanner-result-title';
+  h.textContent = title;
+  titleRow.appendChild(h);
+
+  if (data.vellumConfidence) {
+    const badge = document.createElement('span');
+    const level = data.vellumConfidence;
+    badge.className = `scan-confidence-badge scan-confidence-${level}`;
+    badge.textContent = level.toUpperCase();
+    titleRow.appendChild(badge);
+  }
+
+  meta.appendChild(titleRow);
+
+  const detail = document.createElement('p');
+  detail.className = 'muted';
+  const sources = Array.isArray(data.pricingSources) ? data.pricingSources.join(', ') : '';
+  detail.textContent = [
+    data.ok ? 'Identified' : 'Not identified',
+    data.mode ? `mode: ${data.mode}` : null,
+    data.action || null,
+    data.reason || null,
+    sources ? `pricing: ${sources}` : 'pricing: none',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  meta.appendChild(detail);
+
+  if (data.identityConflict && Array.isArray(data.candidates) && data.candidates.length > 0) {
+    const conflictWrap = document.createElement('div');
+    conflictWrap.className = 'scan-candidates';
+    const conflictLabel = document.createElement('p');
+    conflictLabel.className = 'scan-candidates-label';
+    conflictLabel.textContent = 'Identity conflict — candidates:';
+    conflictWrap.appendChild(conflictLabel);
+    data.candidates.slice(0, 5).forEach((c) => {
+      const row = document.createElement('p');
+      row.className = 'scan-candidate-row';
+      const name = c?.name || c?.identity?.name || String(c);
+      const conf = c?.confidence ? ` [${c.confidence}]` : '';
+      row.textContent = `${name}${conf}`;
+      conflictWrap.appendChild(row);
+    });
+    meta.appendChild(conflictWrap);
+  }
+
+  if (data.suggested) {
+    const sug = document.createElement('p');
+    sug.className = 'scanner-suggested';
+    sug.textContent = `Suggested · Mercari ${formatMoney(data.suggested.mercari)} · eBay ${formatMoney(data.suggested.ebay)}`;
+    meta.appendChild(sug);
+  }
+
+  const comps = data.comps || {};
+  const pricingSources = new Set(Array.isArray(data.pricingSources) ? data.pricingSources : []);
+  const table = document.createElement('table');
+  table.className = 'scanner-comps';
+  table.innerHTML = '<thead><tr><th>Source</th><th>Value</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  const rows = [
+    ['pokegrade', comps.pokegrade],
+    ['collectr', comps.collectr],
+    ['tcgplayer', comps.tcgplayer],
+    ['ebay', comps.ebay],
+    ['justtcg', comps.justtcg],
+    ['rapidapi', comps.rapidapi],
+    ['pokewallet', comps.pokewallet],
+  ];
+  rows.forEach(([name, value]) => {
+    const tr = document.createElement('tr');
+    if (pricingSources.has(name)) {
+      tr.className = 'scanner-comp-active';
+    }
+    const tdN = document.createElement('td');
+    tdN.textContent = name;
+    const tdV = document.createElement('td');
+    tdV.textContent = formatMoney(typeof value === 'number' ? value : null);
+    tr.appendChild(tdN);
+    tr.appendChild(tdV);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  meta.appendChild(table);
+  layout.appendChild(meta);
+  root.appendChild(layout);
+
+  // ── Verification grid ────────────────────────────────────────────────────
+  if (data.gridPngB64) {
+    const gridWrap = document.createElement('div');
+    gridWrap.className = 'scan-verify-grid-wrap';
+    const label = document.createElement('p');
+    label.className = 'scan-verify-grid-label';
+    label.textContent = 'Candidate verification grid';
+    gridWrap.appendChild(label);
+    const gridImg = document.createElement('img');
+    gridImg.className = 'scan-verify-grid';
+    gridImg.src = `data:image/png;base64,${data.gridPngB64}`;
+    gridImg.alt = 'Verification grid';
+    gridWrap.appendChild(gridImg);
+    root.appendChild(gridWrap);
+  }
+}
+
+function bindScannerUi() {
+  const fileInput = document.getElementById('scanner-files');
+  const pickBtn = document.getElementById('scanner-pick-btn');
+  const runBtn = document.getElementById('scanner-run-btn');
+  const status = document.getElementById('scanner-status');
+  const shell = document.getElementById('pokedex-shell');
+  if (!fileInput || !pickBtn || !runBtn) {
+    return;
+  }
+
+  pickBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    scannerState.files = Array.from(fileInput.files || []);
+    scannerState.frontIndex = 0;
+    const result = document.getElementById('scanner-result');
+    if (result) {
+      result.hidden = true;
+      result.innerHTML = '';
+    }
+    if (shell) {
+      shell.classList.remove('is-lit', 'is-scanning', 'is-warn');
+    }
+    if (status) {
+      status.textContent = scannerState.files.length
+        ? `${scannerState.files.length} photo(s) — tap a thumb to mark front, then Scan`
+        : '';
+    }
+    renderScannerThumbs();
+  });
+
+  runBtn.addEventListener('click', async () => {
+    if (!scannerState.files.length) {
+      return;
+    }
+    runBtn.disabled = true;
+    pickBtn.disabled = true;
+    if (shell) {
+      shell.classList.add('is-scanning');
+      shell.classList.remove('is-lit', 'is-warn');
+    }
+    if (status) {
+      status.textContent = 'Scanning — identify + pricing…';
+    }
+    try {
+      const body = new FormData();
+      scannerState.files.forEach((file) => body.append('photos', file, file.name));
+      body.append('frontIndex', String(scannerState.frontIndex));
+      const res = await fetch('/api/scan', { method: 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Scan failed (${res.status})`);
+      }
+      renderScannerResult(data);
+      const priced = Array.isArray(data.pricingSources) ? data.pricingSources.length : 0;
+      if (status) {
+        status.textContent = data.ok
+          ? `Done — ${priced} pricing source(s)${data.suggested ? ` · suggest $${data.suggested.mercari}` : ''}`
+          : `No ID — ${data.reason || 'unknown'}`;
+      }
+    } catch (err) {
+      if (shell) {
+        shell.classList.remove('is-lit');
+      }
+      if (status) {
+        status.textContent = `Error: ${err.message}`;
+      }
+    } finally {
+      if (shell) {
+        shell.classList.remove('is-scanning');
+      }
+      runBtn.disabled = scannerState.files.length === 0;
+      pickBtn.disabled = false;
+    }
+  });
+}
+
+bindScannerUi();
+
 function poll() {
   refreshStats();
   refreshCollectrBanner();
@@ -1274,6 +1801,7 @@ function poll() {
   refreshDraftActivity();
   refreshNeedsReview();
   refreshSniper();
+  refreshResearch();
 }
 
 poll();

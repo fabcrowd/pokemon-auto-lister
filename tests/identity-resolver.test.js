@@ -107,3 +107,63 @@ test('local-only abstain when VellumAI abstains', async () => {
   assert.equal(result.localAbstained, true);
   assert.equal(result.identity, null);
 });
+
+test('local-only returns Vellum identity without calling PokeGrade', async () => {
+  const resolver = createIdentityResolver({
+    mode: 'local-only',
+    vellumEnabled: true,
+    pokegradeClient: {
+      evaluateFrontImage: async () => {
+        throw new Error('should not call pokegrade');
+      },
+    },
+    vellumClient: createMockVellumAiClient(async () => ({
+      identity: CHARIZARD,
+      confidence: 'high',
+    })),
+  });
+  const result = await resolver.evaluateFrontImage('/tmp/front.jpg');
+  assert.equal(result.mode, 'local-only');
+  assert.deepEqual(result.identity, CHARIZARD);
+  assert.equal(result.pokegradeSkipped, true);
+});
+
+test('local-only fails closed when Vellum is disabled', async () => {
+  const resolver = createIdentityResolver({
+    mode: 'local-only',
+    vellumEnabled: false,
+    pokegradeClient: {
+      evaluateFrontImage: async () => ({ identity: CHARIZARD }),
+    },
+  });
+  const result = await resolver.evaluateFrontImage('/tmp/front.jpg');
+  assert.equal(result.identity, null);
+  assert.match(result.reason, /VELLUM_AI_ENABLED/);
+});
+
+test('identityCompareKey falls back to name|set|number', () => {
+  assert.equal(
+    identityCompareKey({ name: 'Pikachu', set: 'Base Set', number: '58' }),
+    'pikachu|baseset|58',
+  );
+  assert.equal(identityCompareKey(null), '');
+  assert.equal(identityCompareKey({ name: 'Pikachu', set: 'Base' }), 'pikachu|base');
+});
+
+test('dual treats low-confidence Vellum as abstain', async () => {
+  const resolver = createIdentityResolver({
+    mode: 'dual',
+    vellumEnabled: true,
+    pokegradeClient: {
+      evaluateFrontImage: async () => ({ identity: CHARIZARD, value: 50, confidence: 'high' }),
+    },
+    vellumClient: createMockVellumAiClient(async () => ({
+      identity: BLASTOISE,
+      confidence: 'low',
+    })),
+  });
+  const result = await resolver.evaluateFrontImage('/tmp/front.jpg');
+  assert.equal(result.identityConflict, false);
+  assert.equal(result.localAbstained, true);
+  assert.deepEqual(result.identity, CHARIZARD);
+});

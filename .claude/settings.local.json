@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\daroo\\\\Downloads\" | Where-Object { $_.Name -match 'pokemon|card|extract' } | Select-Object Name | Sort-Object Name)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\daroo\\\\Downloads\" | Where-Object { $_.Extension -match '\\\\.\\(jpg|jpeg|png\\)' } | Select-Object Name | Sort-Object Name)",
+      "PowerShell(python \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\chrome-extension\\\\create_icons.py\")",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai\\\\models\" -ErrorAction SilentlyContinue | Select-Object Name, Length; if \\(-not \\(Test-Path \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai\\\\models\"\\)\\) { Write-Host \"models dir missing\" })",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\data\" -Directory -ErrorAction SilentlyContinue | Select-Object Name; if \\(-not \\(Test-Path \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\data\"\\)\\) { Write-Host \"data/ missing\" })",
+      "PowerShell($trainCount = \\(ls \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\data\\\\vellum-detect\\\\images\\\\train\" 2>&1 | Measure-Object\\).Count; $valCount = \\(ls \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\data\\\\vellum-detect\\\\images\\\\val\" 2>&1 | Measure-Object\\).Count; echo \"train: $trainCount  val: $valCount\")",
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai\"; .\\\\.venv\\\\Scripts\\\\python.exe detect/bootstrap.py --skip-art --skip-synth --epochs 50 --imgsz 640 2>&1)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(cd 'C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai'; $env:PYTHONIOENCODING='utf-8'; .\\\\.venv\\\\Scripts\\\\python.exe detect/stress_test.py --detect-only --rounds 10 --images 20)",
+      "PowerShell(cd 'C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai'; $env:PYTHONIOENCODING='utf-8'; .\\\\.venv\\\\Scripts\\\\python.exe detect/label_marketplace.py --dry-run)",
+      "PowerShell(cd 'C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\tools\\\\vellum-ai'; $env:PYTHONIOENCODING='utf-8'; .\\\\.venv\\\\Scripts\\\\python.exe detect/label_marketplace.py --retrain --epochs 30 2>&1)",
+      "PowerShell(Start-Process -FilePath \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\\\\dist\\\\PokemonCardScanner-Setup.exe\" -ArgumentList \"/S\" -Verb RunAs -Wait; Write-Host \"Installer exited with: $LASTEXITCODE\")",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\PokemonCardScanner\" -ErrorAction SilentlyContinue | Select-Object Name, @{N='Size';E={if\\($_.PSIsContainer\\){'<dir>'}else{$_.Length}}})",
+      "PowerShell(Get-Service *)",
+      "PowerShell(sc.exe qc PokemonCardScanner 2>&1)",
+      "PowerShell(sc.exe queryex PokemonCardScanner 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PokemonCardScanner\\\\nssm\\\\nssm.exe\" get PokemonCardScanner AppParameters 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PokemonCardScanner\\\\nssm\\\\nssm.exe\" get PokemonCardScanner AppDirectory 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PokemonCardScanner\\\\nssm\\\\nssm.exe\" get PokemonCardScanner Application 2>&1)",
+      "PowerShell(netstat *)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\daroo\\\\Desktop\\\\Repos\\\\cardscanner\\\\pokemon-auto-lister\" -Force | Where-Object {$_.PSIsContainer} | Select-Object Name)"
+    ]
+  }
+}

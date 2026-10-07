@@ -17,6 +17,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 
 from vellum_ai import __version__
+from vellum_ai.detect_multi import detect_all_from_bytes
 from vellum_ai.pipeline import identify_image_bytes
 from vellum_ai.retrieve import get_index
 
@@ -29,10 +30,18 @@ def health() -> dict:
     return {
         "ok": True,
         "service": "vellum-ai",
-        "version": __version(),
+        "version": __version__,
         "catalog": index.available(),
         "catalogDir": str(index.catalog_dir),
     }
+
+
+@app.post("/detect-multi")
+async def detect_multi(photo: UploadFile = File(...)) -> JSONResponse:
+    """Detect all cards in one photo. Returns a list of card crops (base64 JPEG)."""
+    image_bytes = await photo.read()
+    cards = detect_all_from_bytes(image_bytes)
+    return JSONResponse({"cards": cards, "count": len(cards)})
 
 
 @app.post("/identify")

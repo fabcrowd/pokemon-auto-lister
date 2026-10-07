@@ -11,6 +11,7 @@ from .collectr_resolve import get_collectr_catalog
 from .detect import detect_and_rectify
 from .fusion import default_margin, default_require_ocr, fuse_candidates
 from .ocr import run_ocr
+from .phash import get_catalog_phash_lookup, rerank_clip_hits
 from .rectify import blur_score, estimate_centering, glare_score
 from .retrieve import get_index
 
@@ -64,6 +65,8 @@ def _identify_rectified(rectified: np.ndarray) -> Dict[str, Any]:
 
     index = get_index()
     clip_hits = index.search(rectified, k=20) if index.available() else []
+    if clip_hits:
+        clip_hits = rerank_clip_hits(rectified, clip_hits, get_catalog_phash_lookup())
     ocr = run_ocr(rectified)
     finish = _finish_heuristic(rectified)
 

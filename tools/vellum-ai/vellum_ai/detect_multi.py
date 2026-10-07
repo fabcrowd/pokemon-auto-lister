@@ -11,6 +11,7 @@ Entry point for the server: detect_all_from_bytes(image_bytes) -> list[dict]
 from __future__ import annotations
 
 import base64
+import json as _json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,6 +26,10 @@ from .rectify import (
     rectify_card,
     rectify_from_box,
 )
+
+# Harvest state for self-improving loop
+_last_harvest_ts: float = 0.0
+_HARVEST_COOLDOWN: float = 30.0
 
 # Maximum aspect ratio for partial/clipped cards (half-card portrait → ~2.8)
 _PARTIAL_ASPECT_MAX = 3.5
@@ -147,6 +152,35 @@ def _contour_partial_edge_candidates(
     return candidates
 
 
+def _maybe_harvest(image_bgr: np.ndarray, contour_hits: List[Dict[str, Any]]) -> None:
+    """Save a hard-example frame when ONNX missed but contour found cards."""
+    global _last_harvest_ts
+    harvest_dir_s = os.environ.get("VELLUM_HARVEST_DIR", "")
+    if not harvest_dir_s:
+        return
+    import time as _time
+    now = _time.time()
+    if now - _last_harvest_ts < _HARVEST_COOLDOWN:
+        return
+    _last_harvest_ts = now
+    harvest_dir = Path(harvest_dir_s)
+    try:
+        harvest_dir.mkdir(parents=True, exist_ok=True)
+        ts_ms = int(now * 1000)
+        stem = f"frame_{ts_ms}"
+        _, jpeg = cv2.imencode(".jpg", image_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        (harvest_dir / f"{stem}.jpg").write_bytes(jpeg.tobytes())
+        meta = {
+            "timestamp_ms": ts_ms,
+            "source": "contour",
+            "boxes": [list(h["box"]) for h in contour_hits],
+            "scores": [h.get("confidence") for h in contour_hits],
+        }
+        (harvest_dir / f"{stem}.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # never crash the server over harvest failure
+
+
 def detect_all_from_bytes(image_bytes: bytes) -> List[Dict[str, Any]]:
     """Decode image bytes and return all detected card crops.
 
@@ -170,12 +204,17 @@ def detect_all_from_bytes(image_bytes: bytes) -> List[Dict[str, Any]]:
 def detect_all_cards_with_crops(image_bgr: np.ndarray) -> List[Dict[str, Any]]:
     path = Path(os.environ.get("VELLUM_AI_DETECT_ONNX", DEFAULT_ONNX))
     hits: List[Dict[str, Any]] = []
+    onnx_missed = False
 
     if path.is_file():
         hits = _detect_onnx_multi(image_bgr, path)
+        if not hits:
+            onnx_missed = True
 
     if not hits:
         hits = _contour_multi(image_bgr)
+        if hits and onnx_missed:
+            _maybe_harvest(image_bgr, hits)
 
     results = []
     for i, hit in enumerate(hits):

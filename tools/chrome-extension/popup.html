@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Card Scanner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 660px;
+      background: #08090d;
+      color: #dde1ee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .results { user-select: text; }
+
+    /* ─── HEADER ─────────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      height: 44px;
+      background: #0e1018;
+      border-bottom: 1px solid #1e2130;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: #c5cadc;
+    }
+
+    .server-pill {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px 4px 8px;
+      border-radius: 20px;
+      background: #13151f;
+      border: 1px solid #1e2130;
+      font-size: 11px;
+      color: #50566e;
+      transition: border-color 0.3s;
+    }
+    .server-pill.ok  { border-color: #10b98133; }
+    .server-pill.err { border-color: #ef444433; }
+
+    .sdot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #2a2e40;
+      flex-shrink: 0;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    .sdot.ok  { background: #10b981; box-shadow: 0 0 7px #10b98166; }
+    .sdot.err { background: #ef4444; box-shadow: 0 0 7px #ef444466; }
+
+    #stext { transition: color 0.3s; }
+    .server-pill.ok  #stext { color: #10b981; }
+    .server-pill.err #stext { color: #ef4444; }
+
+    /* ─── VIEWPORT ───────────────────────────────────────────────────── */
+    .vp-wrap {
+      padding: 0 10px;
+      background: #0b0c12;
+    }
+    .viewport {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      background: #000;
+      overflow: hidden;
+      border-radius: 0 0 6px 6px;
+    }
+    video, canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    canvas { pointer-events: none; }
+
+    .cam-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: #07080c;
+      z-index: 5;
+    }
+    .cam-placeholder p { font-size: 12px; color: #2d3352; }
+
+    /* scanning ring on viewport edge */
+    .viewport::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 2px solid transparent;
+      border-radius: 0 0 6px 6px;
+      pointer-events: none;
+      transition: border-color 0.3s;
+      z-index: 10;
+    }
+    body.scanning .viewport::after {
+      border-color: #6366f133;
+      animation: ring-pulse 2s ease-in-out infinite;
+    }
+    @keyframes ring-pulse {
+      0%, 100% { border-color: #6366f122; }
+      50%       { border-color: #6366f155; }
+    }
+
+    /* ─── ACTION BAR ─────────────────────────────────────────────────── */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 16px;
+      background: #0b0c12;
+      border-top: 1px solid #1a1d2a;
+    }
+
+    #btn-scan {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 26px;
+      height: 42px;
+      border-radius: 8px;
+      border: none;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
+      box-shadow: 0 2px 14px #5b5ef430;
+      transition: box-shadow 0.2s, opacity 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    #btn-scan:hover  { box-shadow: 0 2px 20px #5b5ef450; }
+    #btn-scan:active { transform: scale(0.97); }
+
+    #btn-scan.scanning {
+      background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+      box-shadow: 0 2px 14px #dc262640;
+      animation: scan-glow 1.4s ease-in-out infinite;
+    }
+    @keyframes scan-glow {
+      0%, 100% { box-shadow: 0 0 0 0 #dc262640; }
+      50%       { box-shadow: 0 0 0 8px #dc262600; }
+    }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #fff;
+      opacity: 0;
+      transition: opacity 0.2s;
+      flex-shrink: 0;
+    }
+    #btn-scan.scanning .live-dot {
+      opacity: 1;
+      animation: live-blink 1s step-start infinite;
+    }
+    @keyframes live-blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.15; }
+    }
+
+    .stats-row {
+      display: flex;
+      gap: 18px;
+      margin-left: auto;
+    }
+    .stat-block {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+    }
+    .stat-block .val {
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1;
+      color: #8b92ab;
+    }
+    .stat-block .val.green { color: #10b981; }
+    .stat-block .val.amber { color: #f59e0b; }
+    .stat-block .lbl {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      color: #2d3352;
+    }
+
+    /* ─── RESULTS PANEL ──────────────────────────────────────────────── */
+    .results {
+      max-height: 190px;
+      overflow-y: auto;
+      background: #07080c;
+      border-top: 1px solid #1a1d2a;
+    }
+    .results::-webkit-scrollbar { width: 3px; }
+    .results::-webkit-scrollbar-track { background: transparent; }
+    .results::-webkit-scrollbar-thumb { background: #1e2130; border-radius: 2px; }
+
+    .empty-hint {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 50px;
+      font-size: 11px;
+      color: #22273d;
+      font-style: italic;
+      letter-spacing: 0.2px;
+    }
+
+    .card-row {
+      display: flex;
+      align-items: center;
+      padding: 7px 16px;
+      border-bottom: 1px solid #0e1018;
+      gap: 10px;
+      transition: background 0.15s;
+    }
+    .card-row:hover { background: #0d0f18; }
+    .card-row:last-child { border-bottom: none; }
+
+    .conf-stripe {
+      width: 3px;
+      height: 34px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .conf-stripe.high   { background: #10b981; }
+    .conf-stripe.medium { background: #f59e0b; }
+    .conf-stripe.low, .conf-stripe.abstain { background: #2d3352; }
+
+    .card-meta { flex: 1; min-width: 0; }
+    .card-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #c5cadc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .card-sub {
+      font-size: 11px;
+      color: #3d4460;
+      margin-top: 2px;
+    }
+    .set-chip {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: #6366f118;
+      color: #6366f1;
+      font-weight: 600;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+      margin-right: 3px;
+    }
+
+    .card-price { text-align: right; flex-shrink: 0; }
+    .price-main {
+      font-size: 15px;
+      font-weight: 700;
+      color: #10b981;
+      line-height: 1.1;
+    }
+    .price-type {
+      font-size: 10px;
+      color: #2d3352;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+    .no-price { font-size: 11px; color: #22273d; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .viewport::after,
+      #btn-scan.scanning,
+      #btn-scan.scanning .live-dot { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <circle cx="10" cy="10" r="9" stroke="#6366f1" stroke-width="1.2"/>
+        <line x1="1" y1="10" x2="19" y2="10" stroke="#6366f1" stroke-width="1.2"/>
+        <circle cx="10" cy="10" r="3" fill="#13151f" stroke="#6366f1" stroke-width="1.2"/>
+        <path d="M1 10 A9 9 0 0 1 19 10" fill="#6366f1" fill-opacity="0.12"/>
+      </svg>
+      Card Scanner
+    </div>
+    <div class="server-pill" id="server-pill">
+      <div class="sdot" id="sdot"></div>
+      <span id="stext">connecting…</span>
+    </div>
+  </div>
+
+  <!-- Camera viewport -->
+  <div class="vp-wrap">
+    <div class="viewport" id="viewport">
+      <div class="cam-placeholder" id="cam-placeholder">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+             stroke="#6366f1" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity="0.35">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <p id="cam-status">Starting camera…</p>
+      </div>
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay" width="640" height="480"></canvas>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button id="btn-scan">
+      <div class="live-dot"></div>
+      <span id="btn-label">SCAN</span>
+    </button>
+    <div class="stats-row">
+      <div class="stat-block">
+        <div class="val" id="s-detected">—</div>
+        <div class="lbl">detected</div>
+      </div>
+      <div class="stat-block">
+        <div class="val green" id="s-value">—</div>
+        <div class="lbl">total value</div>
+      </div>
+      <div class="stat-block">
+        <div class="val amber" id="s-ms">—</div>
+        <div class="lbl">ms</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results panel -->
+  <div class="results" id="results">
+    <div class="empty-hint" id="empty-hint">Point camera at cards, then press Scan</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

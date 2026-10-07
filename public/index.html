@@ -3,54 +3,140 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pokemon Auto-Lister</title>
+    <title>Autolist — Pokemon Auto-Lister</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Oxanium:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <header class="app-topbar">
+      <div class="app-topbar-inner">
+        <a class="app-brand" href="#scanner-panel">
+          <span class="app-brand-mark" aria-hidden="true"></span>
+          <span class="app-brand-text">
+            <span class="app-brand-name">Autolist</span>
+            <span class="app-brand-tag">Pokémon sell &amp; watch</span>
+          </span>
+        </a>
+        <nav class="app-nav" aria-label="Main">
+          <a href="#scanner-panel">Scan</a>
+          <a href="#inbox-panel">Inbox</a>
+          <a href="#listings-panel">Listings</a>
+          <a href="#needs-review-panel">Review</a>
+          <a href="#scalper-panel">Deals</a>
+          <a href="#research-panel">Research</a>
+        </nav>
+      </div>
+    </header>
+
     <main class="page">
       <div id="collectr-banner" class="collectr-banner" hidden></div>
       <div id="identity-banner" class="collectr-banner" hidden></div>
-
       <div id="live-toast" class="live-toast" hidden role="status" aria-live="polite"></div>
 
-      <section class="card add-panel" id="inbox-panel">
-        <h2>Add new cards</h2>
-        <p class="section-note">
-          Shared Albums on Windows often do not download. Use <strong>Download photos</strong> to pull
-          recent shots from your iCloud Photos library into the inbox, then <strong>Add new cards</strong>.
-          Use <strong>Rescan all cards</strong> to regroup every inbox photo and re-run identity on
-          existing (non-listed) cards.
-        </p>
-        <p id="inbox-folder-path" class="inbox-folder-path" aria-live="polite">Inbox: …</p>
-        <p id="inbox-photos-source" class="inbox-pending" aria-live="polite">Photos source: …</p>
-        <p id="inbox-pending" class="inbox-pending" aria-live="polite">Pending new cards: —</p>
-        <div class="marketplace-connect" id="marketplace-connect">
-          <div class="connect-row">
-            <button id="connect-mercari-btn" type="button" class="secondary-btn connect-btn">Connect to Mercari</button>
-            <span id="mercari-connect-status" class="connect-status">Mercari: not connected</span>
+      <section class="scanner-panel" id="scanner-panel">
+        <div class="pokedex-shell" id="pokedex-shell">
+          <div class="pokedex-top">
+            <span class="pokedex-led" id="pokedex-led" aria-hidden="true"></span>
+            <div class="pokedex-brand">
+              <p class="pokedex-wordmark">POKÉDEX</p>
+              <h1 class="pokedex-title">CARD SCAN</h1>
+              <p class="pokedex-sub">ID + price · does not list</p>
+            </div>
+            <span class="pokedex-lens" aria-hidden="true"></span>
           </div>
-          <div class="connect-row">
-            <button id="connect-ebay-btn" type="button" class="secondary-btn connect-btn">Connect to eBay</button>
-            <span id="ebay-connect-status" class="connect-status">eBay: not connected</span>
+
+          <div class="pokedex-screen">
+            <p id="scanner-status" class="pokedex-status" role="status"></p>
+            <div id="scanner-thumbs" class="scanner-thumbs" aria-label="Uploaded photos"></div>
+            <div id="scanner-result" class="scanner-result" hidden></div>
+          </div>
+
+          <input id="scanner-files" type="file" accept="image/*" multiple hidden />
+          <div class="pokedex-controls scanner-actions">
+            <button id="scanner-pick-btn" type="button" class="pokedex-btn pokedex-btn-secondary">Choose photos</button>
+            <button id="scanner-run-btn" type="button" class="pokedex-btn pokedex-btn-scan" disabled>Scan</button>
           </div>
         </div>
-        <div class="marketplace-choices">
-          <label><input id="marketplace-mercari" type="checkbox" checked /> List on Mercari</label>
-          <label><input id="marketplace-ebay" type="checkbox" checked /> List on eBay</label>
-        </div>
-        <button id="download-photos-btn" type="button" class="add-btn">Download photos</button>
-        <button id="add-new-cards-btn" type="button" class="secondary-btn">Add new cards</button>
-        <button id="rescan-inbox-btn" type="button" class="secondary-btn">Rescan all cards</button>
-        <button id="rescan-prices-btn" type="button" class="secondary-btn">Rescan listing prices</button>
-        <p id="add-card-status" class="add-card-status" role="status"></p>
       </section>
 
-      <section class="card draft-activity">
-        <h1 class="header-title"><span class="header-slashes">//</span> AUTO-LISTER — CURRENT LISTINGS</h1>
-        <p class="header-status">
-          inbox <strong id="header-inbox-label">autolist-inbox/</strong> · values the front photo · posts Mercari live at 0% over market
-          · flags listings outside <strong>±5%</strong> of posted · <span class="live-mode">LIVE MODE</span>
-        </p>
+      <section class="panel" id="inbox-panel">
+        <header class="panel-header">
+          <div>
+            <h2 class="panel-title">Inbox</h2>
+            <p class="panel-lede">Pull photos, connect marketplaces, then add cards to the queue.</p>
+          </div>
+        </header>
+
+        <div class="panel-meta">
+          <p id="inbox-folder-path" class="inbox-folder-path" aria-live="polite">Inbox: …</p>
+          <p id="inbox-photos-source" class="inbox-pending" aria-live="polite">Photos source: …</p>
+          <p id="inbox-pending" class="inbox-pending" aria-live="polite">Pending new cards: —</p>
+        </div>
+
+        <div class="action-block">
+          <h3 class="action-label">Connect</h3>
+          <div class="marketplace-connect" id="marketplace-connect">
+            <div class="connect-row">
+              <button id="connect-mercari-btn" type="button" class="secondary-btn connect-btn">Connect to Mercari</button>
+              <span id="mercari-connect-status" class="connect-status">Mercari: not connected</span>
+            </div>
+            <div class="connect-row">
+              <button id="connect-ebay-btn" type="button" class="secondary-btn connect-btn">Connect to eBay</button>
+              <span id="ebay-connect-status" class="connect-status">eBay: not connected</span>
+            </div>
+            <div class="connect-row">
+              <button id="connect-collectrics-btn" type="button" class="secondary-btn connect-btn">Connect to Collectrics</button>
+              <span id="collectrics-connect-status" class="connect-status">Collectrics: not connected</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-block">
+          <h3 class="action-label">Where to list</h3>
+          <div class="marketplace-choices">
+            <label><input id="marketplace-mercari" type="checkbox" checked /> List on Mercari</label>
+            <label><input id="marketplace-ebay" type="checkbox" checked /> List on eBay</label>
+          </div>
+        </div>
+
+        <div class="action-block">
+          <h3 class="action-label">Actions</h3>
+          <div class="btn-stack">
+            <button id="download-photos-btn" type="button" class="add-btn">Download photos</button>
+            <button id="add-new-cards-btn" type="button" class="secondary-btn">Add new cards</button>
+            <button id="rescan-inbox-btn" type="button" class="secondary-btn">Rescan all cards</button>
+            <button id="rescan-prices-btn" type="button" class="secondary-btn">Rescan listing prices</button>
+          </div>
+          <p id="add-card-status" class="add-card-status" role="status"></p>
+        </div>
+
+        <details class="help-details">
+          <summary>How this works</summary>
+          <p>
+            Shared Albums on Windows often skip downloads. Use <strong>Download photos</strong> from your iCloud
+            Photos library into the inbox, then <strong>Add new cards</strong>.
+            <strong>Rescan all cards</strong> regroups every inbox photo and re-runs identity on non-listed cards.
+          </p>
+        </details>
+      </section>
+
+      <section class="panel" id="listings-panel">
+        <header class="panel-header">
+          <div>
+            <h2 class="panel-title">Your listings</h2>
+            <p class="panel-lede header-status">
+              Inbox <strong id="header-inbox-label">autolist-inbox/</strong>
+              · priced from the front photo · Mercari live at market
+              · drift beyond <strong>±5%</strong> flagged ·
+              <span class="live-mode">LIVE MODE</span>
+            </p>
+          </div>
+        </header>
 
         <div class="stats-strip">
           <div class="stat"><span id="stat-listed" class="stat-value">0</span><span class="stat-label">live</span></div>
@@ -62,41 +148,51 @@
           <div class="stat"><span id="stat-all-time" class="stat-value">0</span><span class="stat-label">all-time</span></div>
         </div>
 
-        <table class="draft-activity-table">
-          <thead>
-            <tr>
-              <th>Card</th>
-              <th>POSTED</th>
-              <th>MARKET</th>
-              <th>DELTA</th>
-              <th>HEALTH</th>
-              <th>STATUS</th>
-            </tr>
-          </thead>
-          <tbody id="draft-activity-body"></tbody>
-        </table>
-      </section>
-
-      <section class="card needs-review">
-        <h2>Needs Review</h2>
-        <p class="section-note">
-          Auto-list only when comps agree within 15%. Price drift beyond ±5% of the posted amount also lands here —
-          fix front/back if needed, then hit <strong>Go</strong> / <strong>Repost</strong> to post live on Mercari
-          (ends the old listing manually if still live).
-        </p>
-        <div id="needs-review-body" class="needs-review-list"></div>
-      </section>
-
-      <section class="card scalper-panel" id="scalper-panel">
-        <div class="scalper-header">
-          <h1 class="header-title">
-            <span class="header-slashes">//</span> SCALPER — MERCARI HEARTS
-          </h1>
-          <span id="scalper-armed-badge" class="scalper-badge scalper-badge-off">OFF</span>
+        <div class="table-wrap">
+          <table class="draft-activity-table">
+            <thead>
+              <tr>
+                <th>Card</th>
+                <th>POSTED</th>
+                <th>MARKET</th>
+                <th>DELTA</th>
+                <th>HEALTH</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody id="draft-activity-body"></tbody>
+          </table>
         </div>
-        <p id="scalper-status" class="header-status">
-          scans Mercari searches · PokeGrade first photo · hearts clear underpriced slabs · never buys
-        </p>
+      </section>
+
+      <section class="panel needs-review" id="needs-review-panel">
+        <header class="panel-header">
+          <div>
+            <h2 class="panel-title">Needs Review</h2>
+            <p class="panel-lede">Fix identity or price, then Go / Repost to list live.</p>
+          </div>
+        </header>
+        <div id="needs-review-body" class="needs-review-list"></div>
+        <details class="help-details">
+          <summary>When cards land here</summary>
+          <p>
+            Auto-list only when comps agree within 15%. Price drift beyond ±5% of the posted amount also lands here —
+            fix front/back if needed, then hit <strong>Go</strong> / <strong>Repost</strong> on Mercari
+            (end the old listing manually if it is still live).
+          </p>
+        </details>
+      </section>
+
+      <section class="panel scalper-panel" id="scalper-panel">
+        <header class="panel-header scalper-header">
+          <div>
+            <h2 class="panel-title header-title">Deal Watch</h2>
+            <p id="scalper-status" class="panel-lede header-status">
+              Mercari / HiBid / Facebook · photo + title vs ask · never buys
+            </p>
+          </div>
+          <span id="scalper-armed-badge" class="scalper-badge scalper-badge-off">OFF</span>
+        </header>
 
         <div class="scalper-thresholds" id="scalper-thresholds" aria-label="Deal thresholds">
           <span class="threshold-chip threshold-heart">≥1.25× heart</span>
@@ -121,7 +217,9 @@
         </div>
 
         <h3 class="scalper-subhead">Recent hearts</h3>
-        <p class="scalper-lane-note">Auto-hearted on Mercari (≥1.25× market). Open the listing to buy yourself.</p>
+        <p class="scalper-lane-note">
+          Clear deals (≥1.25×). Mercari auto-hearts; HiBid/Facebook are ledger-only — never bid or message.
+        </p>
         <div class="scalper-table-wrap">
           <table class="scalper-table">
             <thead>
@@ -139,7 +237,7 @@
         </div>
 
         <h3 class="scalper-subhead">Offer worklist</h3>
-        <p class="scalper-lane-note">Near-misses (1.15–1.25×) — worth a human look; not auto-hearted.</p>
+        <p class="scalper-lane-note">Near-misses (1.15–1.25×) — look yourself; not auto-hearted.</p>
         <div class="scalper-table-wrap">
           <table class="scalper-table">
             <thead>
@@ -157,7 +255,7 @@
         </div>
 
         <h3 class="scalper-subhead">Suspect outliers</h3>
-        <p class="scalper-lane-note">Extreme ratios (≥5×) — often wrong ID / junk listing. Not hearted.</p>
+        <p class="scalper-lane-note">Extreme ratios (≥5×) — often wrong ID. Not hearted.</p>
         <div class="scalper-table-wrap">
           <table class="scalper-table">
             <thead>
@@ -171,6 +269,70 @@
               </tr>
             </thead>
             <tbody id="sniper-suspect-items"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel research-panel" id="research-panel">
+        <header class="panel-header scalper-header">
+          <div>
+            <h2 class="panel-title header-title">Market research</h2>
+            <p id="research-copy" class="panel-lede header-status">
+              Cards and sets ranked by current return · JustTCG + TCGCSV · optional Collectrics
+            </p>
+          </div>
+          <span id="research-badge" class="scalper-badge scalper-badge-off">IDLE</span>
+        </header>
+
+        <button id="run-research-btn" type="button" class="add-btn research-run-btn">Run research</button>
+        <p id="research-status" class="scalper-cycle-note muted" role="status">No research run yet.</p>
+
+        <div class="stats-strip research-stats">
+          <div class="stat"><span id="research-card-count" class="stat-value">0</span><span class="stat-label">cards</span></div>
+          <div class="stat"><span id="research-set-count" class="stat-value">0</span><span class="stat-label">sets</span></div>
+          <div class="stat"><span id="research-last-run" class="stat-value">—</span><span class="stat-label">last run</span></div>
+          <div class="stat"><span id="research-sources" class="stat-value">—</span><span class="stat-label">sources</span></div>
+        </div>
+
+        <details class="help-details">
+          <summary>How research works</summary>
+          <p>
+            Connect Collectrics first for IQ / dashboard movers from the logged-in Chrome window.
+            First TCGCSV run stores set totals; later runs add % change. Does not buy or list.
+          </p>
+        </details>
+
+        <h3 class="scalper-subhead">Sets with the most current return</h3>
+        <p class="scalper-lane-note">Set-level % change from the last TCGCSV snapshot, plus sealed vs singles.</p>
+        <div class="scalper-table-wrap">
+          <table class="scalper-table research-table">
+            <thead>
+              <tr>
+                <th>Set</th>
+                <th>VALUE</th>
+                <th>SEALED</th>
+                <th>CHG</th>
+                <th>SCORE</th>
+              </tr>
+            </thead>
+            <tbody id="research-sets-body"></tbody>
+          </table>
+        </div>
+
+        <h3 class="scalper-subhead">Cards with the most current return</h3>
+        <p class="scalper-lane-note">Live movers above the $8 floor. Volatile 7d spikes are discounted.</p>
+        <div class="scalper-table-wrap">
+          <table class="scalper-table research-table">
+            <thead>
+              <tr>
+                <th>Card</th>
+                <th>MKT</th>
+                <th>7D</th>
+                <th>30D</th>
+                <th>SCORE</th>
+              </tr>
+            </thead>
+            <tbody id="research-cards-body"></tbody>
           </table>
         </div>
       </section>

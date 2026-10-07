@@ -53,6 +53,10 @@ function postJson(port, urlPath) {
 
 test('GET /api/identity-status and circuit reset', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'id-status-'));
+  const prevScanner = process.env.SCANNER_IDENTITY_MODE;
+  const prevVellum = process.env.VELLUM_AI_ENABLED;
+  process.env.SCANNER_IDENTITY_MODE = 'local-only';
+  process.env.VELLUM_AI_ENABLED = 'true';
   try {
     const queue = createQueue(dir);
     const circuit = createPokegradeCircuit({ dataDir: dir, ttlHours: 1 });
@@ -63,11 +67,17 @@ test('GET /api/identity-status and circuit reset', async () => {
     assert.equal(status.status, 200);
     assert.equal(status.body.solo, true);
     assert.equal(status.body.circuit.open, true);
+    assert.equal(status.body.scannerMode, 'local-only');
+    assert.equal(status.body.vellumEnabled, true);
     const reset = await postJson(port, '/api/pokegrade-circuit/reset');
     assert.equal(reset.body.ok, true);
     assert.equal(reset.body.circuit.open, false);
     server.close();
   } finally {
+    if (prevScanner === undefined) delete process.env.SCANNER_IDENTITY_MODE;
+    else process.env.SCANNER_IDENTITY_MODE = prevScanner;
+    if (prevVellum === undefined) delete process.env.VELLUM_AI_ENABLED;
+    else process.env.VELLUM_AI_ENABLED = prevVellum;
     rmSync(dir, { recursive: true, force: true });
   }
 });

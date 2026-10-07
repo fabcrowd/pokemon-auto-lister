@@ -13,7 +13,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vellum_ai.identify_multi import CardResult, LotResult, identify_all_from_bytes
+from vellum_ai.identify_multi import (  # noqa: E402
+    CardResult,
+    LotResult,
+    identify_all_from_bytes,
+    pokemontcg_hires_url,
+)
 
 
 def _blank_jpeg(w: int = 200, h: int = 280) -> bytes:
@@ -61,10 +66,21 @@ _TCG_CARD = {
     "set": "Base Set",
     "setCode": "base1",
     "number": "25",
-    "imageUrl": None,
+    "imageUrl": "https://images.pokemontcg.io/base1/25_hires.png",
     "game": "pokemon",
     "score": 1.0,
 }
+
+
+class TestPokemonTcgHiresUrl(unittest.TestCase):
+    def test_strips_leading_zeros_and_fraction(self):
+        assert pokemontcg_hires_url("base1", "004/102") == (
+            "https://images.pokemontcg.io/base1/4_hires.png"
+        )
+
+    def test_none_without_set_or_number(self):
+        assert pokemontcg_hires_url(None, "4") is None
+        assert pokemontcg_hires_url("base1", None) is None
 
 
 class TestIdentityKey(unittest.TestCase):
@@ -89,18 +105,19 @@ class TestIdentifyAllFromBytes(unittest.TestCase):
     def test_returns_identified_result(self):
         with (
             patch("vellum_ai.identify_multi.detect_all_cards_with_crops", return_value=[_FAKE_HIT]),
-            patch("vellum_ai.identify_multi.identify_image_bytes", return_value=_ID_RESULT_HIGH),
+            patch("vellum_ai.identify_multi.identify_rectified_bytes", return_value=_ID_RESULT_HIGH),
         ):
             results = identify_all_from_bytes(_blank_jpeg())
         assert len(results) == 1
         assert results[0].identity["name"] == "Pikachu"
+        assert results[0].identity["imageUrl"] == "https://images.pokemontcg.io/base1/58_hires.png"
         assert results[0].confidence == "high"
         assert not results[0].abstain
 
     def test_tcg_fallback_fires_on_abstain(self):
         with (
             patch("vellum_ai.identify_multi.detect_all_cards_with_crops", return_value=[_FAKE_HIT]),
-            patch("vellum_ai.identify_multi.identify_image_bytes", return_value=_ID_RESULT_ABSTAIN),
+            patch("vellum_ai.identify_multi.identify_rectified_bytes", return_value=_ID_RESULT_ABSTAIN),
             patch("vellum_ai.identify_multi.resolve_card", return_value=_TCG_CARD),
         ):
             results = identify_all_from_bytes(_blank_jpeg())
@@ -108,9 +125,32 @@ class TestIdentifyAllFromBytes(unittest.TestCase):
         r = results[0]
         assert r.identity is not None
         assert r.identity["name"] == "Pikachu"
+        assert r.identity["imageUrl"] == _TCG_CARD["imageUrl"]
         assert r.confidence == "medium"
         assert r.reason == "tcg-api-ocr"
         assert not r.abstain
+
+    def test_grid_failure_does_not_break_lot_result(self):
+        card = CardResult(
+            index=0,
+            box=(0, 0, 10, 10),
+            identity={
+                "name": "Pikachu",
+                "number": "25",
+                "setCode": "base1",
+                "imageUrl": "https://example.invalid/x.png",
+            },
+            confidence="high",
+            abstain=False,
+            reason=None,
+        )
+        with patch(
+            "vellum_ai.identify_multi.create_verification_grid",
+            side_effect=RuntimeError("network down"),
+        ):
+            from vellum_ai.identify_multi import _lot_grid_b64
+
+            assert _lot_grid_b64([card]) is None
 
     def test_returns_empty_on_bad_image(self):
         results = identify_all_from_bytes(b"not-an-image")

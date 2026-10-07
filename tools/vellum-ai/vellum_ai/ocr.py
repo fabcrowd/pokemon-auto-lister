@@ -1,4 +1,4 @@
-"""Bottom-strip OCR for collector numbers."""
+"""Bottom-strip OCR for collector numbers; top-strip HP-anchor name OCR."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from .fusion import parse_ocr_text
+from .ocr_names import find_card_name, lines_from_ocr_text
 
 # Avoid Paddle oneDNN PIR crash on Windows CPU builds.
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
@@ -39,36 +40,14 @@ def _crops(image_bgr: np.ndarray) -> List[np.ndarray]:
 
 
 def _crops_name(image_bgr: np.ndarray) -> List[np.ndarray]:
-    """Top-strip crops for the card name (largest text on the card)."""
+    """Top-of-card crops for name + HP (qtran spatial OCR uses ~top 20%)."""
     h, w = image_bgr.shape[:2]
     return [
-        image_bgr[: int(h * 0.12), :],
+        image_bgr[: int(h * 0.20), :],
         image_bgr[: int(h * 0.15), :],
-        image_bgr[int(h * 0.02) : int(h * 0.14), : int(w * 0.75)],
+        image_bgr[int(h * 0.02) : int(h * 0.18), : int(w * 0.85)],
+        image_bgr[: int(h * 0.12), :],
     ]
-
-
-def _extract_name(text: str) -> str:
-    """Return the most plausible card name from raw OCR text.
-
-    Card names are typically 1-3 words, all ASCII letters (possibly with
-    dashes/spaces), and appear at the start of the strip text. We take
-    the first run of word-characters and cap at 4 tokens.
-    """
-    import re
-    tokens = [t for t in re.split(r"[^A-Za-z\-' ]+", text) if t.strip()]
-    if not tokens:
-        return ""
-    # Flatten multi-word first hit (e.g. "Umbreon EX")
-    name_tokens = []
-    for tok in tokens[:4]:
-        clean = tok.strip()
-        if not clean:
-            continue
-        name_tokens.append(clean)
-        if len(name_tokens) >= 2:
-            break
-    return " ".join(name_tokens).strip()
 
 
 def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
@@ -86,18 +65,17 @@ def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
     parsed["confidence"] = 0.9 if parsed.get("number") else 0.0
     parsed["raw"] = combined
 
-    # Name OCR — best text from top-strip crops
-    name_candidates: List[str] = []
+    # Name OCR — line-aware HP-anchor / trainer finders (qtran)
+    name_lines: List[str] = []
     for crop in _crops_name(image_bgr):
-        text = _ocr_text(_preprocess(crop))
-        candidate = _extract_name(text)
-        if candidate:
-            name_candidates.append(candidate)
-    if name_candidates:
-        # Prefer the longest plausible result (more tokens = more confident)
-        parsed["name"] = max(name_candidates, key=len)
-    else:
-        parsed["name"] = None
+        lines = _ocr_lines(_preprocess(crop))
+        if lines:
+            name_lines.extend(lines)
+        else:
+            text = _ocr_text(_preprocess(crop))
+            name_lines.extend(lines_from_ocr_text(text))
+    parsed["name"] = find_card_name(name_lines) if name_lines else None
+    parsed["nameLines"] = name_lines[:12]
 
     return parsed
 
@@ -110,6 +88,42 @@ def _ocr_text(image_bgr: np.ndarray) -> str:
     if text:
         return text
     return _ocr_tesseract(image_bgr)
+
+
+def _ocr_lines(image_bgr: np.ndarray) -> List[str]:
+    """Return OCR as separate lines (RapidOCR boxes sorted top-to-bottom)."""
+    lines = _ocr_rapid_lines(image_bgr)
+    if lines:
+        return lines
+    text = _ocr_text(image_bgr)
+    return lines_from_ocr_text(text)
+
+
+def _ocr_rapid_lines(image_bgr: np.ndarray) -> List[str]:
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+
+        if not hasattr(_ocr_rapid, "_engine"):
+            _ocr_rapid._engine = RapidOCR()  # type: ignore[attr-defined]
+        result, _ = _ocr_rapid._engine(image_bgr)  # type: ignore[attr-defined]
+        if not result:
+            return []
+
+        def top_y(item: Any) -> float:
+            box = item[0]
+            try:
+                return float(min(p[1] for p in box))
+            except Exception:
+                return 0.0
+
+        ordered = sorted(result, key=top_y)
+        return [
+            str(line[1]).strip()
+            for line in ordered
+            if line and len(line) >= 2 and str(line[1]).strip()
+        ]
+    except Exception:
+        return []
 
 
 def _ocr_rapid(image_bgr: np.ndarray) -> str:
@@ -147,7 +161,9 @@ def _ocr_paddle(image_bgr: np.ndarray) -> str:
                 elif isinstance(item, list):
                     for line in item:
                         if line and len(line) >= 2:
-                            lines.append(str(line[1][0] if isinstance(line[1], (list, tuple)) else line[1]))
+                            lines.append(
+                                str(line[1][0] if isinstance(line[1], (list, tuple)) else line[1])
+                            )
         return " ".join(lines)
     except Exception:
         return ""

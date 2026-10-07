@@ -32,7 +32,12 @@ def _load_catalog_art_crops(catalog_images: Path, limit: int, rng: random.Random
     """Sample official card art as synthetic faces (for detector diversity)."""
     if not catalog_images.is_dir() or limit <= 0:
         return []
-    paths = list(catalog_images.glob("*.webp")) + list(catalog_images.glob("*.png"))
+    paths = (
+        list(catalog_images.glob("*.webp"))
+        + list(catalog_images.glob("*.png"))
+        + list(catalog_images.glob("*.jpg"))
+        + list(catalog_images.glob("*.jpeg"))
+    )
     if not paths:
         return []
     rng.shuffle(paths)

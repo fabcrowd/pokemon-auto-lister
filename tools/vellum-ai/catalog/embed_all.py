@@ -12,12 +12,15 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CATALOG = ROOT / "data" / "card-catalog"
 
+BATCH_SIZE = 64
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--model", default="ViT-B-32")
     parser.add_argument("--pretrained", default="openai")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
 
     meta_path = args.catalog / "meta.json"
@@ -34,11 +37,11 @@ def main() -> None:
     )
     model.eval()
 
-    vectors = []
-    kept_meta = []
+    # Set torch to use all available threads
+    torch.set_num_threads(torch.get_num_threads())
+
     images_dir = args.catalog / "images"
-    # Pre-count rows with images for progress
-    candidates = []
+    candidates: list[tuple[dict, Path]] = []
     for row in meta:
         path = None
         if row.get("imagePath") and Path(row["imagePath"]).is_file():
@@ -52,20 +55,41 @@ def main() -> None:
         if path is not None:
             candidates.append((row, path))
 
-    print(f"Embedding {len(candidates)} catalog images…")
-    for i, (row, path) in enumerate(candidates, 1):
-        image = Image.open(path).convert("RGB")
-        # Art-biased: top 45%
-        w, h = image.size
-        image = image.crop((0, 0, w, max(1, int(h * 0.45))))
-        tensor = preprocess(image).unsqueeze(0)
+    total = len(candidates)
+    print(f"Embedding {total} catalog images (batch={args.batch_size})…")
+
+    vectors: list[np.ndarray] = []
+    kept_meta: list[dict] = []
+    bs = args.batch_size
+
+    for batch_start in range(0, total, bs):
+        batch = candidates[batch_start : batch_start + bs]
+        tensors = []
+        valid_rows = []
+        for row, path in batch:
+            try:
+                image = Image.open(path).convert("RGB")
+                w, h = image.size
+                image = image.crop((0, 0, w, max(1, int(h * 0.45))))
+                tensors.append(preprocess(image))
+                valid_rows.append(row)
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not tensors:
+            continue
+
+        batch_tensor = torch.stack(tensors)
         with torch.no_grad():
-            feat = model.encode_image(tensor)
-            feat = feat / feat.norm(dim=-1, keepdim=True)
-        vectors.append(feat.cpu().numpy()[0])
-        kept_meta.append(row)
-        if i % 200 == 0 or i == len(candidates):
-            print(f"  {i}/{len(candidates)}", flush=True)
+            feats = model.encode_image(batch_tensor)
+            feats = feats / feats.norm(dim=-1, keepdim=True)
+
+        vectors.extend(feats.cpu().numpy())
+        kept_meta.extend(valid_rows)
+
+        done = min(batch_start + bs, total)
+        if done % 200 == 0 or done == total:
+            print(f"  {done}/{total}", flush=True)
 
     if not vectors:
         raise SystemExit("No images found to embed — re-run build_catalog.py --download-images")

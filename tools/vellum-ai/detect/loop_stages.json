@@ -1,0 +1,64 @@
+{
+  "loop": "multi-card-identity",
+  "current_stage": 7,
+  "max_stage": 7,
+  "gate": 0.85,
+  "weights": {
+    "identity": 0.7,
+    "iou": 0.2,
+    "count": 0.1
+  },
+  "stages": [
+    {
+      "id": 1,
+      "name": "two-card-identity",
+      "min_identity_hits": 2,
+      "layout": "spread",
+      "status": "pass"
+    },
+    {
+      "id": 2,
+      "name": "three-card-identity",
+      "min_identity_hits": 3,
+      "layout": "spread",
+      "status": "pass"
+    },
+    {
+      "id": 3,
+      "name": "2x2-grid-identity",
+      "min_identity_hits": 3,
+      "layout": "grid",
+      "status": "deferred"
+    },
+    {
+      "id": 4,
+      "name": "3x2-grid-identity",
+      "min_identity_hits": 4,
+      "layout": "grid",
+      "status": "deferred"
+    },
+    {
+      "id": 5,
+      "name": "tilted-identity",
+      "min_identity_hits": 1,
+      "layout": "tilt-30",
+      "status": "deferred"
+    },
+    {
+      "id": 6,
+      "name": "queue-or-catalog-live",
+      "min_identity_hits": null,
+      "layout": "real",
+      "status": "deferred",
+      "skip_if": "out of scope — Facebook and HiBid only"
+    },
+    {
+      "id": 7,
+      "name": "marketplace-facebook-hibid",
+      "min_identity_hits": null,
+      "layout": "live-lots",
+      "status": "in_progress",
+      "require": "Facebook and HiBid only. >=2 cached photos per source; each detect >=2 cards. Facebook from sniper ledgers. HiBid from sniper ledgers or LotSearch."
+    }
+  ]
+}

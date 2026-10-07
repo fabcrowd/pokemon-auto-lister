@@ -7,9 +7,17 @@ const html = readFileSync(path.join('public', 'index.html'), 'utf8');
 const js = readFileSync(path.join('public', 'app.js'), 'utf8');
 const css = readFileSync(path.join('public', 'styles.css'), 'utf8');
 
-test('header shows the AUTO-LISTER current listings title', () => {
-  assert.match(html, /AUTO-LISTER\s*—\s*CURRENT LISTINGS/);
-  assert.match(html, /header-slashes/);
+test('top nav and plain listings title are present', () => {
+  assert.match(html, /class="app-topbar"/);
+  assert.match(html, /Autolist/);
+  assert.match(html, /href="#scanner-panel"/);
+  assert.match(html, /href="#inbox-panel"/);
+  assert.match(html, /href="#listings-panel"/);
+  assert.match(html, /href="#needs-review-panel"/);
+  assert.match(html, /href="#scalper-panel"/);
+  assert.match(html, /href="#research-panel"/);
+  assert.match(html, /Your listings/);
+  assert.match(html, /id="listings-panel"/);
 });
 
 test('status copy mentions LIVE MODE and ±5% drift', () => {
@@ -20,6 +28,8 @@ test('status copy mentions LIVE MODE and ±5% drift', () => {
 test('inbox panel has Connect Mercari/eBay, Download photos, Add new cards', () => {
   assert.match(html, /id="connect-mercari-btn"/);
   assert.match(html, /id="connect-ebay-btn"/);
+  assert.match(html, /id="connect-collectrics-btn"/);
+  assert.match(html, /Connect to Collectrics/);
   assert.match(html, /id="download-photos-btn"/);
   assert.match(html, /id="add-new-cards-btn"/);
   assert.match(html, /id="rescan-inbox-btn"/);
@@ -28,7 +38,28 @@ test('inbox panel has Connect Mercari/eBay, Download photos, Add new cards', () 
   assert.match(html, /Connect to eBay/);
   assert.match(js, /forceRescan:\s*true/);
   assert.doesNotMatch(html, /id="photo-input"/);
-  assert.doesNotMatch(html, /Choose photos/);
+});
+
+test('scanner panel uploads photos and posts /api/scan', () => {
+  assert.match(html, /id="scanner-panel"/);
+  assert.match(html, /pokedex-shell/);
+  assert.match(html, /POKÉDEX/);
+  assert.match(html, /CARD SCAN/);
+  assert.match(html, /id="scanner-files"/);
+  assert.match(html, /id="scanner-pick-btn"/);
+  assert.match(html, /id="scanner-run-btn"/);
+  assert.match(html, /Choose photos/);
+  assert.match(html, /Oxanium/);
+  assert.match(html, /Figtree/);
+  assert.match(js, /\/api\/scan/);
+  assert.match(js, /bindScannerUi/);
+  assert.match(js, /pricingSources/);
+  assert.match(js, /is-scanning/);
+  assert.match(js, /is-lit/);
+  assert.match(css, /\.pokedex-shell/);
+  assert.match(css, /\.pokedex-screen/);
+  assert.match(css, /\.scanner-thumbs/);
+  assert.match(css, /\.scanner-comps/);
 });
 
 test('marketplace checkboxes default to both checked', () => {
@@ -78,6 +109,8 @@ test('app.js polls /api/stats and /api/cards without full page reload', () => {
 test('app.js connects Mercari/eBay and scans inbox / downloads photos', () => {
   assert.match(js, /\/api\/mercari\/connect/);
   assert.match(js, /\/api\/ebay\/connect/);
+  assert.match(js, /\/api\/collectrics\/connect/);
+  assert.match(js, /\/api\/collectrics\/status/);
   assert.match(js, /\/api\/mercari\/status/);
   assert.match(js, /\/api\/ebay\/status/);
   assert.match(js, /\/api\/inbox\/scan/);
@@ -86,9 +119,12 @@ test('app.js connects Mercari/eBay and scans inbox / downloads photos', () => {
   assert.match(js, /method:\s*['"]POST['"]/);
 });
 
-test('styles.css defines the light card look and phone-friendly layout', () => {
+test('styles.css defines the calm ops shell and phone-friendly layout', () => {
   assert.match(css, /max-width/);
+  assert.match(css, /\.app-topbar/);
+  assert.match(css, /\.panel-title/);
   assert.match(css, /\.draft-activity-table/);
+  assert.match(css, /Figtree/);
 });
 
 test('needs review section shows identity, comps, reason, and actions', () => {
@@ -141,7 +177,8 @@ test('app.js confirms with Go/Repost and shows LIVE toast; skip via fetch POST',
 
 test('scalper panel matches live-activity ops chrome with deal lanes', () => {
   assert.match(html, /id="scalper-panel"/);
-  assert.match(html, /SCALPER\s*—\s*MERCARI HEARTS/);
+  assert.match(html, /Deal Watch/);
+  assert.match(html, /HiBid\/Facebook are ledger-only/);
   assert.match(html, /id="scalper-armed-badge"/);
   assert.match(html, /id="scalper-thresholds"/);
   assert.match(html, /id="sniper-hearted"/);
@@ -153,9 +190,30 @@ test('scalper panel matches live-activity ops chrome with deal lanes', () => {
   assert.match(js, /\/api\/sniper/);
   assert.match(js, /refreshSniper/);
   assert.match(js, /renderSniperTable/);
-  assert.match(js, /mercariItemUrl/);
+  assert.match(js, /sniperListingUrl/);
+  assert.match(js, /facebook\.com\/marketplace\/item/);
+  assert.match(js, /hibid\.com\/lot/);
+  assert.match(js, /officialArtUrl/);
+  assert.match(js, /scalper-thumb-pair/);
+  assert.match(js, /scalper-thumb-official/);
   assert.match(js, /scalper-badge-armed/);
   assert.match(css, /\.scalper-table/);
+  assert.match(css, /\.scalper-thumb-pair/);
+  assert.match(css, /\.scalper-thumb-official/);
   assert.match(css, /\.threshold-heart/);
   assert.match(css, /\.ratio-suspect/);
+});
+
+test('research panel can be refreshed from the UI and shows ranked cards/sets', () => {
+  assert.match(html, /id="research-panel"/);
+  assert.match(html, /Market research/);
+  assert.match(html, /id="run-research-btn"/);
+  assert.match(html, /Run research/);
+  assert.match(html, /id="research-cards-body"/);
+  assert.match(html, /id="research-sets-body"/);
+  assert.match(html, /id="research-status"/);
+  assert.match(js, /\/api\/research\/run/);
+  assert.match(js, /\/api\/research/);
+  assert.match(js, /refreshResearch/);
+  assert.match(css, /\.research-table/);
 });

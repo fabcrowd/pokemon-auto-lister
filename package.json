@@ -1,9 +1,9 @@
 {
-  "name": "pokemon-auto-lister",
+  "name": "card-scanner",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Personal Windows toolkit that turns phone photos into Mercari and eBay drafts (never published).",
+  "description": "Local card scanning server — identifies and prices trading cards from images, with a Chrome extension frontend.",
   "main": "src/index.js",
   "scripts": {
     "start": "node --env-file=.env src/index.js",
@@ -16,10 +16,10 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "eslint": "^9.39.5"
   },
   "dependencies": {
-    "playwright": "^1.62.1",
     "sharp": "^0.35.3"
   }
 }
