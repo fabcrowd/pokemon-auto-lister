@@ -1,4 +1,10 @@
 // MV3 service worker — relays overlay events from popup to the active tab's content script.
+// Opens popup.html as a tab so getUserMedia can prompt for camera permission.
+// (Chrome silently blocks camera permission prompts inside extension popups.)
+chrome.action.onClicked.addListener(() => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Pokemon Card Scanner installed');
 });

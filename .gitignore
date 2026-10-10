@@ -21,3 +21,10 @@ dist/
 coverage/
 playwright-report/
 test-results/
+
+# Local debug artifacts (Chrome profiles, models, screenshots)
+.tmp/
+/clip_visual_*.onnx
+/clip_visual_*.onnx.data
+/*.png
+/*-summary.json

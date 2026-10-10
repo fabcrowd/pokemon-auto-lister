@@ -2,6 +2,8 @@
  * PokéWallet TCGPlayer USD market prices — https://www.pokewallet.io/api-docs
  * GET /search returns card_info + tcgplayer.prices[] (no Pro endpoints required).
  */
+const PRICE_TTL_MS = 2 * 60 * 60 * 1000; // 2h
+
 const DEFAULT_BASE = 'https://api.pokewallet.io';
 
 function identityCacheKey(identity) {
@@ -125,27 +127,29 @@ export function createPokeWalletClient({
     }
 
     const cacheKey = identityCacheKey(identity);
-    if (priceCache.has(cacheKey)) {
-      return priceCache.get(cacheKey);
+    const cached = priceCache.get(cacheKey);
+    if (cached !== undefined) {
+      if (Date.now() - cached.fetchedAt <= PRICE_TTL_MS) return cached.data;
+      priceCache.delete(cacheKey);
     }
 
     try {
       const cards = await searchCards(identity);
       if (cards.length === 0) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
       const ranked = [...cards].sort((a, b) => scoreMatch(b, identity) - scoreMatch(a, identity));
       const best = ranked[0];
       if (scoreMatch(best, identity) < 5) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
       const market = extractTcgMarketUsd(best);
       if (market == null) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
@@ -160,7 +164,7 @@ export function createPokeWalletClient({
         number: info.card_number ?? null,
         pokewalletId: best.id ?? null,
       };
-      priceCache.set(cacheKey, result);
+      priceCache.set(cacheKey, { data: result, fetchedAt: Date.now() });
       return result;
     } catch (err) {
       console.error('PokéWallet lookup failed:', err.message);

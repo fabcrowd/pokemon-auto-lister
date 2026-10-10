@@ -18,6 +18,7 @@ import { decidePrice } from '../pricing/pricing.js';
  *   rapidPokemonTcgClient?: object|null,
  *   justTcgClient?: object|null,
  *   pokeWalletClient?: object|null,
+ *   pokemonTcgApiClient?: object|null,
  *   config?: object,
  * }} opts
  */
@@ -32,6 +33,7 @@ export async function scanAndPrice({
   rapidPokemonTcgClient = null,
   justTcgClient = null,
   pokeWalletClient = null,
+  pokemonTcgApiClient = null,
   config = {},
 } = {}) {
   if (!frontImagePath) {
@@ -138,6 +140,7 @@ export async function scanAndPrice({
     rapidapiResult,
     justtcgResult,
     pokewalletResult,
+    pokemontcgapiResult,
   ] = await Promise.all([
     Promise.resolve()
       .then(() => tcgplayerClient?.getMarketPrice?.(identity))
@@ -175,7 +178,18 @@ export async function scanAndPrice({
         console.error('PokéWallet comps failed:', err.message);
         return null;
       }),
+    Promise.resolve()
+      .then(() => pokemonTcgApiClient?.getPrices?.(identity) ?? null)
+      .catch((err) => {
+        console.error('pokemontcg.io comps failed:', err.message);
+        return null;
+      }),
   ]);
+
+  const cardmarketResult = pokemontcgapiResult?.cardmarket ?? null;
+  const pokemontcgapiTcg = pokemontcgapiResult?.tcgplayer
+    ? { ...pokemontcgapiResult.tcgplayer, source: 'pokemontcg-io', name: pokemontcgapiResult.name }
+    : null;
 
   const decision = decidePrice(
     {
@@ -186,6 +200,8 @@ export async function scanAndPrice({
       rapidapi: rapidapiResult,
       justtcg: justtcgResult,
       pokewallet: pokewalletResult,
+      pokemontcgapi: pokemontcgapiTcg,
+      cardmarket: cardmarketResult,
     },
     config,
   );
@@ -236,7 +252,7 @@ export function listPricingSources(comps, pokegradeResult = null) {
     map.pokegrade = pokegradeResult.value;
   }
   const sources = [];
-  for (const key of ['pokegrade', 'collectr', 'tcgplayer', 'ebay', 'rapidapi', 'justtcg', 'pokewallet']) {
+  for (const key of ['pokegrade', 'collectr', 'tcgplayer', 'ebay', 'rapidapi', 'justtcg', 'pokewallet', 'pokemontcgapi', 'cardmarket']) {
     const row = map[key];
     if (row == null) {
       continue;

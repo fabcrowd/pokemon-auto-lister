@@ -62,7 +62,7 @@ export function formatListPrice(value) {
 }
 
 export function decidePrice(
-  { pokegrade, collectr, tcgplayer, ebay, rapidapi, justtcg, pokewallet } = {},
+  { pokegrade, collectr, tcgplayer, ebay, rapidapi, justtcg, pokewallet, pokemontcgapi, cardmarket } = {},
   multipliers = {},
 ) {
   const mercariMultiplier = multipliers.mercariMultiplier ?? 1.0;
@@ -76,6 +76,8 @@ export function decidePrice(
     rapidapi: rapidapi?.market ?? null,
     justtcg: justtcg?.market ?? null,
     pokewallet: pokewallet?.market ?? null,
+    pokemontcgapi: pokemontcgapi?.market ?? null,
+    cardmarket: cardmarket?.market ?? null,
   };
 
   const availableEntries = Object.entries(comps).filter(([, value]) => value !== null && value !== undefined);

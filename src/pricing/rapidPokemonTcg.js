@@ -2,6 +2,8 @@
  * RapidAPI Pokémon TCG (tcggo) market prices — fallback when official TCGPlayer keys fail.
  * https://rapidapi.com/tcggopro/api/pokemon-tcg-api
  */
+const PRICE_TTL_MS = 2 * 60 * 60 * 1000; // 2h
+
 const DEFAULT_HOST = 'pokemon-tcg-api.p.rapidapi.com';
 const DEFAULT_BASE = `https://${DEFAULT_HOST}`;
 
@@ -178,21 +180,23 @@ export function createRapidPokemonTcgClient({
     }
 
     const cacheKey = identityCacheKey(identity);
-    if (priceCache.has(cacheKey)) {
-      return priceCache.get(cacheKey);
+    const cached = priceCache.get(cacheKey);
+    if (cached !== undefined) {
+      if (Date.now() - cached.fetchedAt <= PRICE_TTL_MS) return cached.data;
+      priceCache.delete(cacheKey);
     }
 
     try {
       const cards = await searchCards(identity);
       if (cards.length === 0) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
       const ranked = [...cards].sort((a, b) => scoreMatch(b, identity) - scoreMatch(a, identity));
       let best = ranked[0];
       if (!identity.rapidapiId && !identity.tcggoId && scoreMatch(best, identity) < 5) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
@@ -210,7 +214,7 @@ export function createRapidPokemonTcgClient({
 
       const market = extractRawMarketUsd(best, eurUsd);
       if (market == null) {
-        priceCache.set(cacheKey, null);
+        priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
@@ -225,7 +229,7 @@ export function createRapidPokemonTcgClient({
         tcgid: best.tcgid || null,
         rapidapiId: best.id ?? null,
       };
-      priceCache.set(cacheKey, result);
+      priceCache.set(cacheKey, { data: result, fetchedAt: Date.now() });
       return result;
     } catch (err) {
       console.error('RapidAPI Pokemon TCG lookup failed:', err.message);

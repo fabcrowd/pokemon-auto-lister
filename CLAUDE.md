@@ -54,7 +54,8 @@ Two extensions: `tools/chrome-extension/` (tracked, dev) and `dist/extension-was
 - Two identity resolvers are built from `src/identify/resolver.js`: one for
   `IDENTITY_MODE` (listing/inbox) and a separate `scannerIdentityResolver` for
   `SCANNER_IDENTITY_MODE` (`POST /api/scan` only). Modes: `dual | local-only | pokegrade-only`.
-- Request flow: `POST /detect` / `POST /api/scan` (multipart via `src/server/multipart.js`)
+- Request flow: `POST /api/scan` (multipart via `src/server/multipart.js`) or `POST /detect`
+  (JSON `{ image_b64 }`)
   → multi-card split (`src/photos/splitMultiCard.js`, VellumAI contours → rectified crops)
   → `src/scan/scanAndPrice.js` (identity → comps from pricing clients)
   → `src/pricing/pricing.js` rules → JSON price grid per card.

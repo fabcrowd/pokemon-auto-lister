@@ -349,6 +349,44 @@ async function handleScan(req, res, { dataDir, scanAndPrice }) {
   });
 }
 
+// CORS for the browser extension — restrict to the chrome-extension origin and
+// the common dev origins so we never silently open the API to the world.
+function _applyCors(req, res) {
+  const origin = req.headers.origin || '';
+  const allow =
+    origin.startsWith('chrome-extension://') ||
+    origin === 'http://127.0.0.1:3000' ||
+    origin === 'http://localhost:3000' ||
+    origin === 'null';
+  if (!allow) return;
+  res.setHeader('Access-Control-Allow-Origin',  origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+}
+
+async function handlePriceGrid(params, res, priceGridClient) {
+  if (!priceGridClient?.getPriceGrid) {
+    return sendJson(res, 503, { error: 'price-grid client not configured (JUSTTCG_API_KEY missing?)' });
+  }
+  const identity = {
+    name:   params.get('name')   || '',
+    set:    params.get('set')    || '',
+    number: params.get('number') || '',
+    id:     params.get('id')     || '',
+  };
+  if (!identity.name) {
+    return sendJson(res, 400, { error: 'name is required' });
+  }
+  try {
+    const result = await priceGridClient.getPriceGrid(identity);
+    if (!result) return sendJson(res, 404, { error: 'no price data' });
+    return sendJson(res, 200, result);
+  } catch (err) {
+    return sendJson(res, 502, { error: err?.message || 'price grid lookup failed' });
+  }
+}
+
 export function createServer({
   dataDir = 'data',
   publicDir = path.join(process.cwd(), 'public'),
@@ -356,14 +394,32 @@ export function createServer({
   pokegradeCircuit,
   scanAndPrice,
   multiCardSplitter,
+  priceGridClient,
 } = {}) {
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    _applyCors(req, res);
+
+    // CORS preflight — respond before any other routing.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      return res.end();
+    }
 
     Promise.resolve()
       .then(async () => {
         if (req.method === 'GET' && url.pathname === '/health') {
           return sendJson(res, 200, { ok: true });
+        }
+        if (req.method === 'GET' && url.pathname === '/api/health') {
+          return sendJson(res, 200, {
+            ok: true,
+            service: 'pokemon-auto-lister',
+            priceGrid: Boolean(priceGridClient?.getPriceGrid),
+          });
+        }
+        if (req.method === 'GET' && url.pathname === '/api/price-grid') {
+          return handlePriceGrid(url.searchParams, res, priceGridClient);
         }
         if (req.method === 'POST' && url.pathname === '/detect') {
           return handleDetect(req, res, { dataDir, scanAndPrice, multiCardSplitter });

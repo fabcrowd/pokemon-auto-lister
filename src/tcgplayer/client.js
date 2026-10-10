@@ -1,4 +1,6 @@
 // https://docs.tcgplayer.com/ — official market/mid pricing only, no scraped solds.
+const PRICE_TTL_MS = 2 * 60 * 60 * 1000; // 2h
+
 const TCGPLAYER_TOKEN_URL = 'https://api.tcgplayer.com/token';
 const TCGPLAYER_CATALOG_URL = 'https://api.tcgplayer.com/catalog/products';
 const TCGPLAYER_PRICING_URL = 'https://api.tcgplayer.com/pricing/product';
@@ -72,19 +74,21 @@ export function createTcgplayerClient({
     }
 
     const cacheKey = identityCacheKey(identity);
-    if (priceCache.has(cacheKey)) {
-      return priceCache.get(cacheKey);
+    const cached = priceCache.get(cacheKey);
+    if (cached !== undefined) {
+      if (Date.now() - cached.fetchedAt <= PRICE_TTL_MS) return cached.data;
+      priceCache.delete(cacheKey);
     }
 
     const token = await authenticate();
     const productId = await findProductId(identity, token);
     if (productId === null) {
-      priceCache.set(cacheKey, null);
+      priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
       return null;
     }
 
     const pricing = await fetchPricing(productId, token);
-    priceCache.set(cacheKey, pricing);
+    priceCache.set(cacheKey, { data: pricing, fetchedAt: Date.now() });
     return pricing;
   }
 
