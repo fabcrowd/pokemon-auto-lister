@@ -28,6 +28,21 @@ test.describe('screen card candidate detection', () => {
     expect(result.cards[0].rect.y).toBe(100);
   });
 
+  test('preserves a large CSS background photo source and its render geometry', async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await page.locator('body').evaluate((body) => {
+      body.innerHTML = '<div id="photo" style="position:absolute;left:100px;top:100px;width:500px;height:500px;background-size:cover;background-position:top;background-repeat:no-repeat"></div>';
+      body.querySelector('#photo').style.backgroundImage = 'url("https://images.example.test/listing.jpg")';
+    });
+    await page.addScriptTag({ path: CONTENT_SCRIPT });
+
+    const result = await page.evaluate(() => window.__cardScanner.find());
+
+    expect(result.photos).toHaveLength(1);
+    expect(result.photos[0].src).toBe('https://images.example.test/listing.jpg');
+    expect(result.photos[0].render).toEqual({ fit: 'background', size: 'cover', position: '50% 0%', repeat: 'no-repeat' });
+  });
+
   test('keeps single-card listings and rejects sealed-product thumbnails by accessible context', async ({ page }) => {
     await page.setViewportSize({ width: 1000, height: 800 });
     await page.locator('body').evaluate((body) => {

@@ -355,9 +355,12 @@
           const key = 'p:' + src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
           if (!seen.has(key)) {
             seen.add(key);
+            const style = getComputedStyle(img);
             photos.push({
               rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
               naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+              src: img.currentSrc || img.src || '',
+              render: { fit: style.objectFit || 'fill', position: style.objectPosition || '50% 50%' },
             });
           }
         }
@@ -366,10 +369,13 @@
       const key = src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
       if (seen.has(key)) continue;
       seen.add(key);
+      const imageStyle = getComputedStyle(img);
       found.push({
         rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
         naturalWidth:  img.naturalWidth,
         naturalHeight: img.naturalHeight,
+        src: img.currentSrc || img.src || '',
+        render: { fit: imageStyle.objectFit || 'fill', position: imageStyle.objectPosition || '50% 50%' },
       });
       // ALSO add big card-shaped images to the photos list, so a single large
       // image that actually contains multiple cards (e.g. a stack photo cropped
@@ -381,6 +387,8 @@
           photos.push({
             rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
             naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+            src: img.currentSrc || img.src || '',
+            render: { fit: imageStyle.objectFit || 'fill', position: imageStyle.objectPosition || '50% 50%' },
           });
         }
       }
@@ -397,7 +405,13 @@
         const photoKey = 'bgp:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
         if (!seen.has(photoKey)) {
           seen.add(photoKey);
-          photos.push({ rect, naturalWidth: null, naturalHeight: null });
+          photos.push({
+            rect,
+            naturalWidth: null,
+            naturalHeight: null,
+            src: candidate.src,
+            render: { fit: 'background', size: candidate.size, position: candidate.position, repeat: candidate.repeat },
+          });
         }
       }
     }
@@ -429,10 +443,17 @@
                 style.opacity !== '0' && bg && bg !== 'none' && bg.includes('url(') &&
                 !hasSealedProductContext(node)) {
               const ratio = r.width / r.height;
+              const urlMatch = bg.match(/url\((?:\s*["']?)(.*?)(?:["']?\s*)\)/i);
+              let src = '';
+              try { src = urlMatch ? new URL(urlMatch[1], document.baseURI).href : ''; } catch { /* unsupported URL */ }
               out.push({
                 rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
                 w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)),
                 tag: node.tagName, bg: bg.slice(0, 120),
+                src,
+                size: style.backgroundSize,
+                position: style.backgroundPosition,
+                repeat: style.backgroundRepeat,
               });
             }
           }

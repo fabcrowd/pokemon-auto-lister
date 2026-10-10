@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Pseudo-label marketplace images for YOLO retraining.
+"""Import human-reviewed marketplace annotations for YOLO retraining.
 
-Runs detect_all_cards_with_crops() on every image under
-data/detect-marketplace/ and writes YOLO-compatible harvest frames to
-data/harvest/ so retrain.py can ingest them.
+Each photo must have a sibling ``<photo>.json`` sidecar with pixel-space
+``boxes`` and ``reviewed: true``. An empty boxes list is a reviewed negative.
+Unreviewed model proposals are never training labels.
 
 Usage (from tools/vellum-ai):
     python detect/label_marketplace.py
@@ -38,9 +38,15 @@ def _collect_images() -> list[Path]:
     )
 
 
-def _detect(bgr):
-    from vellum_ai.detect_multi import detect_all_cards_with_crops
-    return detect_all_cards_with_crops(bgr)
+def _read_reviewed_sidecar(image_path: Path) -> dict | None:
+    sidecar = image_path.with_suffix(".json")
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if data.get("reviewed") is not True or not isinstance(data.get("boxes"), list):
+        return None
+    return data
 
 
 def main() -> int:
@@ -68,7 +74,7 @@ def main() -> int:
     existing = sorted(HARVEST_DIR.glob("frame_*.jpg")) if HARVEST_DIR.is_dir() else []
     counter = len(existing)
 
-    written = skipped = 0
+    written = skipped = unreviewed = 0
     source_counts: dict[str, int] = {}
 
     for img_path in images:
@@ -77,12 +83,13 @@ def main() -> int:
             skipped += 1
             continue
 
-        results = _detect(bgr)
-        if not results:
+        annotation = _read_reviewed_sidecar(img_path)
+        if annotation is None:
+            unreviewed += 1
             skipped += 1
             continue
 
-        boxes = [r["box"] for r in results]
+        boxes = annotation["boxes"]
         source = img_path.parts[img_path.parts.index("detect-marketplace") + 1]  # facebook/hibid
         source_counts[source] = source_counts.get(source, 0) + 1
 
@@ -104,13 +111,14 @@ def main() -> int:
                 "source": source,
                 "origin": str(img_path),
                 "n_cards": len(boxes),
+                "reviewed": True,
             }
             dest_json.write_text(json.dumps(meta), encoding="utf-8")
 
         counter += 1
         written += 1
 
-    print(f"Written: {written}  Skipped (no detection): {skipped}")
+    print(f"Imported reviewed: {written}  Unreviewed/missing: {unreviewed}  Unreadable: {skipped - unreviewed}")
     for src, n in sorted(source_counts.items()):
         print(f"  {src}: {n} images")
 
@@ -118,7 +126,7 @@ def main() -> int:
         return 0
 
     if written == 0:
-        print("No harvest frames written — nothing to retrain on.")
+        print("No reviewed harvest frames imported — add reviewed sidecars before retraining.")
         return 1
 
     if args.retrain:

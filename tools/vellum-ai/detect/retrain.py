@@ -38,13 +38,19 @@ CLASS_FULL = 0
 
 
 def _load_harvest_frames(harvest_dir: Path) -> list[Path]:
-    """Return JPEG paths that have a matching JSON sidecar."""
+    """Return images with an explicitly human-reviewed annotation sidecar."""
     if not harvest_dir.is_dir():
         return []
     frames = []
     for jpg in sorted(harvest_dir.glob("frame_*.jpg")):
         meta = jpg.with_suffix(".json")
-        if meta.exists():
+        if not meta.exists():
+            continue
+        try:
+            annotation = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if annotation.get("reviewed") is True and isinstance(annotation.get("boxes"), list):
             frames.append(jpg)
     return frames
 
@@ -83,9 +89,9 @@ def _ingest_frames_to_dataset(frames: list[Path], data_root: Path, dry_run: bool
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        boxes: list[list[float]] = meta.get("boxes", [])
-        if not boxes:
+        if meta.get("reviewed") is not True or not isinstance(meta.get("boxes"), list):
             continue
+        boxes: list[list[float]] = meta.get("boxes", [])
 
         if not dry_run:
             img = cv2.imread(str(jpg))
@@ -96,10 +102,9 @@ def _ingest_frames_to_dataset(frames: list[Path], data_root: Path, dry_run: bool
             shutil.copy2(jpg, dest_img)
 
             label_lines = _boxes_to_yolo(boxes, w, h)
-            if label_lines:
-                lbl_path = train_lbl / jpg.with_suffix(".txt").name
-                lbl_path.write_text("\n".join(label_lines) + "\n", encoding="utf-8")
-                ingested += 1
+            lbl_path = train_lbl / jpg.with_suffix(".txt").name
+            lbl_path.write_text("\n".join(label_lines) + ("\n" if label_lines else ""), encoding="utf-8")
+            ingested += 1
         else:
             ingested += 1
 

@@ -13,7 +13,7 @@ try {
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson } from "./lib/setup.js";
 import { loadDetector, detectCards, setConfThreshold } from "./lib/detect.js";
-import { filterPhotoDetections } from "./photo-detection.js";
+import { filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { loadCatalog, searchCatalog } from "./lib/search.js";
@@ -310,19 +310,36 @@ async function handleScanPage(sendResponse) {
       const sw = Math.min(bitmap.width  - sx, Math.round(ph.rect.vw * dpr));
       const sh = Math.min(bitmap.height - sy, Math.round(ph.rect.vh * dpr));
       if (sw < 150 || sh < 150) continue;
+      let photoBitmap = null;
+      let fromSource = false;
+      let sourceTransform = null;
       try {
-        const photoCanvas = new OffscreenCanvas(sw, sh);
-        photoCanvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+        const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
+        photoBitmap = sourceCanMap ? await loadPhotoSource(ph.src) : null;
+        if (photoBitmap) {
+          sourceTransform = imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
+          if (!sourceTransform) {
+            photoBitmap.close();
+            photoBitmap = null;
+          } else {
+            fromSource = true;
+          }
+        }
+        if (!photoBitmap) {
+          photoBitmap = await createImageBitmap(await cropViewport(bitmap, sx, sy, sw, sh));
+        }
         setConfThreshold(0.12);
         let detectedBoxes;
         try {
-          detectedBoxes = await detectCards(photoCanvas);
+          detectedBoxes = await detectCards(photoBitmap);
         } finally {
           setConfThreshold(0.25);
         }
-        const boxes = filterPhotoDetections(detectedBoxes, sw, sh);
+        const imageW = photoBitmap.width;
+        const imageH = photoBitmap.height;
+        const boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
         console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
-                    sw + "x" + sh, "→ YOLO returned", detectedBoxes.length,
+                    imageW + "x" + imageH, fromSource ? "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
                     "boxes;", boxes.length, "passed card-size validation",
                     boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
 
@@ -332,7 +349,16 @@ async function handleScanPage(sendResponse) {
         for (const { box, score } of boxes) {
           const [bx1, by1, bx2, by2] = box;
           if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
-          const cardCanvas = rectifyCard(bitmap, [sx + bx1, sy + by1, sx + bx2, sy + by2]);
+          let viewportBox;
+          let cardCanvas;
+          if (fromSource) {
+            viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+            if (!viewportBox) continue;
+            cardCanvas = rectifyCard(photoBitmap, box);
+          } else {
+            viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
+            cardCanvas = rectifyCard(bitmap, [sx + bx1, sy + by1, sx + bx2, sy + by2]);
+          }
           const embedding  = await embedCard(cardCanvas);
           const hits       = searchCatalog(embedding, 20);
           const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
@@ -342,13 +368,14 @@ async function handleScanPage(sendResponse) {
             if (picked) { finalIdentity = picked.identity; legacyMarket = picked.legacyPrice; legacyVariant = picked.legacyVariant; priceGrid = picked.grid; }
           }
           cards.push({
-            box: [(sx + bx1) / dpr, (sy + by1) / dpr, (sx + bx2) / dpr, (sy + by2) / dpr],
+            box: viewportBox,
             score, identity: finalIdentity, confidence, abstain,
             market_price: legacyMarket, price_variant: legacyVariant, price_grid: priceGrid,
             via: "yolo-in-photo",
           });
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
+      finally { photoBitmap?.close?.(); }
     }
 
     for (const dc of domCards) {
@@ -578,4 +605,45 @@ async function b64ToBitmap(b64) {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   const blob     = new Blob([bytes], { type: "image/jpeg" });
   return createImageBitmap(blob);
+}
+
+async function loadPhotoSource(rawUrl) {
+  if (!rawUrl) return null;
+  let url;
+  try { url = new URL(rawUrl); } catch { return null; }
+  if (url.protocol !== "https:" || url.username || url.password || isPrivateHost(url.hostname)) return null;
+  try {
+    const response = await fetch(url.href, { credentials: "omit", redirect: "follow", cache: "force-cache" });
+    let finalUrl;
+    try { finalUrl = new URL(response.url); } catch { return null; }
+    if (finalUrl.protocol !== "https:" || finalUrl.username || finalUrl.password || isPrivateHost(finalUrl.hostname)) return null;
+    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return null;
+    const declaredSize = Number(response.headers.get("content-length")) || 0;
+    if (declaredSize > 20 * 1024 * 1024) return null;
+    const blob = await response.blob();
+    if (blob.size > 20 * 1024 * 1024 || !blob.type.toLowerCase().startsWith("image/")) return null;
+    const bitmap = await createImageBitmap(blob);
+    if (bitmap.width > 10000 || bitmap.height > 10000) {
+      bitmap.close();
+      return null;
+    }
+    return bitmap;
+  } catch {
+    // Cross-origin sources without CORS access use the already captured viewport crop.
+    return null;
+  }
+}
+
+function isPrivateHost(host) {
+  const value = host.toLowerCase().replace(/^\[|\]$/g, "");
+  return value === "localhost" || value === "::1" || value === "0.0.0.0" ||
+    value.endsWith(".local") || value.endsWith(".internal") || /^(fc|fd|fe80):/.test(value) ||
+    /^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) ||
+    /^169\.254\./.test(value) || /^172\.(1[6-9]|2\d|3[01])\./.test(value);
+}
+
+function cropViewport(bitmap, sx, sy, sw, sh) {
+  const canvas = new OffscreenCanvas(sw, sh);
+  canvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+  return canvas;
 }
