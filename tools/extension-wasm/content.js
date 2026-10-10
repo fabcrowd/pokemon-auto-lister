@@ -1,0 +1,463 @@
+// Injected into every tab — renders a full-viewport card-scanner overlay.
+(function () {
+  // Guard against double-injection — scripting.executeScript may re-run this file
+  // on the same page (e.g. once from action.onClicked + once from relayToTab fallback).
+  if (window.__cardScannerLoaded) return;
+  window.__cardScannerLoaded = true;
+
+  // Remove any canvas left by a previous extension context (e.g. after reload).
+  const _stale = document.getElementById('__card-scanner-overlay__');
+  if (_stale) _stale.remove();
+
+  const CONF_COLORS = {
+    high:    '#10b981',
+    medium:  '#f59e0b',
+    low:     '#4b5563',
+    abstain: '#4b5563',
+  };
+
+  function confTier(confidence) {
+    if (confidence >= 0.80) return 'high';
+    if (confidence >= 0.50) return 'medium';
+    return 'low';
+  }
+
+  let canvas       = null;
+  let ctx          = null;
+  let _lastOverlay = null; // { cards, srcWidth, srcHeight } — survives resize
+
+  function ensureCanvas() {
+    if (canvas) return;
+    canvas = document.createElement('canvas');
+    canvas.id = '__card-scanner-overlay__';
+    Object.assign(canvas.style, {
+      position:      'fixed',
+      top:           '0',
+      left:          '0',
+      width:         '100vw',
+      height:        '100vh',
+      pointerEvents: 'none',
+      zIndex:        '2147483647',
+    });
+    document.documentElement.appendChild(canvas);
+    fitCanvas();
+    window.addEventListener('resize', fitCanvas);
+  }
+
+  function fitCanvas() {
+    if (!canvas) return;
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx = canvas.getContext('2d');
+    // Resizing a canvas clears it — repaint the last known overlay state.
+    if (_lastOverlay) {
+      _drawOverlay(_lastOverlay.cards, _lastOverlay.srcWidth, _lastOverlay.srcHeight);
+    }
+  }
+
+  function clearOverlay() {
+    stopObserving();
+    _lastOverlay = null;
+    if (!canvas) return;
+    canvas.remove();
+    canvas = null;
+    ctx    = null;
+  }
+
+  // ─── Lazy-load observer ────────────────────────────────────────────────────
+  // Watches for new <img> nodes added to the DOM (infinite scroll, lazy load)
+  // and notifies the background to re-scan when card-shaped images appear that
+  // weren't present at the last scan baseline.
+
+  let _observer     = null;
+  let _observerTimer = null;
+  let _baselineSrcs  = new Set();
+
+  function startObserving() {
+    _baselineSrcs = _getCardSrcs(); // re-baseline on every scan completion
+    if (_observer) return;          // only wire up the observer once
+    _observer = new MutationObserver(() => {
+      clearTimeout(_observerTimer);
+      _observerTimer = setTimeout(_checkNewCardSrcs, 500);
+    });
+    _observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree:   true,
+    });
+  }
+
+  function stopObserving() {
+    if (_observer) {
+      _observer.disconnect();
+      _observer = null;
+    }
+    clearTimeout(_observerTimer);
+    _observerTimer = null;
+    _baselineSrcs.clear();
+  }
+
+  function _getCardSrcs() {
+    const srcs = new Set();
+    for (const img of document.querySelectorAll('img')) {
+      if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width < CARD_MIN_W || r.height < CARD_MIN_H) continue;
+      if (r.right <= 0 || r.bottom <= 0 || r.left >= window.innerWidth || r.top >= window.innerHeight) continue;
+      const ratio = r.height > 0 ? r.width / r.height : 0;
+      if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX) continue;
+      const src = img.currentSrc || img.src || '';
+      if (src) srcs.add(src);
+    }
+    return srcs;
+  }
+
+  function _checkNewCardSrcs() {
+    const current = _getCardSrcs();
+    let hasNew = false;
+    for (const src of current) {
+      if (!_baselineSrcs.has(src)) { hasNew = true; break; }
+    }
+    if (!hasNew) return;
+    _baselineSrcs = current; // advance baseline so we don't re-fire for the same images
+    chrome.runtime.sendMessage({ action: 'newCardsDetected' }).catch(() => {});
+  }
+
+  function renderOverlay(cards, srcWidth, srcHeight) {
+    ensureCanvas();
+    _lastOverlay = { cards, srcWidth, srcHeight };
+    _drawOverlay(cards, srcWidth, srcHeight);
+  }
+
+  function _drawOverlay(cards, srcWidth, srcHeight) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const scaleX = canvas.width  / srcWidth;
+    const scaleY = canvas.height / srcHeight;
+
+    for (const card of cards) {
+      if (!card.box || card.box.length < 4) continue;
+      const [x1, y1, x2, y2] = card.box;
+      const sx1 = x1 * scaleX, sy1 = y1 * scaleY;
+      const sx2 = x2 * scaleX, sy2 = y2 * scaleY;
+      const tier  = card.abstain ? 'abstain' : confTier(card.confidence);
+      const color = CONF_COLORS[tier];
+      ctx.save();
+      drawCornerBox(sx1, sy1, sx2, sy2, color, card.abstain);
+      if (card.identity && !card.abstain) {
+        drawBadge(sx1, sy1, sx2, sy2, card, color);
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawCornerBox(x1, y1, x2, y2, color, dashed) {
+    const w   = x2 - x1;
+    const h   = y2 - y1;
+    const arm = Math.min(w, h) * 0.18;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2.5;
+    ctx.lineCap     = 'round';
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = dashed ? 0 : 6;
+    if (dashed) ctx.setLineDash([5, 4]);
+
+    ctx.beginPath();
+    for (const [cx, cy, dx, dy] of [
+      [x1, y1,  1,  1],
+      [x2, y1, -1,  1],
+      [x2, y2, -1, -1],
+      [x1, y2,  1, -1],
+    ]) {
+      ctx.moveTo(cx + dx * arm, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + dy * arm);
+    }
+    ctx.stroke();
+  }
+
+  function drawBadge(x1, y1, x2, y2, card, accentColor) {
+    const id    = card.identity || {};
+    const disp  = card.display || null;
+    const name  = (id.name || 'Unknown').slice(0, 28);
+
+    // Line 2: set + number — always rendered so the user knows what the price refers to.
+    const setCode = id.setCode || disp?.setCode || '';
+    const setName = id.set     || disp?.set     || '';
+    const number  = id.number  || disp?.number  || '';
+    const line2Parts = [];
+    if (setName) line2Parts.push(setName);
+    if (number)  line2Parts.push('#' + number);
+    const line2 = line2Parts.join(' · ');
+
+    // Line 3: printing + price
+    const price = disp?.price != null
+      ? '$' + Number(disp.price).toFixed(2)
+      : (card.market_price != null ? '$' + Number(card.market_price).toFixed(2) : null);
+    const printing = disp?.printing || null;
+    const cond     = disp?.condition || null;
+    const priceLine = price
+      ? [printing, cond, price].filter(Boolean).join(' · ')
+      : null;
+
+    // Spread warning tag
+    const spread = disp?.spreadRatio || 1;
+    const warn   = spread > 10 ? `⚠ ${spread.toFixed(1)}× spread` : null;
+
+    const PAD      = 9;
+    const ACCENT_W = 4;
+    const NAME_PX  = 14;
+    const SUB_PX   = 11;
+    const PRICE_PX = 17;
+    const WARN_PX  = 10;
+    const GAP      = 3;
+
+    let height = PAD + NAME_PX;
+    if (line2)     height += GAP + SUB_PX;
+    if (priceLine) height += GAP + PRICE_PX;
+    if (warn)      height += GAP + WARN_PX;
+    height += PAD;
+
+    ctx.font = `700 ${NAME_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+    let widest = ctx.measureText(name).width;
+    if (line2) {
+      ctx.font = `500 ${SUB_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      widest = Math.max(widest, ctx.measureText(line2).width);
+    }
+    if (priceLine) {
+      ctx.font = `800 ${PRICE_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      widest = Math.max(widest, ctx.measureText(priceLine).width);
+    }
+    if (warn) {
+      ctx.font = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      widest = Math.max(widest, ctx.measureText(warn).width);
+    }
+    const WIDTH = Math.ceil(widest) + ACCENT_W + PAD * 2 + 4;
+
+    const vy1 = Math.max(0, y1);
+    const vy2 = Math.min(canvas.height, y2);
+    const vx1 = Math.max(0, x1);
+    const bx = Math.max(6, Math.min(vx1 + 6, canvas.width - WIDTH - 6));
+    const by = Math.max(6, Math.min(vy1 + 6, vy2 - height - 6));
+
+    ctx.save();
+    ctx.shadowColor  = 'rgba(0,0,0,0.65)';
+    ctx.shadowBlur   = 14;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = 'rgba(10,12,18,0.95)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, WIDTH, height, 6);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, ACCENT_W, height, [6, 0, 0, 6]);
+    ctx.fill();
+
+    const textLeft = bx + ACCENT_W + PAD;
+    let cy = by + PAD;
+    ctx.textBaseline = 'top';
+
+    ctx.font      = `700 ${NAME_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+    ctx.fillStyle = '#dde1ee';
+    ctx.fillText(name, textLeft, cy);
+    cy += NAME_PX + GAP;
+
+    if (line2) {
+      ctx.font      = `500 ${SUB_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      ctx.fillStyle = '#8b92ab';
+      ctx.fillText(line2, textLeft, cy);
+      cy += SUB_PX + GAP;
+    }
+    if (priceLine) {
+      ctx.font      = `800 ${PRICE_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      ctx.fillStyle = '#10b981';
+      ctx.fillText(priceLine, textLeft, cy);
+      cy += PRICE_PX + GAP;
+    }
+    if (warn) {
+      ctx.font      = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(warn, textLeft, cy);
+    }
+  }
+
+  // ─── DOM-based card finder ────────────────────────────────────────────────
+  // Pokémon card aspect ratio is 2.5 × 3.5 inches → ~0.714 portrait.
+  // Accept a wider band (0.55–0.95) to catch borders, protective sleeves,
+  // and photos shot with slight rotation. Lower size threshold lets us pick
+  // up marketplace thumbnails (HiBid, eBay) that are often ~70×100 px.
+  const CARD_RATIO_MIN = 0.55;
+  const CARD_RATIO_MAX = 0.95;
+  const CARD_MIN_W     = 60;
+  const CARD_MIN_H     = 85;
+
+  // Images bigger than this (CSS px) are candidates for "multi-card photo" treatment —
+  // run YOLO inside them to find individual cards. Marketplace lot shots and FB
+  // Marketplace listings fall here (landscape / square multi-card photos).
+  const PHOTO_MIN_SIDE = 180;
+
+  function findCardImages(opts = {}) {
+    const found = [];
+    const photos = [];  // large non-card-aspect images for YOLO-inside-image treatment
+    const rejected = []; // only populated when opts.diag === true
+    const seen  = new Set();
+    const imgs  = document.querySelectorAll('img');
+
+    const bgCandidates = scanBackgroundImages();
+
+    for (const img of imgs) {
+      const r = img.getBoundingClientRect();
+      const ratio = r.height ? r.width / r.height : 0;
+      const src = img.currentSrc || img.src || '';
+
+      let reason = null;
+      if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) reason = 'not-loaded';
+      else if (r.width < CARD_MIN_W || r.height < CARD_MIN_H)                  reason = 'too-small';
+      else if (r.right <= 0 || r.bottom <= 0 ||
+               r.left >= window.innerWidth || r.top >= window.innerHeight)     reason = 'off-screen';
+      else if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX)               reason = 'wrong-ratio';
+
+      // Rect visible within viewport
+      const vx = Math.max(0, r.left);
+      const vy = Math.max(0, r.top);
+      const vw = Math.min(window.innerWidth,  r.right)  - vx;
+      const vh = Math.min(window.innerHeight, r.bottom) - vy;
+      const visibleCoverage = r.width > 0 && r.height > 0
+        ? (vw * vh) / (r.width * r.height)
+        : 0;
+      if (!reason && visibleCoverage < 0.75) reason = 'mostly-clipped';
+
+      // Treat ANY sufficiently-large loaded image as a photo candidate too — YOLO
+      // runs inside it to find individual cards. Multi-card photos (lot shots,
+      // lightbox-expanded listing photos) match here regardless of aspect ratio.
+      const isLargePhoto = img.complete && img.naturalWidth > 0 &&
+        vw >= PHOTO_MIN_SIDE && vh >= PHOTO_MIN_SIDE;
+
+      if (reason) {
+        if (opts.diag) rejected.push({ reason, src: src.slice(0, 160), w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)) });
+        if (reason === 'wrong-ratio' && isLargePhoto) {
+          const key = 'p:' + src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
+          if (!seen.has(key)) {
+            seen.add(key);
+            photos.push({
+              rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+              naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+            });
+          }
+        }
+        continue;
+      }
+      const key = src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({
+        rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+        naturalWidth:  img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+      });
+      // ALSO add big card-shaped images to the photos list, so a single large
+      // image that actually contains multiple cards (e.g. a stack photo cropped
+      // tall) can be split by YOLO. The background prefers YOLO hits when ≥ 2.
+      if (vw >= PHOTO_MIN_SIDE && vh >= PHOTO_MIN_SIDE) {
+        const pkey = 'p:' + src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
+        if (!seen.has(pkey)) {
+          seen.add(pkey);
+          photos.push({
+            rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+            naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+          });
+        }
+      }
+    }
+
+    for (const candidate of bgCandidates) {
+      const { rect, ratio } = candidate;
+      const key = 'bg:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
+      if (ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX && !seen.has(key)) {
+        seen.add(key);
+        found.push({ rect, naturalWidth: null, naturalHeight: null });
+      }
+      if (rect.vw >= PHOTO_MIN_SIDE && rect.vh >= PHOTO_MIN_SIDE) {
+        const photoKey = 'bgp:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
+        if (!seen.has(photoKey)) {
+          seen.add(photoKey);
+          photos.push({ rect, naturalWidth: null, naturalHeight: null });
+        }
+      }
+    }
+    return { cards: found, photos, rejected, bgCandidates, totalImgs: imgs.length };
+  }
+
+  // Scan for card-sized elements that use CSS background-image instead of <img>.
+  // These are a common failure mode on image viewers (Facebook, HiBid lightboxes).
+  function scanBackgroundImages() {
+    const out = [];
+    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT);
+    let node = walker.currentNode;
+    let n = 0;
+    while (node && n < 2000) {
+      if (node.nodeType === 1) {
+        const r = node.getBoundingClientRect();
+        if (r.width >= CARD_MIN_W && r.height >= CARD_MIN_H &&
+            r.right > 0 && r.bottom > 0 &&
+            r.left < window.innerWidth && r.top < window.innerHeight) {
+          const vx = Math.max(0, r.left);
+          const vy = Math.max(0, r.top);
+          const vw = Math.min(window.innerWidth, r.right) - vx;
+          const vh = Math.min(window.innerHeight, r.bottom) - vy;
+          const visibleCoverage = (vw * vh) / (r.width * r.height);
+          if (visibleCoverage >= 0.75) {
+            const style = getComputedStyle(node);
+            const bg = style.backgroundImage;
+            if (style.visibility !== 'hidden' && style.display !== 'none' &&
+                style.opacity !== '0' && bg && bg !== 'none' && bg.includes('url(')) {
+              const ratio = r.width / r.height;
+              out.push({
+                rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+                w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)),
+                tag: node.tagName, bg: bg.slice(0, 120),
+              });
+            }
+          }
+        }
+        n++;
+      }
+      node = walker.nextNode();
+    }
+    return out;
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.action === 'showOverlay') {
+      renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
+    } else if (msg.action === 'clearOverlay') {
+      clearOverlay();
+    } else if (msg.action === 'findCardsDiag') {
+      const diag = findCardImages({ diag: true });
+      sendResponse({
+        ...diag,
+        viewportWidth:  window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      });
+      return false;
+    } else if (msg.action === 'findCards') {
+      const { cards, photos } = findCardImages();
+      sendResponse({
+        cards,
+        photos,
+        viewportWidth:  window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      });
+      return false;
+    } else if (msg.action === 'startObserving') {
+      startObserving();
+    }
+  });
+
+  // Exposed for Playwright demo / testing without going through the relay chain
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving };
+}());
