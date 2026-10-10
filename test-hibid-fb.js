@@ -15,7 +15,8 @@ import { mkdirSync, cpSync, existsSync, writeFileSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXT_PATH  = resolve(__dirname, "dist/extension-wasm");
-const SCRATCH   = resolve(__dirname, ".tmp/sites-profile");
+const profileArg = process.argv.find((a) => a.startsWith("--profile="));
+const SCRATCH   = profileArg ? resolve(__dirname, profileArg.slice(10)) : resolve(__dirname, ".tmp/sites-profile");
 const INTERACTIVE = process.argv.includes("--interactive");
 
 // Accept a single URL via `--url=https://...` to test a specific listing.
@@ -156,7 +157,7 @@ async function diagnoseSite(context, extId, popupPage, site) {
     }
   }, tabId);
 
-  log(`  DOM: total <img>=${diag?.totalImgs ?? '?'}, candidates=${diag?.found?.length ?? 0}, bg-only=${diag?.bgCandidates?.length ?? 0}`);
+  log(`  DOM: total <img>=${diag?.totalImgs ?? '?'}, candidates=${diag?.cards?.length ?? 0}, bg=${diag?.bgCandidates?.length ?? 0}`);
   const rejCounts = {};
   for (const r of diag?.rejected || []) rejCounts[r.reason] = (rejCounts[r.reason] || 0) + 1;
   log(`  rejections: ${JSON.stringify(rejCounts)}`);
@@ -168,6 +169,10 @@ async function diagnoseSite(context, extId, popupPage, site) {
       if (r.width < 50 || r.height < 50) continue;
       out.push({
         src:      (img.currentSrc || img.src || "").slice(0, 120),
+        alt:      (img.alt || "").slice(0, 120),
+        title:    (img.title || "").slice(0, 120),
+        link:     (img.closest("a")?.href || "").slice(0, 160),
+        context:  (img.closest("a")?.innerText || img.parentElement?.parentElement?.innerText || "").trim().slice(0, 180),
         dataSrc:  (img.getAttribute("data-src") || "").slice(0, 120),
         complete: img.complete,
         natW:     img.naturalWidth,
@@ -220,7 +225,7 @@ async function diagnoseSite(context, extId, popupPage, site) {
 
   await page.screenshot({ path: resolve(__dirname, `sites-${site.slug}.png`), fullPage: false }).catch(() => {});
   await page.close().catch(() => {});
-  return { ...site, diag: { ...diag, foundLen: diag?.found?.length }, stats, overlay };
+  return { ...site, diag: { ...diag, foundLen: diag?.cards?.length }, stats, overlay };
 }
 
 async function getTabId(context, extId, page) {

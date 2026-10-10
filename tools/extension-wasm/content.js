@@ -297,6 +297,19 @@
   // run YOLO inside them to find individual cards. Marketplace lot shots and FB
   // Marketplace listings fall here (landscape / square multi-card photos).
   const PHOTO_MIN_SIDE = 180;
+  const SEALED_PRODUCT_LABEL = /\b(?:ultra[\s-]*premium collection|premium collection|collection (?:box|chest|set)|booster(?: box| pack| bundle)?|elite trainer box|tin|deck box|starter deck|battle deck|gift set|bundle|playmat|binder|portfolio|trading card game classic)\b/i;
+
+  function hasSealedProductContext(node) {
+    const link = node.closest('a');
+    const label = [
+      node.alt,
+      node.title,
+      node.getAttribute('aria-label'),
+      link?.getAttribute('aria-label'),
+      link?.innerText,
+    ].filter(Boolean).join(' ');
+    return SEALED_PRODUCT_LABEL.test(label);
+  }
 
   function findCardImages(opts = {}) {
     const found = [];
@@ -318,6 +331,7 @@
       else if (r.right <= 0 || r.bottom <= 0 ||
                r.left >= window.innerWidth || r.top >= window.innerHeight)     reason = 'off-screen';
       else if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX)               reason = 'wrong-ratio';
+      else if (hasSealedProductContext(img))                                    reason = 'sealed-product';
 
       // Rect visible within viewport
       const vx = Math.max(0, r.left);
@@ -412,7 +426,8 @@
             const style = getComputedStyle(node);
             const bg = style.backgroundImage;
             if (style.visibility !== 'hidden' && style.display !== 'none' &&
-                style.opacity !== '0' && bg && bg !== 'none' && bg.includes('url(')) {
+                style.opacity !== '0' && bg && bg !== 'none' && bg.includes('url(') &&
+                !hasSealedProductContext(node)) {
               const ratio = r.width / r.height;
               out.push({
                 rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
