@@ -1,13 +1,18 @@
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$SourcePath = Join-Path $RepoRoot 'tools\extension-wasm\content.js'
-$OutputPath = Join-Path $RepoRoot 'dist\extension-wasm\content.js'
+$SourceRoot = Join-Path $RepoRoot 'tools\extension-wasm'
+$OutputRoot = Join-Path $RepoRoot 'dist\extension-wasm'
 
-if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
-  throw "Tracked extension content script not found: $SourcePath"
+foreach ($File in @('content.js', 'background.js', 'photo-detection.js')) {
+  $SourcePath = Join-Path $SourceRoot $File
+  $OutputPath = Join-Path $OutputRoot $File
+  if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+    throw "Tracked extension source not found: $SourcePath"
+  }
+
+  New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+  Copy-Item -LiteralPath $SourcePath -Destination $OutputPath -Force
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out-Null
-Copy-Item -LiteralPath $SourcePath -Destination $OutputPath -Force
-Write-Output "Updated $OutputPath from $SourcePath"
+Write-Output "Updated extension content.js, background.js, and photo-detection.js in $OutputRoot"
