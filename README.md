@@ -16,7 +16,7 @@ Photo (single or multi-card spread)
 
 | Item | State |
 |------|-------|
-| Tests | `npm test` — 149+ passing |
+| Tests | `npm test` (Node) · `npm run test:vellum` (Python) |
 | Live credentials | Not configured until you fill `.env` |
 
 ## Requirements
@@ -29,7 +29,7 @@ Photo (single or multi-card spread)
 ## Quick start
 
 ```powershell
-cd "C:\repos\projects\auto card lister"
+cd pokemon-auto-lister
 npm install
 copy .env.example .env
 # Edit .env — see sections below
@@ -86,24 +86,35 @@ When PokeGrade free-tier quota is exhausted, the app opens a **quota circuit**, 
 ## Development
 
 ```powershell
-npm test      # node --test
-npm run lint  # eslint
+npm test                          # node --test (all tests/*.test.js)
+node --test tests/pricing.test.js # single file
+npm run lint                      # eslint
+npm run vellum-ai                 # start VellumAI sidecar (tools/vellum-ai/.venv312 or .venv)
+npm run test:vellum               # VellumAI Python tests
+npx playwright test               # E2E (headless); --project=extension / demo run headed
 ```
 
 ## Layout
 
 ```text
 src/
-  index.js           # bootstrap: clients, server
-  server.js          # LAN HTTP + multipart scan endpoint + /api/scan
-  pricing/           # 15% rule + comps median
-  pokegrade/         # PokeGrade API client
+  index.js           # bootstrap: reads env, builds clients, injects into server
+  server.js          # LAN HTTP: /detect, /api/scan, /api/price-grid, static dashboard
+  server/            # multipart parser
+  scan/              # scanAndPrice — identity → comps → price grid orchestration
+  identify/          # identity resolver (dual / local-only / pokegrade-only) + VellumAI client
+  photos/            # multi-card split, shot kind, photo roles
+  pricing/           # 15% needs-review rule, comps median, JustTCG / PokéWallet / RapidAPI clients
+  pokegrade/         # PokeGrade API client + quota circuit
   collectr/          # Collectr api-v2 + CSV fallback
-  pipeline/          # processCard orchestration
+  ebay/              # eBay OAuth + sold comps
+  tcgplayer/         # TCGPlayer client
 public/              # static dashboard + Scanner panel
-data/                # runtime state (gitignored)
-tests/
+data/                # runtime state + card catalog (gitignored)
+tests/               # node --test suites; tests/e2e/ = Playwright
+scripts/             # benchmarks, sidecar launchers, debug reports
 tools/vellum-ai/     # local detect+ID sidecar (Python 3.12)
+tools/chrome-extension/  # dev Chrome extension
 docs/autopilot/      # architecture notes, CURSOR.md
 HANDOFF.md           # next-session brief
 ```

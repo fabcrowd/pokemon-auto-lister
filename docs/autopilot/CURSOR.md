@@ -19,7 +19,8 @@ Windows personal Pokémon **card scanner**. Phone photo → multi-card detect �
 public/          → dashboard (vanilla HTML/CSS/JS) + Scanner panel
 src/server.js    → multipart scan upload + /api/scan
 src/pricing/     → median comps, 15% needs_review threshold
-src/pipeline/    → processCard orchestration
+src/scan/        → scanAndPrice orchestration (identity → comps → grid)
+src/identify/    → identity resolver + VellumAI client
 src/pokegrade/   → PokeGrade /value API client + quota circuit
 src/collectr/    → Collectr api-v2 + CSV fallback
 tools/vellum-ai/ → local CLIP/FAISS detect+ID sidecar (Python 3.12)
