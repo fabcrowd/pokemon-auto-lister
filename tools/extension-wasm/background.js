@@ -11,15 +11,22 @@ try {
   console.error("[BG] ORT env init failed:", e.message);
 }
 
-import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson } from "./lib/setup.js";
+import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset } from "./lib/setup.js";
 import { loadDetector, detectCards, setConfThreshold } from "./lib/detect.js";
 import { filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
-import { loadCatalog, searchCatalog } from "./lib/search.js";
+import { loadCatalog, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
 import { fuseResults }                 from "./lib/fusion.js";
-import { getPrice, getFullCardPayload, extractTcgPlayerId } from "./lib/pricing.js";
-import { getConditionGrid, fromPokemontcgPayload }          from "./lib/condition-pricing.js";
+import { setChoices, choiceName }      from "./lib/set-choice.js";
+import { eraById, eraPrintings, inEra } from "./lib/era.js";
+import { isCardBack }                  from "./lib/card-back.js";
+import { loadNumberReader, readCardNumber } from "./lib/ocr.js";
+import { setSizes, printingByNumber }  from "./lib/card-number.js";
+import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
+import {
+  getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
+} from "./lib/condition-pricing.js";
 
 // ─── state ───────────────────────────────────────────────────────────────────
 
@@ -101,8 +108,8 @@ chrome.action.onClicked.addListener(async () => {
   const win = await chrome.windows.create({
     url: popupUrl,
     type: "popup",
-    width: 440,
-    height: 620,
+    width: 500,
+    height: 680,
     focused: true,
   });
   _popupWinId = win.id;
@@ -148,17 +155,34 @@ async function tryAutoLoad() {
   if (ready) await loadModels();
 }
 
-async function loadModels() {
-  if (_ready || _loading) return;
-  _loading = true;
+// The SW is killed after ~30s idle while the popup window stays open, so every
+// entry point that needs models must reload them from cache first.
+async function _ensureReady(sendResponse) {
   try {
+    if (!_ready) await tryAutoLoad();
+  } catch (err) {
+    console.error("[BG] model reload failed", err?.message || err);
+    sendResponse({ error: String(err?.message || err) });
+    return false;
+  }
+  if (!_ready) sendResponse({ error: "Models not loaded" });
+  return _ready;
+}
+
+let _loadPromise = null;
+
+async function loadModels() {
+  if (_ready) return;
+  if (_loadPromise) return _loadPromise;
+  _loading = true;
+  _loadPromise = (async () => {
     const [detectBuf, clipBuf, catalogBuf] = await Promise.all([
       getAssetBuffer("card_detect.onnx"),
       getAssetBuffer("clip_visual_int8.onnx"),
       getAssetBuffer("catalog.bin.gz"),
     ]);
 
-    await loadDetector(detectBuf).catch(e => { throw new Error("detector: " + e.message); });
+    await loadDetector(detectBuf).catch(e => { throw new Error("detector (" + detectBuf.byteLength + " bytes): " + e.message); });
     await loadEmbedder(clipBuf).catch(e => { throw new Error("embedder: " + e.message); });
     await loadCatalog(catalogBuf).catch(e => { throw new Error("catalog: " + e.message); });
 
@@ -168,9 +192,29 @@ async function loadModels() {
     ]);
 
     _ready = true;
+    _loadNumberReader();
+  })();
+  try {
+    await _loadPromise;
   } finally {
     _loading = false;
+    _loadPromise = null;
   }
+}
+
+let _numberReader = null;
+
+// Scans run without the number reader until its files are cached.
+function _loadNumberReader() {
+  _numberReader ??= (async () => {
+    const [det, rec] = await Promise.all([getOptionalAsset("ocr_det.onnx"), getOptionalAsset("ocr_rec.onnx")]);
+    if (!det || !rec) {
+      console.log("[BG] number reader not available");
+      return;
+    }
+    await loadNumberReader(det, rec);
+    console.log("[BG] number reader loaded");
+  })().catch((err) => console.error("[BG] number reader failed:", err?.message || err));
 }
 
 // ─── message handler ─────────────────────────────────────────────────────────
@@ -178,8 +222,18 @@ async function loadModels() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg.action) {
     case "checkReady":
-      sendResponse({ ready: _ready });
-      return false;
+      // The service worker starts blank after Chrome suspends it. Models stay
+      // in the cache, so a later visit should come back ready without another download.
+      (async () => {
+        try {
+          if (!_ready) await tryAutoLoad();
+          sendResponse({ ready: _ready });
+        } catch (err) {
+          console.error("[BG] checkReady failed", err?.message || err);
+          sendResponse({ ready: false, error: String(err?.message || err) });
+        }
+      })();
+      return true;
 
     case "startSetup":
       handleSetup(sendResponse);
@@ -189,8 +243,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       handleDetect(msg.imageB64, sendResponse);
       return true; // async
 
+    case "priceCard":
+      handlePriceCard(msg.id, sendResponse);
+      return true;
+
     case "scanPage":
-      handleScanPage(sendResponse);
+      handleScanPage(sendResponse, eraById(msg.era));
       return true; // async
 
     case "clearPageOverlay":
@@ -248,12 +306,9 @@ async function handleSetup(sendResponse) {
 
 // ─── page scan ───────────────────────────────────────────────────────────────
 
-async function handleScanPage(sendResponse) {
-  console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId);
-  if (!_ready) {
-    sendResponse({ error: "Models not loaded" });
-    return;
-  }
+async function handleScanPage(sendResponse, era) {
+  console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId, "era =", era?.id || "any");
+  if (!(await _ensureReady(sendResponse))) return;
 
   // Resolve a scannable target tab — fall back to the most-recent non-popup active tab.
   let targetTab = null;
@@ -276,9 +331,20 @@ async function handleScanPage(sendResponse) {
   try {
     // Make sure the content script is live, then ask it which images look like cards.
     await _ensureContentScript(targetTab.id);
-    const domResp = await chrome.tabs.sendMessage(targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+    let domResp = await chrome.tabs.sendMessage(targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
     if (domResp?.error) {
       sendResponse({ error: "Could not query page for cards: " + domResp.error });
+      return;
+    }
+    // Marketplace pages often paint the card frame before the photo arrives.
+    // Scanning then would report "no cards" and run detection on a blank image.
+    if ((domResp.pending || 0) > 0 && !(domResp.cards?.length) && !(domResp.photos?.length)) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const again = await chrome.tabs.sendMessage(targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+      if (!again?.error) domResp = again;
+    }
+    if (!(domResp.cards?.length) && !(domResp.photos?.length) && (domResp.pending || 0) > 0) {
+      sendResponse({ error: "Card pictures are still loading. Scan again in a moment." });
       return;
     }
     const domCards = domResp?.cards || [];
@@ -326,7 +392,7 @@ async function handleScanPage(sendResponse) {
           }
         }
         if (!photoBitmap) {
-          photoBitmap = await createImageBitmap(await cropViewport(bitmap, sx, sy, sw, sh));
+          photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
         }
         setConfThreshold(0.12);
         let detectedBoxes;
@@ -359,20 +425,7 @@ async function handleScanPage(sendResponse) {
             viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
             cardCanvas = rectifyCard(bitmap, [sx + bx1, sy + by1, sx + bx2, sy + by2]);
           }
-          const embedding  = await embedCard(cardCanvas);
-          const hits       = searchCatalog(embedding, 20);
-          const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
-          let finalIdentity = identity, priceGrid = null, legacyMarket = null, legacyVariant = null;
-          if (!abstain && identity) {
-            const picked = await pickPricingIdentity(identity, hits);
-            if (picked) { finalIdentity = picked.identity; legacyMarket = picked.legacyPrice; legacyVariant = picked.legacyVariant; priceGrid = picked.grid; }
-          }
-          cards.push({
-            box: viewportBox,
-            score, identity: finalIdentity, confidence, abstain,
-            market_price: legacyMarket, price_variant: legacyVariant, price_grid: priceGrid,
-            via: "yolo-in-photo",
-          });
+          cards.push({ box: viewportBox, score, ...(await identifyCard(cardCanvas, era, by2 - by1)), via: "yolo-in-photo" });
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
       finally { photoBitmap?.close?.(); }
@@ -392,37 +445,10 @@ async function handleScanPage(sendResponse) {
 
       // Build the 750x1050 rectified canvas the embedder expects.
       const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
-      const embedding  = await embedCard(cardCanvas);
-      const hits       = searchCatalog(embedding, 20);
-      const top5 = hits.slice(0, 5).map((h) => `${_idMap[h.index]}@${h.score.toFixed(3)}`).join(" ");
-      console.log("[BG] crop", sx, sy, sw, sh, "top5:", top5);
-      const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
-
-      // Resolve a pricing identity: top-1 by default, falling back to a same-named
-      // top-K candidate if the picked one has no market data. Then enrich with the full
-      // per-condition grid (NM/LP/MP/HP/DMG) and graded prices from JustTCG/PPT.
-      let finalIdentity = identity;
-      let priceGrid     = null;         // full {variants, graded, defaultVariant, spreadRatio}
-      let legacyMarket  = null;
-      let legacyVariant = null;
-
-      if (!abstain && identity) {
-        const picked = await pickPricingIdentity(identity, hits);
-        if (picked) {
-          finalIdentity = picked.identity;
-          legacyMarket  = picked.legacyPrice;
-          legacyVariant = picked.legacyVariant;
-          priceGrid     = picked.grid;
-        }
-      }
-
       cards.push({
         box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
         score: 1.0,
-        identity: finalIdentity, confidence, abstain,
-        market_price:  legacyMarket,
-        price_variant: legacyVariant,
-        price_grid:    priceGrid,
+        ...(await identifyCard(cardCanvas, era, sh)),
       });
     }
 
@@ -438,20 +464,10 @@ async function handleScanPage(sendResponse) {
           const [x1, y1, x2, y2] = box;
           if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
           const cardCanvas = rectifyCard(bitmap, box);
-          const embedding  = await embedCard(cardCanvas);
-          const hits       = searchCatalog(embedding, 20);
-          const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
-          let finalIdentity = identity;
-          let priceGrid = null, legacyMarket = null, legacyVariant = null;
-          if (!abstain && identity) {
-            const picked = await pickPricingIdentity(identity, hits);
-            if (picked) { finalIdentity = picked.identity; legacyMarket = picked.legacyPrice; legacyVariant = picked.legacyVariant; priceGrid = picked.grid; }
-          }
           cards.push({
             box: [x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr],
             score,
-            identity: finalIdentity, confidence, abstain,
-            market_price: legacyMarket, price_variant: legacyVariant, price_grid: priceGrid,
+            ...(await identifyCard(cardCanvas, era, y2 - y1)),
             via: "yolo-viewport",
           });
         }
@@ -460,20 +476,21 @@ async function handleScanPage(sendResponse) {
       }
     }
 
-    bitmap.close();
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
 
-    // srcWidth/Height = viewport (CSS px) because box coords are already in CSS px.
+    // Read the bitmap before closing it. A missing viewport size used to throw
+    // after close() and the scan died after the cards were already found.
     const srcWidth  = domResp.viewportWidth  || Math.round(bitmap.width  / dpr);
     const srcHeight = domResp.viewportHeight || Math.round(bitmap.height / dpr);
+    bitmap.close();
     await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight });
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
     chrome.tabs.sendMessage(targetTab.id, { action: "startObserving" }).catch(() => {});
 
-    sendResponse({ cards, srcWidth, srcHeight, targetTabId: targetTab.id });
+    sendResponse({ cards, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0 });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendResponse({ error: String(err?.message || err) });
@@ -483,10 +500,7 @@ async function handleScanPage(sendResponse) {
 // ─── detection ───────────────────────────────────────────────────────────────
 
 async function handleDetect(imageB64, sendResponse) {
-  if (!_ready) {
-    sendResponse({ error: "Models not loaded" });
-    return;
-  }
+  if (!(await _ensureReady(sendResponse))) return;
 
   try {
     const bitmap  = await b64ToBitmap(imageB64);
@@ -497,7 +511,11 @@ async function handleDetect(imageB64, sendResponse) {
     for (const { box, score } of rawBoxes) {
       const cardCanvas = rectifyCard(bitmap, box);
       const embedding  = await embedCard(cardCanvas);
-      const hits       = searchCatalog(embedding, 20);
+      const hits       = physicalHits(searchCatalog(embedding, 20), _meta);
+      if (isCardBack(embedding, hits[0]?.score ?? 0)) {
+        cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
+        continue;
+      }
       const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
       const priceData  = abstain ? null : await getPrice(identity);
       const market_price  = priceData?.price  ?? null;
@@ -546,39 +564,129 @@ function _photoKey(entry) {
 // ─── pricing resolver ────────────────────────────────────────────────────────
 
 /**
- * Decide which catalog identity owns the price for this scan + fetch its full price grid.
- * Walks top-K candidates when the top-1 identity returns nothing. Returns:
- *   { identity, legacyPrice, legacyVariant, grid } | null
+ * Recognize one rectified card. When close matches come from more than one set,
+ * the card is not priced: the user picks the set and the popup asks "priceCard".
  */
-async function pickPricingIdentity(topIdentity, hits) {
-  const candidates = [];
-  candidates.push(topIdentity);
-  for (const h of hits.slice(0, 10)) {
-    const cand = _meta[h.index];
-    if (!cand || cand.id === topIdentity.id) continue;
-    if (cand.name !== topIdentity.name) continue;
-    candidates.push(cand);
+async function identifyCard(cardCanvas, era = null, sourceHeight = 0) {
+  const embedding = await embedCard(cardCanvas);
+  const hits = physicalHits(searchCatalog(embedding, 20), _meta);
+  if (isCardBack(embedding, hits[0]?.score ?? 0)) {
+    return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
-
-  for (const cand of candidates) {
-    const full = await getFullCardPayload(cand.id);
-    const prices = full?.tcgplayer?.prices;
-    const tcgPlayerId = extractTcgPlayerId(full?.tcgplayer?.url);
-    // Prefer the richer grid from condition-pricing (backend/PPT); fall back to pokemontcg.io variants.
-    let grid = await getConditionGrid({ ...cand, tcgPlayerId });
-    if (!grid) grid = fromPokemontcgPayload(prices);
-
-    const legacyPrice   = extractLegacyPrice(prices);
-    if (grid || legacyPrice) {
-      return {
-        identity: cand,
-        legacyPrice:   legacyPrice?.price   ?? null,
-        legacyVariant: legacyPrice?.variant ?? null,
-        grid: grid || null,
-      };
-    }
+  const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
+  const unpriced = { market_price: null, price_variant: null, price_grid: null };
+  const named = abstain || !identity ? null : identity.name;
+  const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits) : null;
+  if (numbered) {
+    return { identity: numbered.card, confidence, abstain: false, numberRead: numbered.read, ...(await priceIdentity(numbered.card)) };
   }
+  if (!named) return { identity, confidence, abstain, ...unpriced };
+
+  const eraRows = era ? eraPrintingsOf(identity.name, era) : null;
+  // The user said when these cards are from; a name never printed then was misread.
+  if (eraRows && !eraRows.length) return { identity: null, confidence, abstain: true, ...unpriced };
+  const inPeriod = eraRows ? eraPrintings(scoreIndices(embedding, eraRows)) : null;
+  if (inPeriod?.pick != null) {
+    const picked = _meta[inPeriod.pick];
+    return { identity: picked, confidence, abstain, ...(await priceIdentity(picked)) };
+  }
+  const choices = inPeriod?.choices
+    ? inPeriod.choices.map((index) => _meta[index])
+    : setChoices(identity, hits, _meta);
+  if (choices.length > 1) {
+    return {
+      identity: { name: identity.name },
+      confidence,
+      abstain,
+      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
+      ...unpriced,
+    };
+  }
+  return { identity, confidence, abstain, ...(await priceIdentity(identity)) };
+}
+
+let _indicesByName = null;
+/** Catalog rows with this card name (set-choice spelling). */
+function printingsOf(name) {
+  if (!_indicesByName) {
+    _indicesByName = new Map();
+    _meta.forEach((card, index) => {
+      const key = choiceName(card.name);
+      if (!_indicesByName.has(key)) _indicesByName.set(key, []);
+      _indicesByName.get(key).push(index);
+    });
+  }
+  return _indicesByName.get(choiceName(name)) || [];
+}
+
+/** Catalog rows with this card name whose printing is in the era. */
+function eraPrintingsOf(name, era) {
+  return printingsOf(name).filter((index) => inEra(_meta[index], era));
+}
+
+// Source pixels of card height; below this the number does not read (measured on ShopGoodwill lots).
+const NUMBER_MIN_HEIGHT = 600;
+let _setSizes = null;
+
+/**
+ * The printing named by the collector number on the card, or null. Printings of the
+ * recognized name come first, then the closest-looking cards (the name may be wrong).
+ */
+async function printingFromNumber(cardCanvas, name, hits) {
+  const read = await readCardNumber(cardCanvas);
+  if (!read?.number) {
+    if (read) console.log("[BG] no number in", JSON.stringify(read.text));
+    return null;
+  }
+  _setSizes ??= setSizes(_meta);
+  const namedRows = name
+    ? physicalHits(printingsOf(name).map((index) => ({ index })), _meta).map(({ index }) => _meta[index])
+    : [];
+  const lookalikes = [...new Map(hits.map(({ index }) => [_meta[index].id, _meta[index]])).values()];
+  for (const rows of [namedRows, lookalikes]) {
+    const at = printingByNumber(rows, read, _setSizes);
+    if (at == null) continue;
+    console.log("[BG] number", JSON.stringify(read.text), "→", rows[at].id, rows === namedRows ? "" : "(look-alike of " + (name ?? "unknown card") + ")");
+    return { card: rows[at], read: `${read.number}/${read.total}` };
+  }
+  console.log("[BG] number", JSON.stringify(read.text), "→ no printing of", name);
   return null;
+}
+
+/** Price exactly this catalog card. Never substitutes another printing. */
+async function priceIdentity(identity) {
+  // TCGdex is keyed by our catalog id and answers when pokemontcg.io's keyless tier times out.
+  const tcgdex = await getTcgdexCard(identity.id);
+  const tcgdexGrid = fromTcgdexPayload(tcgdex, identity);
+  const full = tcgdexGrid ? null : await getFullCardPayload(identity.id);
+  const prices = full?.tcgplayer?.prices;
+  const tcgPlayerId = tcgPlayerIdFromTcgdex(tcgdex) ?? extractTcgPlayerId(full?.tcgplayer?.url);
+  // Prefer the richer grid from condition-pricing (backend/PPT), then TCGdex, then pokemontcg.io.
+  let grid = await getConditionGrid({ ...identity, tcgPlayerId });
+  if (!grid) grid = tcgdexGrid || fromPokemontcgPayload(prices, full?.tcgplayer?.updatedAt);
+  const legacyPrice = extractLegacyPrice(prices);
+  return {
+    market_price: legacyPrice?.price ?? null,
+    price_variant: legacyPrice?.variant ?? null,
+    price_grid: grid || null,
+  };
+}
+
+let _metaById = null;
+async function handlePriceCard(id, sendResponse) {
+  if (!(await _ensureReady(sendResponse))) return;
+  try {
+    if (!_metaById) _metaById = new Map(_meta.map((card) => [card.id, card]));
+    const identity = _metaById.get(id);
+    if (!identity) {
+      sendResponse({ error: "That card isn't in the catalog." });
+      return;
+    }
+    sendResponse({ identity, ...(await priceIdentity(identity)) });
+  } catch (err) {
+    console.error("[BG] priceCard failed", err?.message || err);
+    sendResponse({ error: "Couldn't get a price. Try again." });
+  }
 }
 
 const _LEGACY_VARIANT_ORDER = [
@@ -640,10 +748,4 @@ function isPrivateHost(host) {
     value.endsWith(".local") || value.endsWith(".internal") || /^(fc|fd|fe80):/.test(value) ||
     /^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) ||
     /^169\.254\./.test(value) || /^172\.(1[6-9]|2\d|3[01])\./.test(value);
-}
-
-function cropViewport(bitmap, sx, sy, sw, sh) {
-  const canvas = new OffscreenCanvas(sw, sh);
-  canvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
-  return canvas;
 }

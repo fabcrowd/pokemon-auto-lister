@@ -176,6 +176,21 @@
     ctx.stroke();
   }
 
+  function overlayPrintingNote(card) {
+    if (card.display?.printingNote) return card.display.printingNote;
+    if (card.display?.price != null) return null;
+    const variants = card.price_grid?.variants;
+    const names = variants ? Object.keys(variants) : [];
+    if (names.length <= 1) return null;
+    const values = names
+      .map((name) => variants[name]?.market)
+      .filter((price) => typeof price === 'number' && price > 0);
+    if (values.length < 2) return names.length + ' printings';
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    return names.length + ' printings · $' + low.toFixed(2) + '–$' + high.toFixed(2);
+  }
+
   function drawBadge(x1, y1, x2, y2, card, accentColor) {
     const id    = card.identity || {};
     const disp  = card.display || null;
@@ -191,18 +206,19 @@
     const line2 = line2Parts.join(' · ');
 
     // Line 3: printing + price
+    const note = overlayPrintingNote(card);
     const price = disp?.price != null
       ? '$' + Number(disp.price).toFixed(2)
-      : (card.market_price != null ? '$' + Number(card.market_price).toFixed(2) : null);
+      : (!note && card.market_price != null ? '$' + Number(card.market_price).toFixed(2) : null);
     const printing = disp?.printing || null;
     const cond     = disp?.condition || null;
     const priceLine = price
       ? [printing, cond, price].filter(Boolean).join(' · ')
       : null;
 
-    // Spread warning tag
+    const footer = disp?.footer || null;
     const spread = disp?.spreadRatio || 1;
-    const warn   = spread > 10 ? `⚠ ${spread.toFixed(1)}× spread` : null;
+    const warn   = !note && spread > 10 ? `⚠ ${spread.toFixed(1)}× spread` : null;
 
     const PAD      = 9;
     const ACCENT_W = 4;
@@ -215,6 +231,8 @@
     let height = PAD + NAME_PX;
     if (line2)     height += GAP + SUB_PX;
     if (priceLine) height += GAP + PRICE_PX;
+    if (note)      height += GAP + WARN_PX;
+    if (footer)    height += GAP + WARN_PX;
     if (warn)      height += GAP + WARN_PX;
     height += PAD;
 
@@ -227,6 +245,14 @@
     if (priceLine) {
       ctx.font = `800 ${PRICE_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
       widest = Math.max(widest, ctx.measureText(priceLine).width);
+    }
+    if (note) {
+      ctx.font = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      widest = Math.max(widest, ctx.measureText(note).width);
+    }
+    if (footer) {
+      ctx.font = `500 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      widest = Math.max(widest, ctx.measureText(footer).width);
     }
     if (warn) {
       ctx.font = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
@@ -276,6 +302,18 @@
       ctx.fillText(priceLine, textLeft, cy);
       cy += PRICE_PX + GAP;
     }
+    if (note) {
+      ctx.font      = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(note, textLeft, cy);
+      cy += WARN_PX + GAP;
+    }
+    if (footer) {
+      ctx.font      = `500 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      ctx.fillStyle = '#8b92ab';
+      ctx.fillText(footer, textLeft, cy);
+      cy += WARN_PX + GAP;
+    }
     if (warn) {
       ctx.font      = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
       ctx.fillStyle = '#f59e0b';
@@ -317,6 +355,7 @@
     const rejected = []; // only populated when opts.diag === true
     const seen  = new Set();
     const imgs  = document.querySelectorAll('img');
+    let pending = 0; // card-shaped pictures that have not finished loading yet
 
     const bgCandidates = scanBackgroundImages();
 
@@ -324,6 +363,14 @@
       const r = img.getBoundingClientRect();
       const ratio = r.height ? r.width / r.height : 0;
       const src = img.currentSrc || img.src || '';
+
+      const cardShaped = r.width >= CARD_MIN_W && r.height >= CARD_MIN_H
+        && ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX
+        && r.right > 0 && r.bottom > 0
+        && r.left < window.innerWidth && r.top < window.innerHeight;
+      // Layout is already card-sized, but the bytes have not arrived. A finished
+      // image with no pixels is broken, not "still loading".
+      if (!img.complete && cardShaped) pending += 1;
 
       let reason = null;
       if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) reason = 'not-loaded';
@@ -415,7 +462,7 @@
         }
       }
     }
-    return { cards: found, photos, rejected, bgCandidates, totalImgs: imgs.length };
+    return { cards: found, photos, pending, rejected, bgCandidates, totalImgs: imgs.length };
   }
 
   // Scan for card-sized elements that use CSS background-image instead of <img>.
@@ -480,10 +527,11 @@
       });
       return false;
     } else if (msg.action === 'findCards') {
-      const { cards, photos } = findCardImages();
+      const { cards, photos, pending } = findCardImages();
       sendResponse({
         cards,
         photos,
+        pending,
         viewportWidth:  window.innerWidth,
         viewportHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio || 1,

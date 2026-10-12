@@ -1,0 +1,92 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  textBoxes, ctcDecode, parseCardNumber, setSizes, printingByNumber,
+} from '../tools/extension-wasm/lib/card-number.js';
+
+function probMap(width, height, rects) {
+  const map = new Float32Array(width * height);
+  for (const [x1, y1, x2, y2, p] of rects) {
+    for (let y = y1; y < y2; y++) for (let x = x1; x < x2; x++) map[y * width + x] = p;
+  }
+  return map;
+}
+
+test('each blob of text becomes one box, grown a little past its edges', () => {
+  const map = probMap(100, 40, [[10, 10, 40, 20, 0.9], [60, 25, 90, 32, 0.8]]);
+  const boxes = textBoxes(map, 100, 40);
+  assert.equal(boxes.length, 2);
+  const [first] = boxes.sort((a, b) => a.x1 - b.x1);
+  assert.ok(first.x1 < 10 && first.y1 < 10 && first.x2 > 40 && first.y2 > 20);
+  assert.ok(first.x1 >= 0 && first.y1 >= 0);
+});
+
+test('faint blobs and specks are not text', () => {
+  const map = probMap(100, 40, [[10, 10, 40, 20, 0.4], [70, 10, 72, 12, 0.9]]);
+  assert.deepEqual(textBoxes(map, 100, 40), []);
+});
+
+test('the decoder drops blanks and repeats and keeps only plain characters', () => {
+  const classes = 6625;
+  const steps = [93, 93, 0, 25, 0, 25, 487, 3539, 94, 0, 25];
+  const probs = new Float32Array(steps.length * classes);
+  steps.forEach((cls, t) => { probs[t * classes + cls] = 1; });
+  assert.equal(ctcDecode(probs, steps.length, classes), '122/h32');
+});
+
+test('a collector number is read as number and printed total', () => {
+  assert.deepEqual(parseCardNumber(['2007Pokemon/Nintendo', '88/132']), { number: '88', total: 132 });
+  assert.deepEqual(parseCardNumber(['85 / 112']), { number: '85', total: 112 });
+  assert.deepEqual(parseCardNumber(['77/1320']), { number: '77', total: 132 });
+  assert.deepEqual(parseCardNumber(['TG01/TG30']), { number: 'TG01', total: 30 });
+});
+
+test('a letter O inside the number is a zero', () => {
+  assert.deepEqual(parseCardNumber(['O7/1O2']), { number: '07', total: 102 });
+});
+
+test('text without a number/total gives nothing', () => {
+  assert.equal(parseCardNumber(['DPBP#224', '2007Pokemon/Nintendo', '+20']), null);
+  assert.equal(parseCardNumber([]), null);
+});
+
+const rows = [
+  { setCode: 'dp3', number: '82' }, { setCode: 'dp3', number: '112' },
+  { setCode: 'ex6', number: '82' }, { setCode: 'base1', number: '46' },
+];
+const sizes = new Map([['dp3', 132], ['ex6', 116], ['base1', 102], ['sv1', 258]]);
+
+test('cards are counted per set', () => {
+  const counted = setSizes([{ setCode: 'a' }, { setCode: 'a' }, { setCode: 'b' }]);
+  assert.equal(counted.get('a'), 2);
+  assert.equal(counted.get('b'), 1);
+});
+
+test('the number picks the printing whose set has that many cards', () => {
+  assert.equal(printingByNumber(rows, { number: '82', total: 132 }, sizes), 0);
+  assert.equal(printingByNumber(rows, { number: '82', total: 112 }, sizes), 2);
+  assert.equal(printingByNumber(rows, { number: '046', total: 102 }, sizes), 3);
+});
+
+test('a number with the wrong set size is a misread, not a match', () => {
+  assert.equal(printingByNumber(rows, { number: '12', total: 132 }, sizes), null);
+  assert.equal(printingByNumber(rows, { number: '46', total: 132 }, sizes), null);
+});
+
+test('modern sets with many secret rares still match their printed total', () => {
+  const modern = [{ setCode: 'sv1', number: '198' }];
+  assert.equal(printingByNumber(modern, { number: '198', total: 198 }, sizes), 0);
+});
+
+test('a letter misread for a digit still finds the printing', () => {
+  const energy = [{ setCode: 'ex15', number: '87' }, { setCode: 'swsh9tg', number: 'TG07' }];
+  const withSizes = new Map([['ex15', 101], ['swsh9tg', 30]]);
+  assert.equal(printingByNumber(energy, { number: 'B7', total: 101 }, withSizes), 0);
+  assert.equal(printingByNumber(energy, { number: 'TG07', total: 30 }, withSizes), 1);
+});
+
+test('an impossible total is ignored when only one printing has the number', () => {
+  assert.equal(printingByNumber(rows, { number: '112', total: 712 }, sizes), 1);
+  assert.equal(printingByNumber(rows, { number: '82', total: 712 }, sizes), null);
+});

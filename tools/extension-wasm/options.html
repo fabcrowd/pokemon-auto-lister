@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Card Scanner — Settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #08090d;
+      color: #dde1ee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      padding: 32px 24px 64px;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 22px;
+      letter-spacing: 0.3px;
+      margin-bottom: 6px;
+      color: #c5cadc;
+    }
+    .subtitle {
+      color: #50566e;
+      font-size: 13px;
+      margin-bottom: 28px;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      color: #6366f1;
+      margin: 24px 0 10px;
+    }
+
+    /* SOURCE CARD */
+    .source-card {
+      background: #0e1018;
+      border: 1px solid #1a1d2a;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 10px;
+      transition: border-color 0.2s;
+    }
+    .source-card.connected { border-color: #10b98144; }
+    .source-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .source-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #2d3352;
+      flex-shrink: 0;
+    }
+    .source-card.connected .source-dot { background: #10b981; box-shadow: 0 0 8px #10b98166; }
+    .source-card.always    .source-dot { background: #f59e0b; box-shadow: 0 0 8px #f59e0b55; }
+    .source-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #c5cadc;
+      flex: 1;
+    }
+    .source-status {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 10px;
+      background: #1e2130;
+      color: #8b92ab;
+    }
+    .source-status.always    { background: #f59e0b22; color: #f59e0b; }
+    .source-status.connected { background: #10b98122; color: #10b981; }
+    .source-status.off       { background: #ef444422; color: #ef4444; }
+
+    .source-desc {
+      color: #8b92ab;
+      font-size: 12px;
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+    .source-desc small { color: #50566e; }
+
+    .source-body { padding-top: 6px; }
+
+    .steps {
+      list-style: none;
+      padding: 0;
+      margin: 10px 0 14px;
+    }
+    .steps li {
+      display: flex;
+      gap: 10px;
+      font-size: 13px;
+      color: #c5cadc;
+      padding: 4px 0;
+      line-height: 1.5;
+    }
+    .steps li::before {
+      content: counter(step);
+      counter-increment: step;
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      line-height: 20px;
+      text-align: center;
+      border-radius: 50%;
+      background: #6366f1;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+    .steps { counter-reset: step; }
+
+    label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: #50566e;
+      margin: 10px 0 6px;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid #1e2130;
+      background: #07080c;
+      color: #dde1ee;
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    input:focus { outline: none; border-color: #6366f1; }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      align-items: center;
+    }
+    button.btn {
+      padding: 9px 18px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
+      transition: opacity 0.15s;
+    }
+    button.btn.secondary {
+      background: #1e2130;
+      color: #c5cadc;
+    }
+    button.btn.danger {
+      background: transparent;
+      color: #ef4444;
+      border: 1px solid #ef444433;
+    }
+    button.btn:hover { opacity: 0.9; }
+    button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    a.link {
+      color: #6366f1;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    a.link:hover { text-decoration: underline; }
+
+    .test-result {
+      margin-top: 8px;
+      font-size: 12px;
+      min-height: 18px;
+      line-height: 1.5;
+    }
+    .test-result.ok    { color: #10b981; }
+    .test-result.err   { color: #ef4444; }
+    .test-result.info  { color: #50566e; }
+
+    /* Advanced accordion */
+    details.advanced {
+      background: #0b0c12;
+      border: 1px solid #1a1d2a;
+      border-radius: 10px;
+      padding: 12px 20px;
+      margin-top: 10px;
+    }
+    details.advanced[open] { padding-bottom: 20px; }
+    details.advanced summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #8b92ab;
+      font-weight: 600;
+    }
+    details.advanced summary::-webkit-details-marker { display: none; }
+    details.advanced summary::before {
+      content: "▸";
+      transition: transform 0.15s;
+    }
+    details.advanced[open] summary::before { transform: rotate(90deg); }
+    details.advanced .adv-body {
+      padding: 14px 0 0;
+      color: #8b92ab;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <h1>Card Scanner — Settings</h1>
+  <div class="subtitle">The scanner picks the best pricing source available for each scan.</div>
+
+  <div class="section-title">Pricing sources</div>
+
+  <!-- Source 1: pokemontcg.io (always on) -->
+  <div class="source-card always">
+    <div class="source-head">
+      <div class="source-dot"></div>
+      <div class="source-name">pokemontcg.io</div>
+      <div class="source-status always">Always on</div>
+    </div>
+    <div class="source-desc">
+      Single market price per card. Free and built in — no setup, no key.<br>
+      <small>Doesn't break down conditions or graded sales.</small>
+    </div>
+  </div>
+
+  <!-- Source 2: PokemonPriceTracker -->
+  <div class="source-card" id="ppt-card">
+    <div class="source-head">
+      <div class="source-dot"></div>
+      <div class="source-name">PokemonPriceTracker</div>
+      <div class="source-status off" id="ppt-status">Not connected</div>
+    </div>
+    <div class="source-desc">
+      Full <b>NM / LP / MP / HP / DMG</b> breakdown plus graded (PSA, BGS, CGC, SGC).<br>
+      <small>Free tier: 100 cards/day. No credit card required.</small>
+    </div>
+    <div class="source-body" id="ppt-body-not-connected">
+      <ol class="steps">
+        <li>Click <b>Open signup</b> and create a free account</li>
+        <li>Copy your API key from your account dashboard</li>
+        <li>Paste it below and click <b>Save and test</b></li>
+      </ol>
+      <div class="btn-row">
+        <a class="link" href="https://www.pokemonpricetracker.com/api-keys" target="_blank" rel="noopener">Open signup →</a>
+      </div>
+      <label for="ppt-key">API key</label>
+      <input id="ppt-key" type="password" placeholder="paste your PokemonPriceTracker API key" autocomplete="off" />
+      <div class="btn-row">
+        <button class="btn" id="save-ppt">Save and test</button>
+      </div>
+      <div class="test-result info" id="ppt-test"></div>
+    </div>
+    <div class="source-body" id="ppt-body-connected" style="display:none">
+      <div class="test-result ok" id="ppt-connected-status">Connected and verified.</div>
+      <div class="btn-row">
+        <button class="btn secondary" id="change-ppt">Change key</button>
+        <button class="btn danger" id="clear-ppt">Disconnect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Source 3: Local backend (advanced) -->
+  <details class="advanced" id="advanced-backend">
+    <summary><span>Advanced: Local dashboard</span>&nbsp;&nbsp;<span class="source-status off" id="backend-status">Not detected</span></summary>
+    <div class="adv-body" id="backend-body">
+      For developers running the <code>pokemon-auto-lister</code> dashboard.
+      Serves JustTCG per-condition prices via a local proxy on <code>http://127.0.0.1:3000</code>.
+      <br><br>
+      <span id="backend-detail">Not reachable. If you installed the dashboard, make sure <code>npm start</code> is running and <code>JUSTTCG_API_KEY</code> is set in your <code>.env</code>.</span>
+    </div>
+  </details>
+
+  <script src="options.js"></script>
+</body>
+</html>

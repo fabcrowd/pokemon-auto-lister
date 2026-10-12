@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Card Scanner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 100%;
+      background: #08090d;
+      color: #dde1ee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+      user-select: none;
+    }
+    .results { user-select: text; }
+
+    /* HEADER */
+    .header {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      height: 44px;
+      background: #0e1018;
+      border-bottom: 1px solid #1e2130;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: #c5cadc;
+    }
+    .header-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #open-options {
+      background: transparent;
+      border: 1px solid #1e2130;
+      color: #50566e;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    #open-options:hover { color: #c5cadc; border-color: #2d3352; }
+
+    .model-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px 4px 8px;
+      border-radius: 20px;
+      background: #13151f;
+      border: 1px solid #1e2130;
+      font-size: 11px;
+      color: #50566e;
+      transition: border-color 0.3s;
+    }
+    .model-pill.ok      { border-color: #10b98133; }
+    .model-pill.err     { border-color: #ef444433; }
+    .model-pill.loading { border-color: #6366f133; }
+
+    .mdot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #2a2e40;
+      flex-shrink: 0;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    .mdot.ok      { background: #10b981; box-shadow: 0 0 7px #10b98166; }
+    .mdot.err     { background: #ef4444; box-shadow: 0 0 7px #ef444466; }
+    .mdot.loading { background: #6366f1; box-shadow: 0 0 7px #6366f166; animation: dot-pulse 1.2s ease-in-out infinite; }
+
+    @keyframes dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    #mtext { transition: color 0.3s; }
+    .model-pill.ok      #mtext { color: #10b981; }
+    .model-pill.err     #mtext { color: #ef4444; }
+    .model-pill.loading #mtext { color: #6366f1; }
+
+    /* SOURCE PILL — shows the current pricing source for the last scan */
+    .source-pill {
+      display: none;                 /* hidden until first scan */
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px 4px 8px;
+      border-radius: 20px;
+      background: #13151f;
+      border: 1px solid #1e2130;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .source-pill.visible { display: flex; }
+    .source-pill:hover { border-color: #2d3352; }
+    .sdot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #2a2e40;
+      flex-shrink: 0;
+    }
+    .source-pill.pokemontcg { border-color: #f59e0b33; color: #f59e0b; }
+    .source-pill.pokemontcg .sdot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b66; }
+    .source-pill.ppt { border-color: #6366f133; color: #6366f1; }
+    .source-pill.ppt .sdot { background: #6366f1; box-shadow: 0 0 6px #6366f166; }
+    .source-pill.backend { border-color: #10b98133; color: #10b981; }
+    .source-pill.backend .sdot { background: #10b981; box-shadow: 0 0 6px #10b98166; }
+
+    /* HINT STRIP — appears below the results when on the weakest source and not dismissed */
+    .hint-strip {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: #0e1018;
+      border-top: 1px solid #1a1d2a;
+      font-size: 11px;
+      color: #8b92ab;
+    }
+    .hint-strip.visible { display: flex; }
+    .hint-strip .hint-text { flex: 1; min-width: 0; }
+    .hint-strip a {
+      color: #6366f1;
+      text-decoration: none;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .hint-strip a:hover { text-decoration: underline; }
+    .hint-dismiss {
+      background: transparent;
+      border: none;
+      color: #50566e;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .hint-dismiss:hover { color: #c5cadc; }
+
+    /* ACTION BAR */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 8px;
+      background: #0b0c12;
+    }
+    #btn-scan {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 22px;
+      height: 42px;
+      border-radius: 8px;
+      border: none;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
+      box-shadow: 0 2px 14px #5b5ef430;
+      transition: box-shadow 0.2s, opacity 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    #btn-scan:hover  { box-shadow: 0 2px 20px #5b5ef450; }
+    #btn-scan:active { transform: scale(0.97); }
+    #btn-scan[disabled] { opacity: 0.5; cursor: wait; }
+    #btn-scan.scanning { animation: scan-glow 1.4s ease-in-out infinite; }
+    @keyframes scan-glow { 0%,100% { box-shadow: 0 0 0 0 #6366f166; } 50% { box-shadow: 0 0 0 10px #6366f100; } }
+
+    #btn-clear {
+      padding: 0 14px;
+      height: 42px;
+      border-radius: 8px;
+      border: 1px solid #1e2130;
+      background: transparent;
+      color: #50566e;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    #btn-clear:hover { color: #c5cadc; border-color: #2d3352; }
+
+    .stats-row {
+      display: flex;
+      gap: 14px;
+      margin-left: auto;
+    }
+    .stat-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+    .stat-block .val { font-size: 15px; font-weight: 700; line-height: 1; color: #8b92ab; }
+    .stat-block .val.green { color: #10b981; }
+    .stat-block .val.amber { color: #f59e0b; }
+    .stat-block .lbl { font-size: 9px; font-weight: 600; letter-spacing: 0.7px; text-transform: uppercase; color: #8b92ab; }
+
+    /* FILTER BAR */
+    .filter-bar {
+      padding: 4px 16px 10px;
+      background: #0b0c12;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .filter-group-label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: #8b92ab;
+      width: 44px;
+      flex-shrink: 0;
+    }
+    .chip {
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      padding: 3px 8px;
+      border-radius: 10px;
+      border: 1px solid #1e2130;
+      background: #0e1018;
+      color: #50566e;
+      cursor: pointer;
+      transition: all 0.12s;
+      user-select: none;
+    }
+    .chip:hover { color: #c5cadc; border-color: #2d3352; }
+    .chip.on { color: #6366f1; border-color: #6366f1; background: #6366f118; }
+    .era-select {
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 6px;
+      border-radius: 10px;
+      border: 1px solid #1e2130;
+      background: #0e1018;
+      color: #c5cadc;
+      cursor: pointer;
+    }
+    .era-select:disabled { opacity: 0.5; cursor: wait; }
+
+    /* MESSAGE BAR */
+    .msg-bar {
+      padding: 8px 16px;
+      font-size: 11px;
+      color: #50566e;
+      background: #0b0c12;
+      border-top: 1px solid #1a1d2a;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+    }
+    .msg-bar.error { color: #ef4444; }
+    .msg-bar.hidden { display: none; }
+
+    /* RESULTS PANEL */
+    .results {
+      max-height: 500px;
+      overflow-y: auto;
+      background: #07080c;
+      border-top: 1px solid #1a1d2a;
+    }
+    .results::-webkit-scrollbar { width: 3px; }
+    .results::-webkit-scrollbar-thumb { background: #1e2130; border-radius: 2px; }
+
+    .empty-hint {
+      padding: 24px 16px;
+      font-size: 11px;
+      color: #8b92ab;
+      font-style: italic;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .card-row {
+      padding: 10px 16px;
+      border-bottom: 1px solid #0e1018;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .card-row:last-child { border-bottom: none; }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .conf-stripe {
+      width: 3px;
+      align-self: stretch;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .conf-stripe.high   { background: #10b981; }
+    .conf-stripe.medium { background: #f59e0b; }
+    .conf-stripe.low, .conf-stripe.abstain { background: #2d3352; }
+
+    .card-meta { flex: 1; min-width: 0; }
+    .card-name { font-size: 13px; font-weight: 700; color: #c5cadc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-sub { font-size: 11px; color: #3d4460; margin-top: 2px; }
+    .set-chip {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: #6366f118;
+      color: #6366f1;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+      margin-right: 4px;
+    }
+    .card-number {
+      display: inline-block;
+      font-weight: 700;
+      color: #8b92ab;
+      margin-left: 2px;
+    }
+    .src-badge {
+      font-size: 9px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: #50566e;
+      flex-shrink: 0;
+    }
+    .src-badge.backend { color: #10b981; }
+    .src-badge.ppt     { color: #6366f1; }
+    .src-badge.pokemontcg { color: #f59e0b; }
+
+    .no-price { font-size: 11px; color: #8b92ab; text-align: center; padding: 4px; }
+
+    /* PRICE GRID */
+    .price-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      margin-left: 13px;
+    }
+    .price-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 6px 4px;
+      background: #0b0c12;
+      border-radius: 4px;
+      border: 1px solid #0e1018;
+      min-width: 0;
+    }
+    .price-cell .lbl {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: #8b92ab;
+    }
+    .price-cell .val {
+      font-size: 12px;
+      font-weight: 700;
+      color: #10b981;
+      white-space: nowrap;
+    }
+    .price-cell.na .val { color: #8b92ab; font-weight: 400; }
+    .price-cell.highlight { background: #10b98112; border-color: #10b98133; }
+
+    /* GRADED GRID */
+    .graded-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-left: 13px;
+      margin-top: 4px;
+    }
+    .graded-cell {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 10px;
+      background: #0b0c12;
+      border: 1px solid #0e1018;
+    }
+    .graded-cell .g-lbl { color: #8b92ab; font-weight: 700; }
+    .graded-cell .g-val { color: #10b981; font-weight: 700; }
+
+    .variant-select-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 13px;
+      flex-wrap: wrap;
+    }
+    .variant-select-row .lbl {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: #8b92ab;
+    }
+    .spread-warn {
+      font-size: 10px;
+      color: #f59e0b;
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: #f59e0b18;
+      font-weight: 700;
+    }
+
+    /* SETUP OVERLAY */
+    .setup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(8, 9, 13, 0.93);
+      backdrop-filter: blur(6px);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 32px 28px;
+    }
+    .setup-title { font-size: 15px; font-weight: 700; color: #c5cadc; text-align: center; }
+    .setup-desc { font-size: 12px; color: #50566e; text-align: center; max-width: 380px; line-height: 1.6; }
+    #btn-setup, #btn-wiz-upgrade {
+      padding: 0 32px;
+      height: 40px;
+      border-radius: 8px;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
+    }
+    #btn-setup { text-transform: uppercase; }
+    #btn-setup:disabled { opacity: 0.5; cursor: not-allowed; }
+    #setup-status { font-size: 11px; color: #50566e; min-height: 16px; }
+    .setup-bars { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 8px; }
+    .setup-file { display: flex; align-items: center; gap: 8px; }
+    .setup-file-name { font-size: 11px; color: #50566e; width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .setup-file-track { flex: 1; height: 4px; background: #1e2130; border-radius: 2px; overflow: hidden; }
+    .setup-file-fill { height: 100%; background: linear-gradient(90deg, #5b5ef4, #8b5cf6); border-radius: 2px; width: 0; transition: width 0.15s; }
+    .setup-file-pct { font-size: 10px; color: #2d3352; width: 30px; text-align: right; }
+
+    /* WIZARD STEP INDICATORS */
+    .wiz-steps {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .wiz-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2d3352;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .wiz-dot.active { background: #6366f1; box-shadow: 0 0 8px #6366f166; }
+    .wiz-dot.done   { background: #10b981; }
+    .wiz-line { width: 16px; height: 2px; background: #1e2130; }
+    .wiz-line.done { background: #10b981; }
+
+    .wiz-bullets {
+      list-style: none;
+      padding: 0;
+      margin: 10px 0;
+      font-size: 12px;
+      color: #c5cadc;
+      line-height: 1.6;
+    }
+    .wiz-bullets li {
+      padding: 2px 0;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+    .wiz-bullets li::before { content: "✓"; color: #10b981; font-weight: 700; }
+    .wiz-section { display: none; flex-direction: column; align-items: center; gap: 14px; max-width: 400px; text-align: center; }
+    .wiz-section.active { display: flex; }
+    .wiz-row { display: flex; gap: 10px; align-items: center; }
+    .wiz-skip {
+      background: transparent;
+      border: none;
+      color: #50566e;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 4px 8px;
+      text-decoration: underline;
+    }
+    .wiz-skip:hover { color: #c5cadc; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <circle cx="10" cy="10" r="9" stroke="#6366f1" stroke-width="1.2"/>
+        <line x1="1" y1="10" x2="19" y2="10" stroke="#6366f1" stroke-width="1.2"/>
+        <circle cx="10" cy="10" r="3" fill="#13151f" stroke="#6366f1" stroke-width="1.2"/>
+      </svg>
+      Card Scanner
+    </div>
+    <div class="header-actions">
+      <div class="source-pill" id="source-pill" title="Pricing source — click for settings">
+        <div class="sdot"></div>
+        <span id="source-text">—</span>
+      </div>
+      <button id="open-options" title="Settings">⚙</button>
+      <div class="model-pill" id="model-pill">
+        <div class="mdot" id="mdot"></div>
+        <span id="mtext">checking…</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="action-bar">
+    <button id="btn-scan" disabled><span id="btn-label">SCAN PAGE</span></button>
+    <button id="btn-clear">CLEAR</button>
+    <div class="stats-row">
+      <div class="stat-block"><div class="val" id="s-detected">—</div><div class="lbl">cards</div></div>
+      <div class="stat-block"><div class="val green" id="s-value">—</div><div class="lbl">total</div></div>
+      <div class="stat-block"><div class="val amber" id="s-ms">—</div><div class="lbl">ms</div></div>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-group-label">Raw</span>
+      <button type="button" class="chip" data-filter="raw.NM">NM</button>
+      <button type="button" class="chip" data-filter="raw.LP">LP</button>
+      <button type="button" class="chip" data-filter="raw.MP">MP</button>
+      <button type="button" class="chip" data-filter="raw.HP">HP</button>
+      <button type="button" class="chip" data-filter="raw.DMG">DMG</button>
+    </div>
+    <div class="filter-group">
+      <span class="filter-group-label">Graded</span>
+      <button type="button" class="chip" data-filter="graded.PSA">PSA</button>
+      <button type="button" class="chip" data-filter="graded.BGS">BGS</button>
+      <button type="button" class="chip" data-filter="graded.CGC">CGC</button>
+      <button type="button" class="chip" data-filter="graded.SGC">SGC</button>
+    </div>
+    <div class="filter-group">
+      <label class="filter-group-label" for="era-select">Era</label>
+      <select id="era-select" class="era-select" title="When the cards are from. Picking an era makes sets much more accurate.">
+        <option value="">Any era</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="msg-bar hidden" id="msg-bar"></div>
+
+  <div class="results" id="results">
+    <div class="empty-hint" id="empty-hint">
+      Open a page with Pokémon cards, then press <b>Scan Page</b>.<br>
+      Detections and prices appear here and overlay on the page.
+    </div>
+  </div>
+
+  <div class="hint-strip" id="hint-strip">
+    <span class="hint-text">💡 Add a free API key to see NM/LP/MP/HP/DMG prices · <a id="hint-link">Settings</a></span>
+    <button class="hint-dismiss" id="hint-dismiss" title="Dismiss">✕</button>
+  </div>
+
+  <div class="setup-overlay" id="setup-overlay">
+
+    <!-- Step 1 — download models -->
+    <div class="wiz-section" id="wiz-step-1">
+      <div class="wiz-steps">
+        <div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
+      </div>
+      <div class="setup-title">Download the AI models</div>
+      <div class="setup-desc">
+        One-time download, about <b>140 MB</b> (1–3 minutes).<br>
+        After this, scanning runs fully on your device — no server, no account.
+      </div>
+      <button id="btn-setup">Download models</button>
+      <div id="setup-status"></div>
+      <div class="setup-bars" id="setup-bars"></div>
+    </div>
+
+    <!-- Step 2 — optional PPT upgrade -->
+    <div class="wiz-section" id="wiz-step-2">
+      <div class="wiz-steps">
+        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div>
+      </div>
+      <div class="setup-title">Unlock full prices (optional)</div>
+      <div class="setup-desc">
+        Out of the box, you'll see one market price per card.
+        Add a free API key to also see:
+      </div>
+      <ul class="wiz-bullets">
+        <li><b>NM / LP / MP / HP / DMG</b> per card</li>
+        <li>Graded prices (<b>PSA / BGS / CGC / SGC</b>)</li>
+      </ul>
+      <div class="setup-desc" style="margin-top:-4px"><small>Takes 30 seconds. No credit card. Free tier: 100 cards/day.</small></div>
+      <div class="wiz-row">
+        <button id="btn-wiz-upgrade">Get free key →</button>
+        <button class="wiz-skip" id="btn-wiz-skip">I'll do this later</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

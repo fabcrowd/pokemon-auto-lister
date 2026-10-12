@@ -18,7 +18,7 @@ export default defineConfig({
     },
     {
       name: 'extension',
-      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js'],
+      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/extension-wasm-popup.spec.js'],
       use: {
         headless: false,
       },
