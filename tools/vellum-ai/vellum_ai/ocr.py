@@ -50,6 +50,19 @@ def _crops_name(image_bgr: np.ndarray) -> List[np.ndarray]:
     ]
 
 
+def read_name_lines(image_bgr: np.ndarray) -> List[str]:
+    """OCR lines from the top-of-card strips where the name and HP sit."""
+    name_lines: List[str] = []
+    for crop in _crops_name(image_bgr):
+        lines = _ocr_lines(_preprocess(crop))
+        if lines:
+            name_lines.extend(lines)
+        else:
+            text = _ocr_text(_preprocess(crop))
+            name_lines.extend(lines_from_ocr_text(text))
+    return name_lines
+
+
 def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
     """
     OCR bottom regions for collector number; top strip for card name.
@@ -66,14 +79,7 @@ def run_ocr(image_bgr: np.ndarray) -> Dict[str, Any]:
     parsed["raw"] = combined
 
     # Name OCR — line-aware HP-anchor / trainer finders (qtran)
-    name_lines: List[str] = []
-    for crop in _crops_name(image_bgr):
-        lines = _ocr_lines(_preprocess(crop))
-        if lines:
-            name_lines.extend(lines)
-        else:
-            text = _ocr_text(_preprocess(crop))
-            name_lines.extend(lines_from_ocr_text(text))
+    name_lines = read_name_lines(image_bgr)
     parsed["name"] = find_card_name(name_lines) if name_lines else None
     parsed["nameLines"] = name_lines[:12]
 

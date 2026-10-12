@@ -7,7 +7,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node --env-file=.env src/index.js",
-    "test": "node --test",
+    "test": "node --test tests/*.test.js",
     "test:vellum": "node scripts/run-vellum-tests.mjs",
     "vellum-ai": "node scripts/run-vellum-ai.mjs",
     "lint": "eslint ."

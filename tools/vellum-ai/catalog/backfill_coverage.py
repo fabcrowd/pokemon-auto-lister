@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -40,18 +41,26 @@ def _download(url: str, dest: Path, timeout: float = 30) -> bool:
         return False
 
 
-def _pokemontcg_url(row: dict) -> Optional[str]:
-    set_code = row.get("setCode")
-    number = row.get("number")
+def _set_ids(set_code: str) -> list:
+    """TCGdex set id → pokemontcg.io spellings (sm7.5 → sm75, swsh12.5gg → swsh12pt5gg, sv03 → sv3)."""
+    forms = [set_code, set_code.replace(".", ""), set_code.replace(".5", "pt5")]
+    forms += [re.sub(r"([a-z])0+(\d)", r"\1\2", f) for f in list(forms)]
+    return list(dict.fromkeys(forms))
+
+
+def _numbers(number: str) -> list:
+    """'SV001' → SV001, SV1; '027' → 027, 27."""
+    return list(dict.fromkeys([number, re.sub(r"^([A-Za-z]*)0+(\d)", r"\1\2", number)]))
+
+
+def pokemontcg_urls(row: dict) -> list:
+    set_code, number = row.get("setCode"), row.get("number")
     if not set_code or not number:
-        return None
-    # strip leading zeros variants: try as-is first
-    num = str(number).lstrip("0") or "0"
-    # Pocket / weird ids rarely exist on pokemontcg.io
-    if str(set_code).startswith(("P-", "B")) and "-" in str(row.get("id") or ""):
-        # still try simple forms
-        pass
-    return f"https://images.pokemontcg.io/{set_code}/{number}_hires.png"
+        return []
+    return list(dict.fromkeys(
+        f"https://images.pokemontcg.io/{sid}/{num}_hires.png"
+        for sid in _set_ids(str(set_code)) for num in _numbers(str(number))
+    ))
 
 
 def backfill_images(catalog: Path, workers: int = 8) -> dict:
@@ -74,7 +83,7 @@ def backfill_images(catalog: Path, workers: int = 8) -> dict:
             dest_png.is_file() and dest_png.stat().st_size > 0
         ):
             continue
-        if row.get("imageUrl") or _pokemontcg_url(row):
+        if row.get("imageUrl") or pokemontcg_urls(row):
             missing.append(row)
 
     print(f"Retrying {len(missing)} cards without local art…")
@@ -88,14 +97,7 @@ def backfill_images(catalog: Path, workers: int = 8) -> dict:
             urls.append(str(row["imageUrl"]))
             urls.append(str(row["imageUrl"]).replace("/high.webp", ".webp"))
             urls.append(str(row["imageUrl"]).replace("/high.webp", "/high.png"))
-        ptcg = _pokemontcg_url(row)
-        if ptcg:
-            urls.append(ptcg)
-            # zero-stripped number variant
-            set_code = row.get("setCode")
-            number = str(row.get("number") or "").lstrip("0") or "0"
-            if set_code:
-                urls.append(f"https://images.pokemontcg.io/{set_code}/{number}_hires.png")
+        urls.extend(pokemontcg_urls(row))
 
         for url in urls:
             if url.endswith(".png") or "pokemontcg.io" in url:

@@ -63,7 +63,7 @@ Copy [`.env.example`](.env.example) to `.env`. Variables read by the server:
 
 | Variable | Source |
 |----------|--------|
-| `JUSTTCG_API_KEY` | [JustTCG](https://justtcg.com/docs/quickstart) — NM comps + per-condition price grid (`/api/price-grid`) |
+| `JUSTTCG_API_KEY` | [JustTCG](https://justtcg.com/docs/quickstart) — NM comps and the backend `/api/price-grid` response (see API section; separate from the extension TODO's proposed NM/LP/MP/HP/DMG grid) |
 | `POKEWALLET_API_KEY` | [PokéWallet](https://www.pokewallet.io/api-docs) — TCGPlayer USD comps |
 | `TCGPLAYER_PUBLIC_KEY` / `TCGPLAYER_PRIVATE_KEY` | TCGPlayer official pricing API |
 | `RAPIDAPI_KEY` | [RapidAPI Pokémon TCG](https://rapidapi.com/tcggopro/api/pokemon-tcg-api) (tcggo) comps |
@@ -112,6 +112,37 @@ When the PokeGrade free-tier quota is exhausted, the app opens a **quota circuit
 | `GET /api/collectr-status` | Collectr mode + sync stats |
 | `GET /api/scan-photo` | Serve a saved scan crop |
 | `GET /health`, `GET /api/health` | Liveness |
+
+## Browser listing-photo detection
+
+The standalone `dist/extension-wasm/` scanner uses the tracked source in `tools/extension-wasm/`. Its content script collects large page-image candidates, including CSS background images, and records each image URL and rendering geometry. The service worker attempts detection against the original HTTPS image when browser access permits; unsupported CSS mappings, inaccessible sources, or failed fetches fall back to a crop from the visible-tab screenshot. Detected source-image boxes are mapped back to viewport coordinates for the overlay. Screenshot scale is measured from the captured bitmap and page viewport rather than relying only on `devicePixelRatio`.
+
+Rebuild the generated extension files after changing these sources:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1
+```
+
+**Model quality:** the detector was retrained on 2026-10-10 with binder, flat-lay and single-card composites plus reviewed sealed-product negatives. On the reviewed real-photo set it scores precision 0.91 / recall 1.00 at the shipped threshold (the previous model scored 0.17 / 0.14). That set is small (5 positive photos, 12 sealed lots), so see `HANDOFF.md` for caveats. Score a model with:
+
+```powershell
+cd tools/vellum-ai
+.venv\Scripts\python detect/eval_real.py --verbose                        # data/detect-real-eval
+.venv\Scripts\python detect/eval_real.py --data ../../data/detect-real-eval-stress
+.venv\Scripts\python detect/synth_binder.py --count 700 --split train      # binder / flat-lay / single-card synth
+```
+
+`detect/retrain.py` only promotes a model whose real-photo F1 is ≥ 0.90 and no worse than the current one.
+
+Marketplace examples may only enter retraining after review. Place a JSON sidecar beside each source image, for example `photo.jpg` and `photo.json`:
+
+```json
+{"reviewed": true, "boxes": [[42, 18, 162, 190]]}
+```
+
+Boxes use source-image pixel coordinates. Use `"boxes": []` for a reviewed image with no loose cards (including sealed-product negatives). Import reviewed examples from `tools/vellum-ai/` with `python detect/label_marketplace.py`; unreviewed detector proposals are ignored. Keep all photos from the same lot in one dataset split so near-duplicate listing photos cannot leak into validation.
+
+Research supports sliced inference for small objects, and Ultralytics documents slicing plus merging; however, slicing must be evaluated with a detector trained on card-in-photo examples. The current model was also observed predicting a whole tile as the object, so enabling tiles alone is not a fix. See the [SAHI paper](https://arxiv.org/abs/2202.06934) and [Ultralytics SAHI guide](https://docs.ultralytics.com/guides/sahi-tiled-inference).
 
 ## Development
 

@@ -50,12 +50,104 @@ function scoreMatch(card, identity) {
   return score;
 }
 
+function normalizeSetName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    // Only short series codes ("SV03:", "SWSH07:"); "Generations: Radiant Collection" keeps its prefix.
+    .replace(/^[A-Za-z0-9]{1,6}:\s*/, '')
+    // JustTCG era prefixes on older sets: "EX Unseen Forces", "XY - Fates Collide", "SM - Team Up".
+    .replace(/^(?:EX\s+|(?:XY|SM)\s+-\s+)/, '')
+    .replace(/&/g, ' and ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Catalog (TCGdex) set names JustTCG spells differently.
+const SET_ALIASES = {
+  'SVP Black Star Promos': 'SV: Scarlet & Violet Promo Cards',
+  'Nintendo Black Star Promos': 'Nintendo Promos',
+  'SWSH Black Star Promos': 'SWSH: Sword & Shield Promo Cards',
+  'SM Black Star Promos': 'SM Promos',
+  'XY Black Star Promos': 'XY Promos',
+  'BW Black Star Promos': 'Black and White Promos',
+  'DP Black Star Promos': 'Diamond and Pearl Promos',
+  'HGSS Black Star Promos': 'HGSS Promos',
+  'Wizards Black Star Promos': 'WoTC Promo',
+  'Sun & Moon': 'SM Base Set',
+  '151': 'SV: Scarlet & Violet 151',
+};
+
+/** JustTCG's name for the identity's set; Radiant Collection cards ("RC15") live in their own set. */
+export function justTcgSetName(identity) {
+  const set = String(identity?.set || '');
+  if (/^RC\d/i.test(String(identity?.number || '')) && /^(Generations|Legendary Treasures)$/.test(set)) {
+    return `${set}: Radiant Collection`;
+  }
+  return SET_ALIASES[set] || set;
+}
+
+// JustTCG names a series' first set "SV01: Scarlet & Violet Base Set"; catalogs say "Scarlet & Violet".
+function setNameForms(name) {
+  const n = normalizeSetName(name);
+  const bare = n.replace(/baseset$/, '');
+  return bare ? [n, bare] : [n];
+}
+
+/**
+ * Same set across JustTCG series prefixes ("SV03: …"), accents ("Pokémon GO") and the "Base Set" suffix.
+ * Exact after normalising: substring matching made Base Set equal Base Set 2 and Celebrations equal Classic Collection.
+ */
+export function sameSetName(a, b) {
+  const x = setNameForms(a);
+  const y = setNameForms(b);
+  return Boolean(x[0] && y[0]) && x.some((form) => y.includes(form));
+}
+
+function containsSetName(a, b) {
+  const x = normalizeSetName(a);
+  const y = normalizeSetName(b);
+  return Boolean(x && y) && (x.includes(y) || y.includes(x));
+}
+
+/**
+ * Same printed card: name, plus number and set whenever the identity states them.
+ * Name-only hits are refused — they priced e.g. Evolving Skies Tropius as EX Deoxys Tropius.
+ */
+function isSameCard(card, identity) {
+  const strip = (v) => String(v || '').toLowerCase().replace(/\s*-\s*\d+.*/, '').trim();
+  const want = strip(identity.name);
+  const got = strip(card.name);
+  if (!want || !got) return false;
+  // Containment is only safe once the number pins the card ("Mew" would otherwise accept "Mewtwo").
+  const namesAgree = got === want || (Boolean(identity.number) && (got.includes(want) || want.includes(got)));
+  if (!namesAgree) return false;
+  if (identity.number && normalizeNumber(identity.number) !== normalizeNumber(card.number)) return false;
+  if (identity.set && !sameSetName(justTcgSetName(identity), card.set?.name || card.set_name)) return false;
+  return true;
+}
+
+function bestMatch(cards, identity) {
+  const same = cards.filter((card) => isSameCard(card, identity));
+  return same.sort((a, b) => scoreMatch(b, identity) - scoreMatch(a, identity))[0] || null;
+}
+
 /**
  * Pick a raw Near Mint USD market price from v2 card variants.
  * @param {{ variants?: object[] }} card
  * @returns {number|null}
  */
-export function extractNearMintUsd(card) {
+function nearMintUsd(variant) {
+  const markets = Array.isArray(variant?.markets) ? variant.markets : [];
+  const usd =
+    markets.find((m) => String(m.currency || '').toUpperCase() === 'USD' && typeof m.price === 'number') ||
+    markets.find((m) => String(m.region || '').toUpperCase() === 'US' && typeof m.price === 'number');
+  if (usd && typeof usd.price === 'number' && usd.price > 0) return usd.price;
+  if (typeof variant?.price === 'number' && variant.price > 0) return variant.price;
+  return null;
+}
+
+export function extractNearMintQuote(card) {
   const variants = Array.isArray(card?.variants) ? card.variants : [];
   const rawNm = variants.filter(
     (v) =>
@@ -71,20 +163,22 @@ export function extractNearMintUsd(card) {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
+  const priced = {};
   for (const variant of ordered) {
-    const markets = Array.isArray(variant.markets) ? variant.markets : [];
-    const usd =
-      markets.find((m) => String(m.currency || '').toUpperCase() === 'USD' && typeof m.price === 'number') ||
-      markets.find((m) => String(m.region || '').toUpperCase() === 'US' && typeof m.price === 'number');
-    if (usd && typeof usd.price === 'number' && usd.price > 0) {
-      return usd.price;
-    }
-    // v1-style flat price field
-    if (typeof variant.price === 'number' && variant.price > 0) {
-      return variant.price;
-    }
+    const price = nearMintUsd(variant);
+    if (price == null || !variant.printing || priced[variant.printing] != null) continue;
+    priced[variant.printing] = price;
+  }
+  for (const variant of ordered) {
+    const price = priced[variant.printing];
+    if (price == null) continue;
+    return { price, printing: variant.printing, variants: priced };
   }
   return null;
+}
+
+export function extractNearMintUsd(card) {
+  return extractNearMintQuote(card)?.price ?? null;
 }
 
 const PRICE_TTL_MS = 2 * 60 * 60 * 1000; // 2h
@@ -117,16 +211,38 @@ export function createJustTcgClient({
     return response.json();
   }
 
+  let setsPromise = null;
+
+  // One /sets call per client; free-text search alone missed most cards (e.g. Evolving Skies #6).
+  async function resolveSetId(setName) {
+    if (!setName) return null;
+    if (!setsPromise) {
+      setsPromise = request(baseUrl, '/sets', { game: 'pokemon' }).catch((err) => {
+        setsPromise = null;
+        throw err;
+      });
+    }
+    const sets = (await setsPromise)?.data || [];
+    const want = normalizeSetName(setName);
+    const exact = sets.find((s) => setNameForms(s.name).includes(want));
+    if (exact) return exact.id;
+    // Only narrows the search; isSameCard still requires the exact set.
+    const partial = sets
+      .filter((s) => containsSetName(s.name, setName))
+      .sort((a, b) => normalizeSetName(a.name).length - normalizeSetName(b.name).length);
+    return partial[0]?.id ?? null;
+  }
+
   async function searchCards(identity) {
     const q = [identity.name, identity.number, identity.set].filter(Boolean).join(' ');
     if (!q) {
       return [];
     }
-    const payload = await request(v2BaseUrl, '/cards', {
-      game: 'Pokemon',
-      q,
-      limit: 10,
-    });
+    const setId = identity.name ? await resolveSetId(justTcgSetName(identity)) : null;
+    const params = setId
+      ? { game: 'Pokemon', set: setId, q: identity.name, limit: 20 }
+      : { game: 'Pokemon', q, limit: 10 };
+    const payload = await request(v2BaseUrl, '/cards', params);
     return Array.isArray(payload?.data) ? payload.data : [];
   }
 
@@ -149,22 +265,23 @@ export function createJustTcgClient({
         return null;
       }
 
-      const ranked = [...cards].sort((a, b) => scoreMatch(b, identity) - scoreMatch(a, identity));
-      const best = ranked[0];
-      if (scoreMatch(best, identity) < 5) {
+      const best = bestMatch(cards, identity);
+      if (!best) {
         priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
-      const market = extractNearMintUsd(best);
-      if (market == null) {
+      const quote = extractNearMintQuote(best);
+      if (quote == null) {
         priceCache.set(cacheKey, { data: null, fetchedAt: Date.now() });
         return null;
       }
 
       const result = {
-        market: Math.round(market * 100) / 100,
+        market: Math.round(quote.price * 100) / 100,
         mid: null,
+        printing: quote.printing,
+        variants: quote.variants,
         source: 'justtcg',
         currency: 'USD',
         name: best.name,
@@ -255,9 +372,8 @@ export function attachPriceGrid(client) {
     try {
       const cards = await client.searchCards(identity);
       if (!cards.length) return null;
-      const ranked = [...cards].sort((a, b) => scoreMatch(b, identity) - scoreMatch(a, identity));
-      const best = ranked[0];
-      if (scoreMatch(best, identity) < 5) return null;
+      const best = bestMatch(cards, identity);
+      if (!best) return null;
       const grid = extractPriceGrid(best);
       return {
         source: 'justtcg',

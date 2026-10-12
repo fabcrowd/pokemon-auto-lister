@@ -2,9 +2,8 @@
 Generate synthetic Pokémon card fixture images for identification stress tests.
 
 Creates 10 lot directories under data/detect-marketplace/hibid/hibid_card_lot_XX/,
-each with one 1200×900 JPEG containing 3 white-bordered synthetic cards on a dark
-background. Each card has a large "NNN/NNN" collector number in the bottom strip,
-readable by RapidOCR after the pipeline rectifies to 750×1050.
+each with one 1200×900 JPEG containing 3 real Base Set card images on a dark
+background. These fixtures exercise visual identification as well as OCR.
 """
 import hashlib
 import json
@@ -14,62 +13,46 @@ import time
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 OUT_ROOT = REPO_ROOT / "data" / "detect-marketplace" / "hibid"
 
 CARD_W, CARD_H = 240, 336        # ratio 1.40 — within _aspect_ok [1.15, 1.85]
-BORDER = 10                       # white border thickness (px)
 IMG_W, IMG_H = 1200, 900
 BG_COLOR = (25, 20, 20)           # dark background (BGR)
 
-# 10 lots × 3 cards each — real Kanto/Base set numbers that exist in TCG API
+# 10 lots × 3 cards each — collector numbers from Base Set
 LOTS = [
-    ("hibid_card_lot_01", [("006", "165"), ("025", "165"), ("094", "165")]),
-    ("hibid_card_lot_02", [("130", "165"), ("003", "165"), ("009", "165")]),
-    ("hibid_card_lot_03", [("039", "165"), ("045", "165"), ("052", "165")]),
-    ("hibid_card_lot_04", [("054", "165"), ("069", "165"), ("074", "165")]),
-    ("hibid_card_lot_05", [("079", "165"), ("081", "165"), ("088", "165")]),
-    ("hibid_card_lot_06", [("100", "165"), ("104", "165"), ("113", "165")]),
-    ("hibid_card_lot_07", [("115", "165"), ("120", "165"), ("121", "165")]),
-    ("hibid_card_lot_08", [("122", "165"), ("124", "165"), ("127", "165")]),
-    ("hibid_card_lot_09", [("131", "165"), ("132", "165"), ("133", "165")]),
-    ("hibid_card_lot_10", [("134", "165"), ("137", "165"), ("143", "165")]),
+    ("hibid_card_lot_01", [("4", "102"), ("25", "102"), ("9", "102")]),
+    ("hibid_card_lot_02", [("15", "102"), ("3", "102"), ("6", "102")]),
+    ("hibid_card_lot_03", [("8", "102"), ("11", "102"), ("14", "102")]),
+    ("hibid_card_lot_04", [("17", "102"), ("18", "102"), ("19", "102")]),
+    ("hibid_card_lot_05", [("20", "102"), ("21", "102"), ("22", "102")]),
+    ("hibid_card_lot_06", [("23", "102"), ("24", "102"), ("30", "102")]),
+    ("hibid_card_lot_07", [("1", "102"), ("2", "102"), ("5", "102")]),
+    ("hibid_card_lot_08", [("7", "102"), ("10", "102"), ("12", "102")]),
+    ("hibid_card_lot_09", [("13", "102"), ("16", "102"), ("26", "102")]),
+    ("hibid_card_lot_10", [("27", "102"), ("28", "102"), ("29", "102")]),
 ]
 
-# Pokémon Card 151 (sv3pt5) — 165-card Kanto set, used for cache seeding
+# Base Set card names used to seed the offline number lookup cache.
 _CARD_DATA: dict[str, tuple[str, str]] = {
-    "3":   ("Venusaur",    "sv3pt5"),
-    "6":   ("Charizard",   "sv3pt5"),
-    "9":   ("Blastoise",   "sv3pt5"),
-    "25":  ("Pikachu",     "sv3pt5"),
-    "39":  ("Jigglypuff",  "sv3pt5"),
-    "45":  ("Vileplume",   "sv3pt5"),
-    "52":  ("Meowth",      "sv3pt5"),
-    "54":  ("Psyduck",     "sv3pt5"),
-    "69":  ("Bellsprout",  "sv3pt5"),
-    "74":  ("Geodude",     "sv3pt5"),
-    "79":  ("Slowpoke",    "sv3pt5"),
-    "81":  ("Magnemite",   "sv3pt5"),
-    "88":  ("Grimer",      "sv3pt5"),
-    "94":  ("Gengar",      "sv3pt5"),
-    "100": ("Voltorb",     "sv3pt5"),
-    "104": ("Cubone",      "sv3pt5"),
-    "113": ("Chansey",     "sv3pt5"),
-    "115": ("Kangaskhan",  "sv3pt5"),
-    "120": ("Staryu",      "sv3pt5"),
-    "121": ("Starmie",     "sv3pt5"),
-    "122": ("Mr. Mime",    "sv3pt5"),
-    "124": ("Jynx",        "sv3pt5"),
-    "127": ("Pinsir",      "sv3pt5"),
-    "130": ("Gyarados",    "sv3pt5"),
-    "131": ("Lapras",      "sv3pt5"),
-    "132": ("Ditto",       "sv3pt5"),
-    "133": ("Eevee",       "sv3pt5"),
-    "134": ("Vaporeon",    "sv3pt5"),
-    "137": ("Porygon",     "sv3pt5"),
-    "143": ("Snorlax",     "sv3pt5"),
+    "1": ("Alakazam", "base1"), "2": ("Blastoise", "base1"),
+    "3": ("Chansey", "base1"), "4": ("Charizard", "base1"),
+    "5": ("Clefairy", "base1"), "6": ("Gyarados", "base1"),
+    "7": ("Hitmonchan", "base1"), "8": ("Machamp", "base1"),
+    "9": ("Magneton", "base1"), "10": ("Mewtwo", "base1"),
+    "11": ("Nidoking", "base1"), "12": ("Ninetales", "base1"),
+    "13": ("Poliwrath", "base1"), "14": ("Raichu", "base1"),
+    "15": ("Venusaur", "base1"), "16": ("Zapdos", "base1"),
+    "17": ("Beedrill", "base1"), "18": ("Dragonair", "base1"),
+    "19": ("Dugtrio", "base1"), "20": ("Electabuzz", "base1"),
+    "21": ("Electrode", "base1"), "22": ("Pidgeotto", "base1"),
+    "23": ("Arcanine", "base1"), "24": ("Charmeleon", "base1"),
+    "25": ("Dewgong", "base1"), "26": ("Dratini", "base1"),
+    "27": ("Farfetch'd", "base1"), "28": ("Growlithe", "base1"),
+    "29": ("Haunter", "base1"), "30": ("Ivysaur", "base1"),
 }
 
 _TCG_CACHE_DIR = REPO_ROOT / "data" / "tcg-cache"
@@ -90,7 +73,7 @@ def seed_tcg_cache() -> None:
             "id": f"{set_code}-{bare}",
             "name": name,
             "number": bare,
-            "set": "Pokémon Card 151",
+            "set": "Base Set",
             "setCode": set_code,
             "imageUrl": None,
             "game": "pokemon",
@@ -103,75 +86,12 @@ def seed_tcg_cache() -> None:
     print(f"  Seeded {len(_CARD_DATA)} TCG cache entries in {_TCG_CACHE_DIR}")
 
 
-FONT_PATHS = [
-    r"C:\Windows\Fonts\arialbd.ttf",
-    r"C:\Windows\Fonts\arial.ttf",
-    r"C:\Windows\Fonts\DejaVuSans-Bold.ttf",
-    r"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    r"/Library/Fonts/Arial Bold.ttf",
-]
-
-
-def _load_font(size: int) -> ImageFont.ImageFont:
-    for path in FONT_PATHS:
-        try:
-            return ImageFont.truetype(path, size)
-        except (OSError, IOError):
-            pass
-    return ImageFont.load_default()
-
-
 def _make_card_pil(number: str, total: str) -> Image.Image:
-    """Return a PIL RGBA card image with white border and collector number."""
-    img = Image.new("RGBA", (CARD_W, CARD_H), (255, 255, 255, 255))  # white border
-    draw = ImageDraw.Draw(img)
-
-    # Card face — deliberately below max(R,G,B)=249 to avoid the glare gate (V>=250)
-    face_color = (220, 215, 185, 255)
-    draw.rectangle(
-        [BORDER, BORDER, CARD_W - BORDER - 1, CARD_H - BORDER - 1],
-        fill=face_color,
-    )
-
-    # Pokémon art placeholder — filled dark rectangle in upper 70%
-    art_margin = BORDER + 8
-    art_bottom = int(CARD_H * 0.68)
-    draw.rectangle(
-        [art_margin, BORDER + 18, CARD_W - art_margin - 1, art_bottom],
-        fill=(60, 90, 140, 255),
-    )
-
-    # Collector number — large text at ~90% of card height
-    collector_text = f"{number}/{total}"
-    font_size = 36
-    font = _load_font(font_size)
-
-    # Center the text horizontally, place at 90% of card height
-    try:
-        bbox = font.getbbox(collector_text)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except AttributeError:
-        tw, th = font.getsize(collector_text)
-
-    tx = (CARD_W - tw) // 2
-    ty = int(CARD_H * 0.90) - th // 2
-
-    # White halo for contrast
-    for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, -2), (0, 2), (-2, 0), (2, 0)]:
-        draw.text((tx + dx, ty + dy), collector_text, font=font, fill=(255, 255, 255, 255))
-    draw.text((tx, ty), collector_text, font=font, fill=(20, 20, 20, 255))
-
-    # "POKEMON" name stub at top
-    name_font = _load_font(14)
-    name_text = "POKEMON"
-    try:
-        nbbox = name_font.getbbox(name_text)
-        nw = nbbox[2] - nbbox[0]
-    except AttributeError:
-        nw, _ = name_font.getsize(name_text)
-    draw.text(((CARD_W - nw) // 2, BORDER + 4), name_text, font=name_font, fill=(30, 30, 30, 255))
-
-    return img
+    """Return real catalog card art at the fixture's display size."""
+    source = REPO_ROOT / "data" / "card-catalog" / "images" / f"base1-{int(number)}.webp"
+    if not source.is_file():
+        raise FileNotFoundError(f"Base Set catalog art required for fixture: {source}")
+    return Image.open(source).convert("RGBA").resize((CARD_W, CARD_H))
 
 
 def _place_card_on_canvas(canvas_bgr: np.ndarray, card_pil: Image.Image,
@@ -217,7 +137,8 @@ def make_lot(lot_name: str, cards: list[tuple[str, str]]) -> pathlib.Path:
         (int(IMG_W * 0.50), IMG_H // 2),
         (int(IMG_W * 0.80), IMG_H // 2),
     ]
-    rng = random.Random(hash(lot_name))
+    seed = int.from_bytes(hashlib.sha256(lot_name.encode()).digest()[:8], "big")
+    rng = random.Random(seed)
 
     for (cx, cy), (number, total) in zip(positions, cards):
         angle = rng.uniform(-4, 4)

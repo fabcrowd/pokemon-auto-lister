@@ -49,6 +49,9 @@ HIBID_LOTS = [
 ]
 
 _CACHE_ROOT = Path(__file__).resolve().parents[3] / "data" / "detect-marketplace" / "hibid"
+_DETECT_DIR = Path(__file__).resolve().parents[1] / "detect"
+sys.path.insert(0, str(_DETECT_DIR))
+from make_card_fixtures import LOTS as ID_FIXTURE_LOTS, _make_card_pil  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Synthetic card lots for identification stress tests
@@ -228,6 +231,23 @@ class TestStressIdentify(unittest.TestCase):
         if result.total_detected == 0:
             self.skipTest(f"{lot_id}: detect step found 0 cards")
         rate = result.identification_rate
+        expected_ids = {
+            f"base1-{int(number)}"
+            for fixture_lot, cards in ID_FIXTURE_LOTS
+            if fixture_lot == lot_id
+            for number, _total in cards
+        }
+        actual_ids = {
+            f"{card.identity.get('setCode')}-{str(card.identity.get('number') or '').split('/')[0].lstrip('0')}"
+            for card in result.cards
+            if not card.abstain and card.identity
+        }
+        self.assertTrue(actual_ids, f"[{lot_id}] returned no verified card IDs")
+        self.assertLessEqual(
+            actual_ids,
+            expected_ids,
+            f"[{lot_id}] returned IDs outside the fixture truth: {sorted(actual_ids - expected_ids)}",
+        )
         self.assertGreaterEqual(
             rate,
             MIN_ID_RATE_PER_LOT,
@@ -244,6 +264,19 @@ class TestStressIdentify(unittest.TestCase):
     def test_id_round_08(self): self._assert_lot_id("hibid_card_lot_08")
     def test_id_round_09(self): self._assert_lot_id("hibid_card_lot_09")
     def test_id_round_10(self): self._assert_lot_id("hibid_card_lot_10")
+
+
+class TestIdentificationFixtureSource(unittest.TestCase):
+    def test_fixture_face_uses_real_catalog_card_art(self) -> None:
+        catalog_image = Path(__file__).resolve().parents[3] / "data" / "card-catalog" / "images" / "base1-4.webp"
+        if not catalog_image.is_file():
+            self.skipTest("Local Base Set catalog art is unavailable")
+
+        from PIL import Image, ImageChops
+
+        expected = Image.open(catalog_image).convert("RGB").resize((240, 336))
+        actual = _make_card_pil("4", "102").convert("RGB")
+        self.assertIsNone(ImageChops.difference(actual, expected).getbbox())
 
 
 class TestStressIdentifyOverall(unittest.TestCase):

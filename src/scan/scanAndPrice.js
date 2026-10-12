@@ -4,7 +4,7 @@
  */
 
 import { RetryablePokegradeError } from '../pokegrade/client.js';
-import { decidePrice } from '../pricing/pricing.js';
+import { compsForOnePrinting, decidePrice } from '../pricing/pricing.js';
 
 /**
  * @param {{
@@ -19,6 +19,7 @@ import { decidePrice } from '../pricing/pricing.js';
  *   justTcgClient?: object|null,
  *   pokeWalletClient?: object|null,
  *   pokemonTcgApiClient?: object|null,
+ *   tcgdexClient?: object|null,
  *   config?: object,
  * }} opts
  */
@@ -34,7 +35,9 @@ export async function scanAndPrice({
   justTcgClient = null,
   pokeWalletClient = null,
   pokemonTcgApiClient = null,
+  tcgdexClient = null,
   config = {},
+  printing = null,
 } = {}) {
   if (!frontImagePath) {
     return {
@@ -141,6 +144,7 @@ export async function scanAndPrice({
     justtcgResult,
     pokewalletResult,
     pokemontcgapiResult,
+    tcgdexResult,
   ] = await Promise.all([
     Promise.resolve()
       .then(() => tcgplayerClient?.getMarketPrice?.(identity))
@@ -184,14 +188,25 @@ export async function scanAndPrice({
         console.error('pokemontcg.io comps failed:', err.message);
         return null;
       }),
+    Promise.resolve()
+      .then(() => tcgdexClient?.getMarketPrice?.(identity) ?? null)
+      .catch((err) => {
+        console.error('TCGdex comps failed:', err.message);
+        return null;
+      }),
   ]);
 
-  const cardmarketResult = pokemontcgapiResult?.cardmarket ?? null;
+  // pokemontcg.io's Cardmarket price is EUR; the comps median is USD, so it stays out of it.
+  const cardmarketResult = null;
+  // TCGdex falls back to Cardmarket EUR × ECB rate for subsets TCGplayer data lacks. EU prices ran
+  // 3-90% off US ones on Trainer/Galarian Gallery cards, so it only counts when nothing US-based exists.
+  const hasUsMarket = [tcgplayerResult, justtcgResult, pokemontcgapiResult?.tcgplayer].some((r) => r?.market > 0);
+  const tcgdexComp = tcgdexResult?.basis === 'cardmarket-eur' && hasUsMarket ? null : tcgdexResult;
   const pokemontcgapiTcg = pokemontcgapiResult?.tcgplayer
     ? { ...pokemontcgapiResult.tcgplayer, source: 'pokemontcg-io', name: pokemontcgapiResult.name }
     : null;
 
-  const decision = decidePrice(
+  const samePrinting = compsForOnePrinting(
     {
       pokegrade: pokegradeResult,
       collectr: collectrResult,
@@ -201,13 +216,19 @@ export async function scanAndPrice({
       justtcg: justtcgResult,
       pokewallet: pokewalletResult,
       pokemontcgapi: pokemontcgapiTcg,
+      tcgdex: tcgdexComp,
       cardmarket: cardmarketResult,
     },
-    config,
+    printing,
   );
+  const decision = decidePrice(samePrinting.sources, config);
 
   let action = decision.action;
   let reason = decision.reason;
+  if (samePrinting.ambiguous) {
+    action = 'needs_review';
+    reason = 'printing ambiguous';
+  }
   if (resolveResult.identityConflict) {
     action = 'needs_review';
     reason = resolveResult.reason || 'identity sources disagree';
@@ -235,6 +256,8 @@ export async function scanAndPrice({
     mode: resolveResult.mode,
     idSource,
     pricingSources: listPricingSources(decision.comps, pokegradeResult),
+    printing: samePrinting.printing,
+    printings: samePrinting.printings,
     gridPngB64: resolveResult.vellum?.raw?.grid_png_b64 ?? null,
     candidates: resolveResult.vellum?.candidates ?? [],
     vellumConfidence: resolveResult.vellum?.confidence ?? null,
@@ -252,7 +275,7 @@ export function listPricingSources(comps, pokegradeResult = null) {
     map.pokegrade = pokegradeResult.value;
   }
   const sources = [];
-  for (const key of ['pokegrade', 'collectr', 'tcgplayer', 'ebay', 'rapidapi', 'justtcg', 'pokewallet', 'pokemontcgapi', 'cardmarket']) {
+  for (const key of ['pokegrade', 'collectr', 'tcgplayer', 'ebay', 'rapidapi', 'justtcg', 'pokewallet', 'pokemontcgapi', 'tcgdex', 'cardmarket']) {
     const row = map[key];
     if (row == null) {
       continue;

@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { createQueue } from '../src/queue/queue.js';
 import { createServer } from '../src/server.js';
 import { listPricingSources, scanAndPrice } from '../src/scan/scanAndPrice.js';
 
@@ -255,17 +254,16 @@ test('POST /api/scan identifies and returns pricingSources', async () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'scan-api-'));
   const publicDir = mkdtempSync(path.join(tmpdir(), 'scan-pub-'));
   writeFileSync(path.join(publicDir, 'index.html'), '<html></html>');
-  const queue = createQueue(dataDir);
   const identity = { name: 'Charizard', setCode: 'base1', number: '4' };
 
   const server = createServer({
-    queue,
     dataDir,
     publicDir,
     scanAndPrice: async () => ({
       ok: true,
       identity,
       identities: { pokegrade: identity },
+      officialArtUrl: 'https://images.pokemontcg.io/base1/4_hires.png',
       identityConflict: false,
       comps: { pokegrade: 200, justtcg: 195, collectr: 198 },
       suggested: { mercari: 198, ebay: 198 },

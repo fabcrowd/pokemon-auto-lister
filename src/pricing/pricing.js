@@ -61,8 +61,62 @@ export function formatListPrice(value) {
   return Math.round(value);
 }
 
+export function normalizePrinting(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function rowPrinting(row) {
+  if (!row || typeof row !== 'object') return '';
+  return normalizePrinting(row.printing);
+}
+
+/**
+ * Keep comps from one printing. A 1st Edition price and an Unlimited price are never medianed together.
+ * When the caller has not chosen and the sources disagree, the largest agreeing group is priced and
+ * the result is marked ambiguous. A tie prices nothing.
+ * @param {Record<string, object|null>} sources
+ * @param {string} [chosenPrinting]
+ */
+export function compsForOnePrinting(sources = {}, chosenPrinting) {
+  const groups = new Map();
+  for (const [key, row] of Object.entries(sources)) {
+    const printing = rowPrinting(row);
+    if (!printing) continue;
+    const keys = groups.get(printing) || [];
+    keys.push(key);
+    groups.set(printing, keys);
+  }
+
+  const wanted = normalizePrinting(chosenPrinting);
+  let selected = null;
+  if (wanted) {
+    selected = wanted;
+  } else if (groups.size === 1) {
+    selected = [...groups.keys()][0];
+  } else if (groups.size > 1) {
+    const ranked = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+    if (ranked[0][1].length > ranked[1][1].length) selected = ranked[0][0];
+  }
+
+  const ambiguous = groups.size > 1 && !wanted;
+  const next = {};
+  for (const [key, row] of Object.entries(sources)) {
+    const printing = rowPrinting(row);
+    const otherEdition = Boolean(selected) && printing && printing !== selected;
+    const untaggedWhileSplit = !printing && groups.size > 1;
+    const unresolvedTie = !selected && groups.size > 1;
+    next[key] = otherEdition || untaggedWhileSplit || unresolvedTie ? null : row ?? null;
+  }
+  return {
+    sources: next,
+    printing: selected,
+    ambiguous,
+    printings: [...groups.keys()],
+  };
+}
+
 export function decidePrice(
-  { pokegrade, collectr, tcgplayer, ebay, rapidapi, justtcg, pokewallet, pokemontcgapi, cardmarket } = {},
+  { pokegrade, collectr, tcgplayer, ebay, rapidapi, justtcg, pokewallet, pokemontcgapi, tcgdex, cardmarket } = {},
   multipliers = {},
 ) {
   const mercariMultiplier = multipliers.mercariMultiplier ?? 1.0;
@@ -77,6 +131,7 @@ export function decidePrice(
     justtcg: justtcg?.market ?? null,
     pokewallet: pokewallet?.market ?? null,
     pokemontcgapi: pokemontcgapi?.market ?? null,
+    tcgdex: tcgdex?.market ?? null,
     cardmarket: cardmarket?.market ?? null,
   };
 

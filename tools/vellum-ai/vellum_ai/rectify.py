@@ -113,7 +113,8 @@ def _score_quad(pts: np.ndarray, image_area: float) -> float:
     # Reject near-full-frame blobs (table/wood) — prefer a real card outline.
     if area < image_area * 0.08 or area > image_area * 0.88:
         return -1.0
-    x, y, w, h = cv2.boundingRect(pts)
+    # Rotation-invariant: an axis-aligned bounding rect makes a 30°-tilted card look square.
+    (_, _), (w, h), _ = cv2.minAreaRect(pts.astype(np.float32))
     if not _aspect_ok(w, h):
         return -1.0
     peri = cv2.arcLength(pts, True) + 1e-6
@@ -121,7 +122,7 @@ def _score_quad(pts: np.ndarray, image_area: float) -> float:
     return float(area * rectangularity * (4.0 * np.sqrt(area) / peri))
 
 
-def find_card_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
+def find_card_quad(image_bgr: np.ndarray, fallback: bool = True) -> Optional[np.ndarray]:
     """
     Find a card quadrilateral on busy backgrounds (wood table, glare).
     Returns 4x2 float32 corners, or None.
@@ -189,6 +190,8 @@ def find_card_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
 
     if best_pts is not None:
         return order_corners(best_pts)
+    if not fallback:
+        return None
 
     # Last resort: central crop with card aspect (phone-stand / table shots)
     # Assume card occupies ~55–80% of the shorter dimension, centered.

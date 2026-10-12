@@ -18,7 +18,7 @@ export async function fetchEbayAccessToken({
     body: body.toString(),
   });
   if (!response.ok) {
-    throw new Error(`eBay OAuth failed: ${response.status}`);
+    throw new Error(`eBay auth failed: ${response.status}`);
   }
   const data = await response.json();
   return data.access_token;

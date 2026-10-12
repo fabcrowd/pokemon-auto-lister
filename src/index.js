@@ -15,6 +15,8 @@ import { createRapidPokemonTcgClient } from './pricing/rapidPokemonTcg.js';
 import { createJustTcgClient, attachPriceGrid } from './pricing/justTcg.js';
 import { createPokeWalletClient } from './pricing/pokeWallet.js';
 import { createPokemonTcgApiClient } from './pricing/pokemonTcgApi.js';
+import { createTcgdexClient } from './pricing/tcgdex.js';
+import { chainPriceGrids } from './pricing/priceGrid.js';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const COLLECTR_CSV = process.env.COLLECTR_CSV || path.join(DATA_DIR, 'collectr-export.csv');
@@ -51,6 +53,7 @@ const rapidPokemonTcgClient = createRapidPokemonTcgClient();
 const justTcgClient = attachPriceGrid(createJustTcgClient());
 const pokeWalletClient = createPokeWalletClient();
 const pokemonTcgApiClient = createPokemonTcgApiClient();
+const tcgdexClient = createTcgdexClient();
 const ebaySoldsClient = createEbaySoldsClient();
 const collectrClient = createCollectrClient({ csvPath: COLLECTR_CSV, dataDir: DATA_DIR });
 
@@ -76,7 +79,7 @@ const server = createServer({
   pokegradeCircuit,
   vellumClient,
   multiCardSplitter,
-  priceGridClient: justTcgClient,
+  priceGridClient: chainPriceGrids(justTcgClient, tcgdexClient),
   scanAndPrice: (opts) =>
     scanAndPriceFn({
       ...opts,
@@ -89,6 +92,7 @@ const server = createServer({
       justTcgClient,
       pokeWalletClient,
       pokemonTcgApiClient,
+      tcgdexClient,
     }),
 });
 server.listen(port, host, () => {

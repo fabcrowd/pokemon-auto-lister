@@ -1,8 +1,9 @@
 """Multi-card detection: find all cards in a single image and return rectified crops.
 
 Strategy:
-  1. ONNX (when model present): run inference, apply NMS, return all full_card hits.
-  2. Contour fallback: find all qualifying card quads from edge/saturation masks.
+  1. ONNX (when model present): NMS, then drop full-frame boxes and thin slivers.
+  2. Contour pass: card quads the ONNX boxes missed, including card backs.
+     A blob about two or four times a neighboring card is split into that grid.
   3. For each hit, perspective-rectify to 750x1050 and encode as JPEG bytes.
 
 Entry point for the server: detect_all_from_bytes(image_bytes) -> list[dict]
@@ -11,6 +12,7 @@ Entry point for the server: detect_all_from_bytes(image_bytes) -> list[dict]
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 import json as _json
 import os
 from pathlib import Path
@@ -22,6 +24,7 @@ import numpy as np
 from .detect import CLASS_FULL_CARD, CLASS_NAMES, MODELS_DIR, DEFAULT_ONNX
 from .rectify import (
     _aspect_ok,
+    find_card_quad,
     order_corners,
     rectify_card,
     rectify_from_box,
@@ -37,7 +40,7 @@ _PARTIAL_ASPECT_MAX = 3.5
 _BOUNDARY_MARGIN = 12
 
 # Minimum confidence to keep an ONNX hit before NMS
-_CONF_THRESHOLD = 0.25
+_CONF_THRESHOLD = 0.55
 # IoU overlap threshold for NMS — cards don't overlap on a table
 _NMS_IOU_THRESHOLD = 0.45
 # Minimum score for contour-based quads (same scale as _score_quad)
@@ -50,11 +53,26 @@ _MIN_AREA_FRAC = 0.004
 _MAX_AREA_FRAC = 0.35
 # Two quads are the "same card" if their IoU exceeds this
 _DEDUP_IOU = 0.35
+# ONNX sometimes boxes the whole photo (area ~0.95) or a thin strip (ratio 5–7).
+# A real card in a multi-card lot stays under half the frame, and sideways
+# shots reach a long/short ratio of about 1.6.
+_ONNX_MAX_AREA_FRAC = 0.50
+_CARD_RATIO_MAX = 2.2
+# Fragments of one close-up overlap. Separate cards on a table do not.
+_CLUSTER_IOU = 0.12
 # Erosion kernel size for blob-split pass (pixels, at _DETECT_MAX_DIM resolution)
 _SPLIT_KERNEL = 18
 # Resize large images to this max dimension before contour detection so
 # area-fraction thresholds remain meaningful regardless of camera resolution.
 _DETECT_MAX_DIM = 1280
+
+
+@lru_cache(maxsize=4)
+def _load_onnx_session(onnx_path: str, _modified_ns: int):
+    """Reuse inference sessions until the model file is replaced on disk."""
+    import onnxruntime as ort  # type: ignore
+
+    return ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
 
 
 def _score_quad_multi(pts: np.ndarray, image_area: float) -> float:
@@ -101,9 +119,9 @@ def _touches_boundary(pts: np.ndarray, img_w: int, img_h: int) -> bool:
 
 
 def _score_quad_partial(pts: np.ndarray, image_area: float) -> float:
-    """Score a candidate partial-card quad (looser aspect, no max-area cap)."""
+    """Score a clipped card. A quad that covers most of the photo is the frame, not a card."""
     area = abs(cv2.contourArea(pts))
-    if area < image_area * _MIN_AREA_FRAC:
+    if area < image_area * _MIN_AREA_FRAC or area > image_area * _MAX_AREA_FRAC:
         return -1.0
     _, (rw, rh), _ = cv2.minAreaRect(pts)
     if not _aspect_ok_loose(rw, rh):
@@ -201,20 +219,205 @@ def detect_all_from_bytes(image_bytes: bytes) -> List[Dict[str, Any]]:
     return cards
 
 
+def _box_area_frac(box, image_w: int, image_h: int) -> float:
+    """Box area as a fraction of the image."""
+    x1, y1, x2, y2 = box
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1) / max(1.0, float(image_w * image_h))
+
+
+def _box_ratio(box) -> float:
+    """Long side divided by short side."""
+    x1, y1, x2, y2 = box
+    width = max(1e-6, float(x2 - x1))
+    height = max(1e-6, float(y2 - y1))
+    return max(width, height) / min(width, height)
+
+
+def _box_cardlike(box, image_w: int, image_h: int) -> bool:
+    """True when a box is one card, not a sliver and not the whole photo."""
+    frac = _box_area_frac(box, image_w, image_h)
+    return _MIN_AREA_FRAC <= frac <= _ONNX_MAX_AREA_FRAC and _box_ratio(box) <= _CARD_RATIO_MAX
+
+
+def _box_iou(a, b) -> float:
+    """Axis-aligned IoU of two xyxy boxes."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = inter_w * inter_h
+    if inter <= 0.0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    return inter / (area_a + area_b - inter + 1e-6)
+
+
+def _box_mostly_inside(inner, outer, frac: float = 0.7) -> bool:
+    """True when most of `inner` sits inside `outer`."""
+    ax1, ay1, ax2, ay2 = inner
+    bx1, by1, bx2, by2 = outer
+    area_inner = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_outer = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    if area_inner <= 0.0 or area_inner > area_outer:
+        return False
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    return (inter_w * inter_h) / area_inner >= frac
+
+
+def _drop_overlapping_clusters(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove boxes that overlap another box.
+
+    A corner close-up breaks into overlapping fragments. Those fragments are
+    one cluster, and none of them is its own card, so the cluster is dropped.
+    """
+    count = len(hits)
+    parent = list(range(count))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for i in range(count):
+        for j in range(i + 1, count):
+            if _box_iou(hits[i]["box"], hits[j]["box"]) > _CLUSTER_IOU:
+                union(i, j)
+    sizes: Dict[int, int] = {}
+    for i in range(count):
+        root = find(i)
+        sizes[root] = sizes.get(root, 0) + 1
+    return [hit for i, hit in enumerate(hits) if sizes[find(i)] == 1]
+
+
+def _split_merged_boxes(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Split a box that is two or four cards fused into one rectangle.
+
+    ShopGoodwill back grids leave the right-hand columns as one blob about
+    twice as wide as the cards beside it. The single cards set the size.
+    """
+    sized = []
+    for hit in hits:
+        x1, y1, x2, y2 = hit["box"]
+        sized.append((float(x2 - x1), float(y2 - y1), hit))
+    # The common card size is the tight cluster of smaller boxes. A close-up
+    # with a few odd fragments has no such cluster, so it is left alone.
+    widths = sorted(width for width, _, _ in sized)
+    heights = sorted(height for _, height, _ in sized)
+    core_n = max(1, (len(widths) * 2) // 3)
+    core_w, core_h = widths[:core_n], heights[:core_n]
+    if len(core_w) < 4 or core_w[-1] > core_w[0] * 1.35 or core_h[-1] > core_h[0] * 1.35:
+        return list(hits)
+    median_w = core_w[len(core_w) // 2]
+    median_h = core_h[len(core_h) // 2]
+    if median_w < 8 or median_h < 8:
+        return list(hits)
+
+    def cells(length: float, median: float) -> int:
+        raw = length / median
+        count = int(round(raw))
+        if count < 2 or count > 3 or abs(raw / count - 1.0) > 0.18:
+            return 1
+        return count
+
+    split: List[Dict[str, Any]] = []
+    for width, height, hit in sized:
+        across, down = cells(width, median_w), cells(height, median_h)
+        if across == 1 and down == 1:
+            split.append(hit)
+            continue
+        x1, y1, x2, y2 = hit["box"]
+        for row in range(down):
+            for col in range(across):
+                box = (
+                    x1 + width * col / across,
+                    y1 + height * row / down,
+                    x1 + width * (col + 1) / across,
+                    y1 + height * (row + 1) / down,
+                )
+                piece = {key: value for key, value in hit.items() if key != "quad"}
+                split.append({**piece, "box": box})
+    return split
+
+
+def _is_consistent_grid(hits: List[Dict[str, Any]]) -> bool:
+    """True when every box is about the same card size."""
+    if len(hits) < 4:
+        return False
+    widths = sorted(float(hit["box"][2] - hit["box"][0]) for hit in hits)
+    heights = sorted(float(hit["box"][3] - hit["box"][1]) for hit in hits)
+    return widths[-1] <= widths[0] * 1.35 and heights[-1] <= heights[0] * 1.35
+
+
+def _supplement_with_contour(
+    onnx_hits: List[Dict[str, Any]],
+    contour_hits: List[Dict[str, Any]],
+    image_w: int,
+    image_h: int,
+) -> List[Dict[str, Any]]:
+    """Add contour cards the ONNX pass missed.
+
+    A consistent contour grid that found more cards than ONNX wins outright.
+    One odd ONNX box must not hide that grid behind an area band.
+    """
+    if not onnx_hits or (
+        _is_consistent_grid(contour_hits) and len(contour_hits) > len(onnx_hits)
+    ):
+        return list(contour_hits)
+    areas = sorted(_box_area_frac(hit["box"], image_w, image_h) for hit in onnx_hits)
+    median = areas[len(areas) // 2]
+    extra: List[Dict[str, Any]] = []
+    for hit in contour_hits:
+        box = hit["box"]
+        overlaps = any(
+            _box_iou(box, kept["box"]) > 0.20
+            or _box_mostly_inside(box, kept["box"])
+            or _box_mostly_inside(kept["box"], box)
+            for kept in onnx_hits
+        )
+        if overlaps:
+            continue
+        frac = _box_area_frac(box, image_w, image_h)
+        if 0.55 * median <= frac <= 1.8 * median:
+            extra.append(hit)
+    return list(onnx_hits) + extra
+
+
 def detect_all_cards_with_crops(image_bgr: np.ndarray) -> List[Dict[str, Any]]:
     path = Path(os.environ.get("VELLUM_AI_DETECT_ONNX", DEFAULT_ONNX))
-    hits: List[Dict[str, Any]] = []
-    onnx_missed = False
-
+    image_h, image_w = image_bgr.shape[:2]
+    raw_onnx: List[Dict[str, Any]] = []
     if path.is_file():
-        hits = _detect_onnx_multi(image_bgr, path)
-        if not hits:
-            onnx_missed = True
+        raw_onnx = _detect_onnx_letterboxed(image_bgr, path)
+    onnx_hits = [
+        hit for hit in raw_onnx
+        if _box_cardlike(hit["box"], image_w, image_h)
+    ]
+    frame_rejected = any(
+        _box_area_frac(hit["box"], image_w, image_h) > _ONNX_MAX_AREA_FRAC
+        for hit in raw_onnx
+    )
 
-    if not hits:
-        hits = _contour_multi(image_bgr)
-        if hits and onnx_missed:
-            _maybe_harvest(image_bgr, hits)
+    contour_hits = [
+        hit for hit in _contour_multi(image_bgr)
+        if _box_cardlike(hit["box"], image_w, image_h)
+    ]
+    # Overlap-cluster removal is only for a close-up whose full-frame box was
+    # rejected. Adjacent cards on a table can share a little area.
+    if frame_rejected:
+        contour_hits = _drop_overlapping_clusters(contour_hits)
+    contour_hits = _split_merged_boxes(contour_hits)
+    hits = _supplement_with_contour(onnx_hits, contour_hits, image_w, image_h)
+    if hits and not onnx_hits and path.is_file():
+        _maybe_harvest(image_bgr, hits)
+    hits = sorted(hits, key=lambda hit: hit["box"][0])
 
     results = []
     for i, hit in enumerate(hits):
@@ -223,7 +426,9 @@ def detect_all_cards_with_crops(image_bgr: np.ndarray) -> List[Dict[str, Any]]:
         if quad is not None:
             crop = rectify_card(image_bgr, np.asarray(quad, dtype=np.float32))
         else:
-            crop = rectify_from_box(image_bgr, box)
+            crop = _upright_crop(image_bgr, box)
+            if crop is None:
+                crop = rectify_from_box(image_bgr, box)
         _, jpeg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
         crop_b64 = base64.b64encode(jpeg.tobytes()).decode("ascii")
         results.append({
@@ -238,16 +443,80 @@ def detect_all_cards_with_crops(image_bgr: np.ndarray) -> List[Dict[str, Any]]:
     return results
 
 
+# Cards tilted less than this are cropped fine by their axis-aligned box.
+_MIN_TILT_DEG = 8.0
+_BOX_PAD = 0.08
+
+
+def _upright_crop(image_bgr: np.ndarray, box) -> Optional[np.ndarray]:
+    """Rectify a visibly rotated card from its own outline instead of the axis-aligned box.
+
+    On binder pages shot at an angle the box crop leaves the card tilted, so name OCR fails and
+    geometric verification loses inliers (Fossil binder: Kabuto 129 → 225, LC reprint → correct print).
+    """
+    H, W = image_bgr.shape[:2]
+    x1, y1, x2, y2 = box
+    px, py = _BOX_PAD * (x2 - x1), _BOX_PAD * (y2 - y1)
+    X1, Y1 = int(max(0, x1 - px)), int(max(0, y1 - py))
+    X2, Y2 = int(min(W, x2 + px)), int(min(H, y2 + py))
+    region = image_bgr[Y1:Y2, X1:X2]
+    if region.size == 0:
+        return None
+    quad = find_card_quad(region, fallback=False)
+    if quad is None:
+        return None
+    top = quad[1] - quad[0]
+    tilt = abs(np.degrees(np.arctan2(top[1], top[0]))) % 90
+    if min(tilt, 90 - tilt) < _MIN_TILT_DEG:
+        return None
+    # A rotated card fills roughly 40-100% of its axis-aligned box; smaller is an inner frame.
+    ratio = cv2.contourArea(quad.astype(np.float32)) / max(1.0, (x2 - x1) * (y2 - y1))
+    if not 0.35 <= ratio <= 1.1:
+        return None
+    if np.linalg.norm(quad[1] - quad[0]) > np.linalg.norm(quad[2] - quad[1]):
+        # order_corners picked a long side as "top": turn the corner order a quarter so the card is portrait.
+        quad = np.roll(quad, -1, axis=0) if quad[0][1] < quad[1][1] else np.roll(quad, 1, axis=0)
+    return rectify_card(region, quad.astype(np.float32))
+
+
+def pad_to_square(img: np.ndarray):
+    """Center-pad with gray 114 like ultralytics training and the extension's letterbox (detect.js)."""
+    h, w = img.shape[:2]
+    side = max(h, w)
+    pad_x, pad_y = (side - w) // 2, (side - h) // 2
+    square = np.full((side, side, 3), 114, dtype=img.dtype)
+    square[pad_y:pad_y + h, pad_x:pad_x + w] = img
+    return square, pad_x, pad_y
+
+
+def unpad_box(box, pad_x: int, pad_y: int) -> list:
+    return [box[0] - pad_x, box[1] - pad_y, box[2] - pad_x, box[3] - pad_y]
+
+
+def _detect_onnx_letterboxed(image_bgr: np.ndarray, onnx_path: Path) -> List[Dict[str, Any]]:
+    # Stretching non-square photos missed cards the letterboxed model finds (HiBid F1 0.953 → 0.962).
+    h, w = image_bgr.shape[:2]
+    square, pad_x, pad_y = pad_to_square(image_bgr)
+    hits = []
+    for hit in _detect_onnx_multi(square, onnx_path):
+        x1, y1, x2, y2 = unpad_box(hit["box"], pad_x, pad_y)
+        box = [float(min(max(x1, 0), w)), float(min(max(y1, 0), h)), float(min(max(x2, 0), w)), float(min(max(y2, 0), h))]
+        if box[2] > box[0] and box[3] > box[1]:
+            hits.append({**hit, "box": box})
+    return hits
+
+
 def _detect_onnx_multi(
     image_bgr: np.ndarray,
     onnx_path: Path,
 ) -> List[Dict[str, Any]]:
     try:
-        import onnxruntime as ort  # type: ignore
-    except ImportError:
+        resolved_path = Path(onnx_path).resolve()
+        modified_ns = resolved_path.stat().st_mtime_ns
+        session = _load_onnx_session(str(resolved_path), modified_ns)
+    except (ImportError, OSError):
         return []
 
-    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     inp = session.get_inputs()[0]
     _, _, height, width = inp.shape
     h0, w0 = image_bgr.shape[:2]
@@ -417,8 +686,10 @@ def _contour_multi(image_bgr: np.ndarray) -> List[Dict[str, Any]]:
     candidates.sort(key=lambda x: x[0], reverse=True)
     kept: List[np.ndarray] = []
     for _, pts in candidates:
-        if not any(_quad_iou(pts, k) > _DEDUP_IOU for k in kept):
-            kept.append(pts)
+        if any(_quad_iou(pts, k) > _DEDUP_IOU or _mostly_inside(pts, k) for k in kept):
+            continue
+        kept = [k for k in kept if not _mostly_inside(k, pts)]
+        kept.append(pts)
 
     inv = 1.0 / scale  # scale detection coords back to original image space
     results = []
@@ -506,6 +777,21 @@ def _erosion_split_candidates(
             if score > _CONTOUR_MIN_SCORE:
                 results.append((score, order_corners(pts)))
     return results
+
+
+def _mostly_inside(inner: np.ndarray, outer: np.ndarray, frac: float = 0.7) -> bool:
+    """True when the smaller quad sits inside the larger one (an inner edge, not a second card)."""
+    ax1, ay1 = float(inner[:, 0].min()), float(inner[:, 1].min())
+    ax2, ay2 = float(inner[:, 0].max()), float(inner[:, 1].max())
+    bx1, by1 = float(outer[:, 0].min()), float(outer[:, 1].min())
+    bx2, by2 = float(outer[:, 0].max()), float(outer[:, 1].max())
+    area_inner = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_outer = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    if area_inner <= 0 or area_inner > area_outer:
+        return False
+    iw = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0.0, min(ay2, by2) - max(ay1, by1))
+    return (iw * ih) / area_inner >= frac
 
 
 def _quad_iou(a: np.ndarray, b: np.ndarray) -> float:

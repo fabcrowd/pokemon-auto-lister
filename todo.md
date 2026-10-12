@@ -1,6 +1,8 @@
 # TODO — Price condition grid + graded pricing + toggles + set/number + variant confirmation
 
-Features that extend the existing `dist/extension-wasm/` scanner. No condition detection on the card reader side — just surface the full price grid per card and let the user filter.
+Proposal for the standalone `dist/extension-wasm/` scanner. That directory is generated/ignored according to `README.md`; before implementation, locate or establish its tracked source/build path. No condition detection on the card reader side — just surface the full price grid per card and let the user filter.
+
+The existing backend `GET /api/price-grid` is documented as a JustTCG price-grid endpoint. This proposal's NM/LP/MP/HP/DMG and printing-variant data shape is a separate, not-yet-verified extension feature; confirm the actual JustTCG response before selecting a source or promising these fields.
 
 ---
 

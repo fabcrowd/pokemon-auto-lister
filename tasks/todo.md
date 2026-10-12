@@ -74,7 +74,7 @@ Sequential / safe. Runbook: `.claude/plans/multi-card-identity-loop.md`
 
 # Photo ID port — qtran pHash + spatial OCR + Didier grid (2026-09-06)
 
-Plan: `.cursor/plans/photo_id_port_fdc3c1a5.plan.md` (do not edit). Full handoff: [`HANDOFF.md`](../HANDOFF.md).
+Plan reference: `.cursor/plans/photo_id_port_fdc3c1a5.plan.md` (not present in this checkout; do not rely on it). Full handoff: [`HANDOFF.md`](../HANDOFF.md).
 
 ## Plan
 - [x] Phase 1: pHash rerank + catalog helper + tests
@@ -84,7 +84,7 @@ Plan: `.cursor/plans/photo_id_port_fdc3c1a5.plan.md` (do not edit). Full handoff
 
 ## Review
 - CLIP crop untouched; no commit
-- pHash no-ops until `build_phash.py` populates sidecar
+- pHash sidecar generation was subsequently completed: `HANDOFF.md` records 21,669 entries in `data/card-catalog/phash.json`. Revalidate that artifact before relying on it in a new environment.
 - Tests: pytest phash/ocr_names/verify_grid/identify_multi green; node official-art + ui-markup + cycle green
 - Harden pass: local `pokemontcg_hires_url` (no resolve_card for art), clear TCG `identity is None` fallback, grid failures swallowed, dual-thumb DOM-verified
 - Full notes: [`HANDOFF.md`](../HANDOFF.md)
@@ -109,11 +109,62 @@ Plan: `.cursor/plans/photo_id_port_fdc3c1a5.plan.md` (do not edit). Full handoff
 - [x] Build `phash.json` — 21,669 entries
 - [x] Enable Vellum in `.env`; `SCANNER_IDENTITY_MODE=local-only`
 - [x] Fix identify `/health` (`__version__`); start server on `:8787`
-- [ ] Do **not** rotate `PGAI_KEY`
 - [ ] Optional later: re-embed 401 new images into FAISS
+
+Credential note: do not rotate `PGAI_KEY` unless explicitly requested. This is an instruction, not a pending task.
 
 ## Review
 - Images on disk: 22,070; FAISS still 21,669 (new art not embedded yet)
 - `npm run vellum-ai` prefers `.venv312`; `/health` ok + catalog loaded
 - Scanner uses local-only resolver
 - No commit; PG key unchanged
+
+# Detector: real listing photos (2026-10-10)
+
+Goal: ≥ 0.90 precision and recall on reviewed real photos (binders, single cards) with no sealed-product false positives.
+
+## Plan
+- [x] Root cause: 138 harvest frames in `data/vellum-detect/images/train` were labelled as one full-frame box → quarantined to `data/vellum-detect/_quarantine_fullframe_labels/`
+- [x] Real eval set `data/detect-real-eval/` (2 binder pages, 3 single-card lots, 12 held-out sealed lots; split by lot) + `detect/eval_real.py` (TDD)
+- [x] Stress copies `data/detect-real-eval-stress/` (half, quarter, jpeg30, dark, flip, rot90; labels transformed exactly)
+- [x] `detect/synth_binder.py` (TDD): binder pages, flat-lays, single large cards, glare, tilt, 90° rotation, thumbnails
+- [x] Reviewed sealed-product negatives from train lots via `label_marketplace.py` → `retrain._ingest_frames_to_dataset` (+ rot90 copies)
+- [x] `retrain.py` real-photo gate (F1 ≥ 0.90 and ≥ current model)
+- [x] Fine-tune → promote only if real + stress gates pass (v4 epoch 6: real P 0.91 / R 1.00, stress P 0.92 / R 1.00 at conf 0.25)
+- [ ] Publish the promoted `card_detect.onnx` to the extension's GitHub release (owner action — outward-facing)
+- [ ] Human audit of Claude-reviewed labels (`review_note` in each sidecar)
+
+## Review
+- Old model on real photos: P 0.17 / R 0.14. New: P 0.91 / R 1.00 (conf 0.25); P 0.96–1.00 / R 0.99–1.00 at the val-optimal conf 0.55
+- Intermediate runs: v2 e2 failed rot90 / thumbnails → added to synth; v3 lost single large cards and boxed edge slivers → added single-card mode and `_MIN_VISIBLE` 0.6
+- Tests: test_eval_real 6, test_synth_binder 4, retrain gate 1 — green. Full VellumAI suite: same 11 pre-existing identify-fixture failures as before
+
+# HiBid multi-card lots: find + price ≥ 95% (2026-10-10 → 11)
+
+Goal (user): on multiple HiBid multi-card lots, find the correct card and price it above 95%.
+Metrics: *find* = detected (IoU ≥ 0.5) and exact catalog id; *price* = find and JustTCG returned that same product (set + number); `null` ids count for detection only; out-of-catalog cards count as failures.
+
+## Plan
+- [x] End-to-end scorer `detect/eval_lots.py` (TDD)
+- [x] SIFT/RANSAC verification of CLIP candidates (`vellum_ai/local_verify.py`), Pocket ids filtered, second pass over CLIP ranks 21-40
+- [x] Slab labels (`vellum_ai/slab_label.py`): parse PSA text, set years (`catalog/set_years.py`), promo-year exemption, `-HOLO`/`-REV.FOIL` suffixes, set-name variety line; label boxes dropped from results
+- [x] Name-OCR candidate path (`vellum_ai/name_candidates.py`) when CLIP candidates fail verification
+- [x] Same-art reprints split by OCR'd collector number (`verify-ocr-number`)
+- [x] Detector letterbox in the shipped Python path (HiBid F1 0.953 → 0.962)
+- [x] `.png` catalog art loaded by verification; pokemontcg.io set-id mapping recovered 368 more cards' art
+- [x] JustTCG pricing: strict name+number+set match, set-id-filtered search (`src/pricing/justTcg.js`); `scripts/price-eval-ids.mjs` caches prices per id (100 calls/day quota)
+- [x] Blind test set: first photo of 31 test-split lots, 80 boxes / 65 identifiable ids labelled from the cards themselves
+- [x] Re-embed CLIP index with backfilled art (22,485 cards)
+- [x] Upright crop for tilted cards inside a box (`detect_multi._upright_crop`; `_score_quad` uses minAreaRect)
+- [x] Set context: dominant set (>= 2 cards) on a photo re-verifies abstained cards against that set, and flips same-art reprints from another set to the page's set unless the number was OCR-confirmed
+- [x] JustTCG set aliases (`justTcgSetName`: Black Star Promos, SM Base Set, Radiant Collection); `normalizeSetName` strips only short code prefixes
+- [x] Detector v5 (`models/card_detect_v5`, last.pt): HiBid test R 0.85 -> 0.975 at conf 0.55, but stress negatives get more FPs (14 vs 5). NOT promoted: fails the stress gate. v6 (augmented negatives) rejected: recall dropped, FPs stayed
+- [x] Fresh blind set `test2`: 18 lots harvested after all tuning, 130 boxes / 84 determinable ids (`decisions_test2.tsv`); `_is_train_lot` now excludes every named split other than train
+- [x] Price test2: JustTCG quota exhausted, so added keyless TCGdex pricing by exact catalog id (TCGplayer USD, else Cardmarket EUR × ECB rate) + pokemontcg.io catalog-id lookup; `/api/price-grid` falls back to TCGdex
+- [ ] Remaining: Crystal Guardians stamp reverse holo (Dual Ball), Generations vs BREAKthrough Gengar reprint, washed-out V binder (Regigigas V), Japanese slabs (not in catalog)
+
+## Review
+- Dev (18 photos, tuned on): find 0.981, price 0.981 — not a valid accuracy claim
+- Blind test v1: find 0.462 → v2 (name path, labels, reprints, letterbox): 0.631 → v3 (upright crop): 0.723. Misses were inspected and fixed against, so this set is now partly tuned on
+- **Fresh blind test2 (never tuned on): find 0.964 (81/84)** with the shipped v4 detector and with v5; detect recall 0.969 (v4) / 1.000 (v5)
+- **test2 price 0.964 (81/84)** via TCGdex: every correctly found card priced as that exact product. TCGdex vs JustTCG on 57 shared ids: median diff 0%, 52/57 within 15% (outliers = 1st Edition vs Unlimited)

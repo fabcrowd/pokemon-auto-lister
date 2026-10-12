@@ -35,6 +35,9 @@ DEFAULT_MODEL = MODELS_DIR / "card_detect.onnx"
 _INGESTED_DIR = "_ingested"
 
 CLASS_FULL = 0
+# Synthetic val mAP stayed ~0.99 while the shipped model scored F1 0.15 on real
+# listing photos, so promotion also requires the reviewed real-photo set.
+REAL_F1_GATE = 0.90
 
 
 def _load_harvest_frames(harvest_dir: Path) -> list[Path]:
@@ -111,6 +114,91 @@ def _ingest_frames_to_dataset(frames: list[Path], data_root: Path, dry_run: bool
     return ingested
 
 
+# Lots whose id ends in 0-2 are the held-out HiBid test split; never train on them.
+_HOLDOUT_LOT_DIGITS = {0, 1, 2}
+
+
+def _is_train_lot(lot: str, side: dict) -> bool:
+    if side.get("split") not in (None, "train"):
+        return False
+    return not (lot.isdigit() and int(lot) % 10 in _HOLDOUT_LOT_DIGITS)
+
+
+def ingest_reviewed_photos(photos_dir: Path, data_root: Path) -> int:
+    """Copy reviewed real lot photos (``<lot>/<NN>.jpg`` + sidecar) into the YOLO train split.
+
+    Ignore regions (cut-off cards) are painted letterbox-grey so YOLO does not learn them as background.
+    """
+    import cv2  # type: ignore
+
+    img_dir, lbl_dir = data_root / "images" / "train", data_root / "labels" / "train"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    lbl_dir.mkdir(parents=True, exist_ok=True)
+    ingested = 0
+    for sidecar in sorted(photos_dir.glob("*/[0-9][0-9].json")):
+        try:
+            side = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        lot = sidecar.parent.name
+        if side.get("reviewed") is not True or not isinstance(side.get("boxes"), list) or not _is_train_lot(lot, side):
+            continue
+        img = cv2.imread(str(sidecar.with_suffix(".jpg")))
+        if img is None:
+            continue
+        for x1, y1, x2, y2 in side.get("ignore") or []:
+            img[max(0, int(y1)):max(0, int(y2)), max(0, int(x1)):max(0, int(x2))] = 114
+        stem = f"hibid_{lot}_{sidecar.stem}"
+        cv2.imwrite(str(img_dir / f"{stem}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        h, w = img.shape[:2]
+        lines = _boxes_to_yolo(side["boxes"], w, h)
+        (lbl_dir / f"{stem}.txt").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        ingested += 1
+    return ingested
+
+
+_NEG_VARIANTS = ("half", "quarter", "dark", "tilt")
+
+
+def augment_negatives(data_root: Path, seed: int = 0) -> int:
+    """Write half / quarter / dark / tilted copies of every empty-label train image.
+
+    Tilted-binder training made booster boxes fire as cards; these copies keep sealed
+    product a negative at the scales and angles the stress set and listings use.
+    """
+    import random
+
+    import cv2  # type: ignore
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from synth_binder import _tilt  # noqa: PLC0415
+
+    rng = random.Random(seed)
+    img_dir, lbl_dir = data_root / "images" / "train", data_root / "labels" / "train"
+    written = 0
+    for lbl in sorted(lbl_dir.glob("*.txt")):
+        if "__" in lbl.stem or lbl.read_text(encoding="utf-8").strip():
+            continue
+        if (lbl_dir / f"{lbl.stem}__{_NEG_VARIANTS[0]}.txt").exists():
+            continue
+        img = cv2.imread(str(img_dir / f"{lbl.stem}.jpg"))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        variants = {
+            "half": cv2.resize(img, (w // 2, h // 2), interpolation=cv2.INTER_AREA),
+            "quarter": cv2.resize(img, (max(1, w // 4), max(1, h // 4)), interpolation=cv2.INTER_AREA),
+            "dark": cv2.convertScaleAbs(img, alpha=0.45, beta=0),
+            "tilt": _tilt(img.copy(), [], rng)[0],
+        }
+        for name in _NEG_VARIANTS:
+            stem = f"{lbl.stem}__{name}"
+            cv2.imwrite(str(img_dir / f"{stem}.jpg"), variants[name], [cv2.IMWRITE_JPEG_QUALITY, 92])
+            (lbl_dir / f"{stem}.txt").write_text("", encoding="utf-8")
+            written += 1
+    return written
+
+
 def _run(cmd: list[str]) -> int:
     print("  $", " ".join(cmd))
     return subprocess.call(cmd)
@@ -173,6 +261,28 @@ def _current_model_map50(dataset_yaml: Path, model_path: Path) -> float:
     return 0.0
 
 
+def _passes_real_gate(new_f1: float | None, baseline_f1: float | None) -> bool:
+    if new_f1 is None:
+        return False
+    return new_f1 >= REAL_F1_GATE and new_f1 >= (baseline_f1 or 0.0)
+
+
+def _real_eval_f1(model_path: Path) -> float | None:
+    """F1 on reviewed real photos via eval_real.py; None when unavailable."""
+    if not model_path.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(HERE / "eval_real.py"), "--weights", str(model_path), "--json"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        return float(json.loads(result.stdout.strip().splitlines()[-1])["f1"])
+    except Exception:
+        return None
+
+
 def retrain(
     harvest_dir: Path,
     data_root: Path,
@@ -192,6 +302,8 @@ def retrain(
     # Baseline mAP before retrain
     baseline = _current_model_map50(dataset_yaml, model_path)
     print(f"Baseline mAP@50: {baseline:.4f}")
+    baseline_real = _real_eval_f1(model_path)
+    print(f"Baseline real-photo F1: {baseline_real}")
 
     # Archive current model
     archive_path: Path | None = None
@@ -234,6 +346,14 @@ def retrain(
         reason = f"mAP@50 {new_map:.4f} < gate {MAP_GATE}" if new_map < MAP_GATE else \
                  f"mAP@50 {new_map:.4f} ≤ baseline {baseline:.4f}"
         print(f"New model did not improve ({reason}). Restoring previous model.")
+        if archive_path:
+            shutil.copy2(archive_path, model_path)
+        return False
+
+    new_real = _real_eval_f1(model_path)
+    print(f"New model real-photo F1: {new_real}")
+    if not _passes_real_gate(new_real, baseline_real):
+        print(f"Real-photo gate failed (need F1 ≥ {REAL_F1_GATE} and ≥ baseline). Restoring previous model.")
         if archive_path:
             shutil.copy2(archive_path, model_path)
         return False

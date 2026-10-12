@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decidePrice, formatListPrice, NEEDS_REVIEW_THRESHOLD, MIN_COMP_SOURCES } from '../src/pricing/pricing.js';
+import { compsForOnePrinting, decidePrice, formatListPrice, NEEDS_REVIEW_THRESHOLD, MIN_COMP_SOURCES } from '../src/pricing/pricing.js';
 
 test('threshold constant is 15%', () => {
   assert.equal(NEEDS_REVIEW_THRESHOLD, 0.15);
@@ -82,4 +82,28 @@ test('mercariMultiplier and ebayMultiplier apply independently', () => {
 
   assert.equal(result.suggested.mercari, 110);
   assert.equal(result.suggested.ebay, 90);
+});
+
+test('1st Edition and Unlimited comps are never medianed together', () => {
+  const filtered = compsForOnePrinting({
+    justtcg: { market: 38000, printing: '1st Edition Holofoil' },
+    tcgdex: { market: 928, printing: 'Unlimited Holofoil' },
+  });
+  const decision = decidePrice(filtered.sources);
+  const numbers = Object.values(decision.comps).filter((value) => typeof value === 'number');
+  assert.equal(filtered.ambiguous, true);
+  assert.equal(numbers.length, 0);
+  assert.equal(decision.suggested, null);
+});
+
+test('a chosen printing prices only that printing', () => {
+  const filtered = compsForOnePrinting({
+    justtcg: { market: 38000, printing: '1st Edition Holofoil' },
+    tcgdex: { market: 928, printing: 'unlimited-holofoil' },
+    pokemontcgapi: { market: 910, printing: 'Unlimited Holofoil' },
+  }, 'Unlimited Holofoil');
+  const decision = decidePrice(filtered.sources);
+  assert.equal(filtered.ambiguous, false);
+  assert.equal(decision.comps.justtcg, null);
+  assert.equal(decision.suggested.ebay, 919);
 });

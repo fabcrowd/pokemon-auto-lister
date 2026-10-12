@@ -9,9 +9,11 @@ Plain-JS ESM Node server (dashboard + JSON API) plus a Python detect/identify si
 (VellumAI) and Chrome extensions. Integrates PokeGrade, VellumAI, TCGPlayer, JustTCG,
 PokéWallet, RapidAPI, eBay, and Collectr.
 
-Session continuity lives in `HANDOFF.md`, `tasks/todo.md` (plus an untracked root
-`todo.md`), and `tasks/lessons.md` — read them before proposing work. Cursor
-conventions: `docs/autopilot/CURSOR.md`.
+Session continuity lives in `HANDOFF.md`, `tasks/todo.md`, the root `todo.md` (pricing
+and extension proposal), and `tasks/lessons.md` — read them before proposing work.
+`HANDOFF.md` summarizes task status; `tasks/todo.md` is the task history. The separate
+`detector-upgrade-handoff.md` is a proposed plan with blockers, not a report of completed
+work. Cursor conventions: `docs/autopilot/CURSOR.md`.
 
 ---
 

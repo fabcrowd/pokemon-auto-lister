@@ -8,8 +8,12 @@ identify_lot(lot_folder)              — process every image in a folder and
 from __future__ import annotations
 
 import base64
+import binascii
+import json
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -17,7 +21,11 @@ import cv2
 import numpy as np
 
 from .detect_multi import detect_all_cards_with_crops
+from .local_verify import accept_verified, is_digital_only, verify_candidates
+from .ocr import _ocr_rapid_lines
 from .pipeline import identify_rectified_bytes
+from .retrieve import get_index
+from .slab_label import parse_label, resolve_label
 from .tcg_lookup import resolve_card
 from .verify_grid import create_verification_grid
 
@@ -37,7 +45,7 @@ def _with_official_art(identity: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     """Attach imageUrl without a network round-trip when setCode+number exist."""
     if not identity:
         return None
-    if identity.get("imageUrl"):
+    if identity.get("imageUrl") or identity.get("outOfCatalog"):
         return identity
     url = pokemontcg_hires_url(identity.get("setCode"), identity.get("number"))
     if not url:
@@ -127,6 +135,181 @@ class LotResult:
         }
 
 
+# A PSA label is ~3.4:1; a card on its side is only ~1.4:1, so wider boxes are labels.
+_LABEL_ASPECT = 1.4
+# Label sits directly above the card window inside the slab, within ~0.45 card heights.
+_LABEL_REACH = 0.45
+# Strip OCR costs ~0.2 s per card, so only spend it on slab-style photos with few cards.
+_MAX_STRIP_READS = 6
+
+
+def _read_text(image_bgr: np.ndarray, box) -> List[str]:
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    region = image_bgr[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+    if region.size == 0:
+        return []
+    return _ocr_rapid_lines(region)
+
+
+def _catalog_meta() -> List[Dict[str, Any]]:
+    index = get_index()
+    index.load()
+    return index.meta
+
+
+@lru_cache(maxsize=4)
+def _read_set_years(path: str, _mtime_ns: int) -> Dict[str, int]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _catalog_set_years() -> Dict[str, int]:
+    path = get_index().catalog_dir / "set_years.json"
+    if not path.is_file():
+        logger.warning("%s missing; slab labels resolve without the year check (run catalog/set_years.py)", path)
+        return {}
+    return _read_set_years(str(path), path.stat().st_mtime_ns)
+
+
+def _is_label_shaped(box) -> bool:
+    x1, y1, x2, y2 = box
+    return (x2 - x1) >= _LABEL_ASPECT * max(1.0, y2 - y1)
+
+
+def _label_above(card_box, labels: List[tuple]) -> Optional[Dict[str, Any]]:
+    x1, y1, x2, y2 = card_box
+    reach = _LABEL_REACH * (y2 - y1)
+    for (lx1, ly1, lx2, ly2), parsed in labels:
+        overlap = min(x2, lx2) - max(x1, lx1)
+        if overlap > 0.5 * min(x2 - x1, lx2 - lx1) and y1 - reach <= ly2 <= y1 + 0.1 * (y2 - y1):
+            return parsed
+    return None
+
+
+def _split_labels(image_bgr: np.ndarray, hits: List[Dict[str, Any]]):
+    cards: List[Dict[str, Any]] = []
+    labels: List[tuple] = []
+    for hit in hits:
+        box = tuple(hit["box"])
+        parsed = parse_label(_read_text(image_bgr, box)) if _is_label_shaped(box) else None
+        if parsed:
+            labels.append((box, parsed))
+        else:
+            cards.append(hit)
+    return cards, labels
+
+
+def _slab_identity(image_bgr: np.ndarray, card_box, labels: List[tuple], read_strip: bool):
+    parsed = _label_above(card_box, labels)
+    if parsed is None and read_strip:
+        x1, y1, x2, y2 = card_box
+        strip = (x1, max(0.0, y1 - _LABEL_REACH * (y2 - y1)), x2, y1)
+        parsed = parse_label(_read_text(image_bgr, strip))
+    if parsed is None:
+        return None
+    resolved = resolve_label(parsed, _catalog_meta(), _catalog_set_years())
+    if resolved is not None:
+        return resolved
+    if parsed.get("grade") or parsed.get("cert"):
+        return {"grade": parsed.get("grade"), "cert": parsed.get("cert"), "gradingCompany": "PSA", "gradingOnly": True}
+    return None
+
+
+def _merge_slab_identity(identity, id_result, slab):
+    """Keep a verified visual id when the label is not a catalog card, and attach its grade."""
+    if not slab:
+        return identity, id_result
+    grading = {key: slab.get(key) for key in ("grade", "cert", "gradingCompany") if slab.get(key) is not None}
+    verified = identity is not None and not id_result.get("abstain", True)
+    out_of_catalog = bool(
+        slab.get("gradingOnly") or slab.get("outOfCatalog") or str(slab.get("productId") or "").startswith("label:")
+    )
+    if out_of_catalog and verified:
+        return {**identity, **grading}, id_result
+    if slab.get("gradingOnly") or not slab.get("productId"):
+        return identity, id_result
+    return slab, {**id_result, "reason": "slab-label", "confidence": "high", "abstain": False}
+
+
+# Two cards from one set on a photo is enough to call it the page's set.
+_MIN_SET_SUPPORT = 2
+# Sets above this size (big modern sets, promos) cost too much SIFT per unresolved card.
+_MAX_SET_POOL = 260
+
+
+_NUMBER_CONFIRMED = {"verify-ocr-number", "slab-label", "tcg-api-ocr"}
+# Identical art verifies almost equally well against both prints; a different-art print falls far behind.
+_REPRINT_INLIER_RATIO = 0.8
+
+
+def _decode_crop(crop_b64: str) -> Optional[np.ndarray]:
+    try:
+        raw = base64.b64decode(crop_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR) if raw else None
+
+
+def _same_art(crop: np.ndarray, current: dict, page_print: dict) -> bool:
+    inliers = {h.get("id"): h.get("inliers", 0) for h in verify_candidates(crop, [current, page_print], k=2)}
+    cur, page = inliers.get(current.get("id"), 0), inliers.get(page_print.get("id"), 0)
+    return cur > 0 and page >= _REPRINT_INLIER_RATIO * cur
+
+
+def _identity_of(meta_row: dict) -> Dict[str, Any]:
+    return {
+        "name": meta_row.get("name"), "set": meta_row.get("set"), "setCode": meta_row.get("setCode"),
+        "number": meta_row.get("number"), "productId": meta_row.get("id"), "game": "pokemon",
+    }
+
+
+def _apply_set_context(results: List["CardResult"]) -> None:
+    """Re-verify unresolved cards against every print in the photo's dominant set(s).
+
+    Binder pages are usually sorted by set; once neighbours resolve (e.g. three Fossil cards),
+    the blurry or rotated ones only need to be matched against that set's ~60 prints.
+    """
+    counts = Counter(
+        (r.identity or {}).get("setCode") for r in results
+        if not r.abstain and r.identity and not str(r.identity.get("productId") or "").startswith("label:")
+    )
+    sets = {code for code, n in counts.items() if code and n >= _MIN_SET_SUPPORT}
+    if not sets:
+        return
+    pool = [m for m in _catalog_meta() if m.get("setCode") in sets and not is_digital_only(m.get("id"))]
+    if not pool or len(pool) > _MAX_SET_POOL:
+        return
+    by_name: Dict[str, List[dict]] = {}
+    for m in pool:
+        by_name.setdefault(str(m.get("name") or "").lower(), []).append(m)
+    by_id: Optional[Dict[str, dict]] = None
+    for r in results:
+        # Reprints (Fossil → Legendary Collection) share art, so features cannot split them; the page can.
+        if r.abstain or not r.identity or r.identity.get("setCode") in sets or r.reason in _NUMBER_CONFIRMED:
+            continue
+        same = by_name.get(str(r.identity.get("name") or "").lower(), [])
+        if len(same) != 1:
+            continue
+        if by_id is None:
+            by_id = {m.get("id"): m for m in _catalog_meta()}
+        current = by_id.get(r.identity.get("productId"))
+        crop = _decode_crop(r.crop_b64) if r.crop_b64 else None
+        if current is None or crop is None or not _same_art(crop, current, same[0]):
+            continue
+        r.identity = _with_official_art(_identity_of(same[0]))
+        r.confidence, r.reason = "medium", "set-context-reprint"
+    for r in results:
+        if not r.abstain or not r.crop_b64:
+            continue
+        crop = _decode_crop(r.crop_b64)
+        if crop is None:
+            continue
+        ranked = verify_candidates(crop, pool, k=len(pool))
+        if not accept_verified(ranked):
+            continue
+        r.identity = _with_official_art(_identity_of(ranked[0]))
+        r.confidence, r.abstain, r.reason = "medium", False, "set-context-verify"
+
+
 def identify_all_from_bytes(
     image_bytes: bytes,
     source_image: str = "",
@@ -137,7 +320,8 @@ def identify_all_from_bytes(
     if image_bgr is None:
         return []
 
-    hits = detect_all_cards_with_crops(image_bgr)
+    hits, labels = _split_labels(image_bgr, detect_all_cards_with_crops(image_bgr))
+    read_strips = len(hits) <= _MAX_STRIP_READS
     results: List[CardResult] = []
 
     for hit in hits:
@@ -184,6 +368,9 @@ def identify_all_from_bytes(
                         "abstain": False,
                     }
 
+        slab = _slab_identity(image_bgr, tuple(hit["box"]), labels, read_strips)
+        identity, id_result = _merge_slab_identity(identity, id_result, slab)
+
         identity = _with_official_art(identity)
 
         results.append(CardResult(
@@ -197,6 +384,7 @@ def identify_all_from_bytes(
             crop_b64=crop_b64,
         ))
 
+    _apply_set_context(results)
     return results
 
 

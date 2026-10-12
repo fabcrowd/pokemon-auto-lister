@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 
-import { createQueue } from '../src/queue/queue.js';
 import { createServer } from '../src/server.js';
 import { createPokegradeCircuit } from '../src/pokegrade/circuit.js';
 
@@ -58,10 +57,9 @@ test('GET /api/identity-status and circuit reset', async () => {
   process.env.SCANNER_IDENTITY_MODE = 'local-only';
   process.env.VELLUM_AI_ENABLED = 'true';
   try {
-    const queue = createQueue(dir);
     const circuit = createPokegradeCircuit({ dataDir: dir, ttlHours: 1 });
     circuit.open('quota-test');
-    const server = createServer({ queue, dataDir: dir, pokegradeCircuit: circuit });
+    const server = createServer({ dataDir: dir, pokegradeCircuit: circuit });
     const port = await listen(server);
     const status = await getJson(port, '/api/identity-status');
     assert.equal(status.status, 200);

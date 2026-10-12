@@ -4,6 +4,8 @@ A systematic plan to take the current YOLO11n card detector from "works on clean
 
 This document is executable. Each phase has entry criteria, exact commands, validation, and rollback.
 
+**Status:** proposed plan; not ready to execute. The pre-work gaps below are documented blockers. Recheck their existence and the generated extension's tracked source/build path before starting a phase. This plan is separate from the completed work recorded in `HANDOFF.md` and `tasks/todo.md`.
+
 ---
 
 ## 0. What already exists (don't reinvent)

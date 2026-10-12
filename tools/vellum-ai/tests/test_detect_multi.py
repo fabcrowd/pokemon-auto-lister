@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from pathlib import Path
 from typing import List, Tuple
 
@@ -23,9 +25,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["VELLUM_AI_DETECT_ONNX"] = "/nonexistent/model.onnx"
 
 from vellum_ai.detect_multi import (  # noqa: E402
+    _load_onnx_session,
     _contour_multi,
     _quad_iou,
     _score_quad_multi,
+    _score_quad_partial,
+    _split_merged_boxes,
+    _supplement_with_contour,
+    detect_all_cards_with_crops,
 )
 
 
@@ -35,6 +42,23 @@ from vellum_ai.detect_multi import (  # noqa: E402
 
 CARD_W = 130  # pixels for a card on the test canvas
 CARD_H = 182  # ≈ CARD_W / (63/88) → aspect ~1.4, well within 1.15–1.85
+
+
+class TestOnnxSessionCache(unittest.TestCase):
+    def test_reuses_session_for_same_model_revision(self) -> None:
+        _load_onnx_session.cache_clear()
+        session = object()
+        create_session = Mock(return_value=session)
+        fake_onnxruntime = SimpleNamespace(InferenceSession=create_session)
+        try:
+            with patch.dict(sys.modules, {"onnxruntime": fake_onnxruntime}):
+                first = _load_onnx_session("model.onnx", 1)
+                second = _load_onnx_session("model.onnx", 1)
+            self.assertIs(first, session)
+            self.assertIs(second, session)
+            create_session.assert_called_once_with("model.onnx", providers=["CPUExecutionProvider"])
+        finally:
+            _load_onnx_session.cache_clear()
 
 
 def _card_image(w: int = CARD_W, h: int = CARD_H) -> np.ndarray:
@@ -131,6 +155,24 @@ class TestScoreQuadArea(unittest.TestCase):
         image_area = 410.0 * 570.0
         score = _score_quad_multi(pts, image_area)
         self.assertLess(score, 0.0)
+
+    def test_partial_path_also_rejects_a_full_frame(self) -> None:
+        pts = np.float32([[0, 0], [400, 0], [400, 560], [0, 560]])
+        image_area = 410.0 * 570.0
+        self.assertLess(_score_quad_partial(pts, image_area), 0.0)
+
+
+class TestListingFixtureContours(unittest.TestCase):
+    def test_each_fixture_lot_detects_its_three_cards(self) -> None:
+        root = Path(__file__).resolve().parents[3] / "data" / "detect-marketplace" / "hibid"
+        present = [root / f"hibid_card_lot_{i:02d}" / "lot_image.jpg" for i in range(1, 11)]
+        present = [path for path in present if path.is_file()]
+        if not present:
+            self.skipTest("listing fixtures are not on disk")
+        for path in present:
+            frame = cv2.imread(str(path))
+            hits = _contour_multi(frame)
+            self.assertEqual(len(hits), 3, f"{path.parent.name}: {[hit['box'] for hit in hits]}")
 
 
 class TestSingleCardDetection(unittest.TestCase):
@@ -445,6 +487,88 @@ class TestPartialCardDetection(unittest.TestCase):
             len(hits), 1,
             f"Quarter-card at top edge not detected: {[h['box'] for h in hits]}",
         )
+
+
+def _box(x: float, y: float, w: float, h: float) -> dict:
+    return {"box": (x, y, x + w, y + h), "source": "contour"}
+
+
+class TestSplitMergedBoxes(unittest.TestCase):
+    def test_double_wide_blob_splits_when_the_grid_agrees(self) -> None:
+        cards = [_box(col * 110, row * 150, 100, 140) for row in range(2) for col in range(4)]
+        cards.append(_box(440, 0, 200, 140))
+        split = _split_merged_boxes(cards)
+        self.assertEqual(len(split), 10)
+
+    def test_odd_fragments_are_not_split(self) -> None:
+        fragments = [_box(0, 0, 40, 80), _box(0, 200, 180, 90), _box(300, 0, 360, 200)]
+        self.assertEqual(len(_split_merged_boxes(fragments)), 3)
+
+    def test_contour_grid_beats_one_odd_onnx_box(self) -> None:
+        onnx = [_box(0, 0, 30, 40)]
+        grid = [_box(col * 110, 0, 100, 140) for col in range(6)]
+        merged = _supplement_with_contour(onnx, grid, 800, 600)
+        self.assertEqual(len(merged), 6)
+
+
+class TestPublicDetectCrops(unittest.TestCase):
+    def test_two_cards_come_back_as_crops(self) -> None:
+        canvas = _canvas_with_cards([(60, 249), (710, 249)])
+        hits = detect_all_cards_with_crops(canvas)
+        self.assertGreaterEqual(len(hits), 2)
+        self.assertTrue(all(hit["crop_b64"] for hit in hits))
+
+
+class TestGoodwillMultiCardPhotos(unittest.TestCase):
+    """Shipped detector on real ShopGoodwill lots that show several cards.
+
+    Front grids were already split. Card backs were not: a few ONNX boxes
+    blocked the contour pass, or one full-frame box replaced the grid.
+    """
+
+    _EXPECTED = {
+        "279630564/00.jpg": 15,  # fronts
+        "279630487/00.jpg": 16,
+        "279630443/00.jpg": 16,
+        "279630564/04.jpg": 4,   # four full cards; edge slivers are not cards
+        "279630487/04.jpg": 4,
+        "279630564/05.jpg": 2,   # two cards shot sideways
+        "279630564/06.jpg": 0,   # corner close-up, not a selectable card
+        "279630564/07.jpg": 15,  # backs
+        "279630564/10.jpg": 4,
+        "279630487/06.jpg": 16,
+        "279630443/07.jpg": 16,
+    }
+
+    def test_each_lot_photo_finds_its_cards(self) -> None:
+        root = Path(__file__).resolve().parents[3] / "data" / "detect-marketplace" / "goodwill"
+        missing = [name for name in self._EXPECTED if not (root / name).is_file()]
+        if missing:
+            self.skipTest("goodwill photos are not on disk")
+        model = Path(__file__).resolve().parents[1] / "models" / "card_detect.onnx"
+        if not model.is_file():
+            self.skipTest("card_detect.onnx is not on disk")
+
+        from vellum_ai.detect_multi import detect_all_cards_with_crops
+
+        previous = os.environ.pop("VELLUM_AI_DETECT_ONNX", None)
+        try:
+            for name, expected in self._EXPECTED.items():
+                frame = cv2.imread(str(root / name))
+                self.assertIsNotNone(frame, name)
+                hits = detect_all_cards_with_crops(frame)
+                height, width = frame.shape[:2]
+                for hit in hits:
+                    x1, y1, x2, y2 = hit["box"]
+                    box_w, box_h = x2 - x1, y2 - y1
+                    ratio = max(box_w, box_h) / max(1.0, min(box_w, box_h))
+                    frac = (box_w * box_h) / (width * height)
+                    self.assertLessEqual(ratio, 2.2, f"{name} sliver {hit['box']}")
+                    self.assertLessEqual(frac, 0.50, f"{name} full-frame {hit['box']}")
+                self.assertEqual(len(hits), expected, name)
+        finally:
+            if previous is not None:
+                os.environ["VELLUM_AI_DETECT_ONNX"] = previous
 
 
 if __name__ == "__main__":

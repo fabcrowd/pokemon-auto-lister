@@ -2,6 +2,8 @@
  * pokemontcg.io free API — returns TCGPlayer USD + CardMarket EUR prices in one call.
  * https://docs.pokemontcg.io — free tier: 1000 req/day; set POKEMON_TCG_API_KEY for higher limits.
  */
+import { setTimeout as sleep } from 'node:timers/promises';
+
 const DEFAULT_BASE = 'https://api.pokemontcg.io/v2';
 const TTL_MS = 4 * 60 * 60 * 1000; // 4h — prices update daily
 
@@ -12,6 +14,30 @@ function identityCacheKey(identity) {
 function normalizeNumber(value) {
   if (value == null) return '';
   return String(value).split('/')[0].trim().replace(/^0+/, '').toLowerCase();
+}
+
+function normalizeName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * pokemontcg.io ids for a TCGdex catalog id: sv03.5-071 → sv3pt5-71, svp-078 → svp-78,
+ * swsh12.5gg-GG04 → swsh12pt5gg-GG04 (same mapping that recovered catalog art).
+ */
+export function pokemontcgIdCandidates(catalogId) {
+  const m = /^([A-Za-z0-9.]+)-([A-Za-z0-9]+)$/.exec(String(catalogId || ''));
+  if (!m) return [];
+  const [, set, number] = m;
+  const sets = [set, set.replace(/\./g, ''), set.replace('.5', 'pt5')];
+  const allSets = [...sets, ...sets.map((f) => f.replace(/([a-z])0+(\d)/, '$1$2'))];
+  const numbers = [number, number.replace(/^([A-Za-z]*)0+(\d)/, '$1$2')];
+  const out = [];
+  for (const sid of allSets) for (const num of numbers) out.push(`${sid}-${num}`);
+  return [...new Set(out)];
 }
 
 function scoreMatch(card, identity) {
@@ -37,21 +63,28 @@ function scoreMatch(card, identity) {
   return score;
 }
 
-function extractTcgplayerUsd(card) {
+function rowUsd(row) {
+  if (typeof row?.market === 'number' && row.market > 0) return row.market;
+  if (typeof row?.mid === 'number' && row.mid > 0) return row.mid;
+  return null;
+}
+
+function extractTcgplayerQuote(card) {
   const prices = card?.tcgplayer?.prices;
   if (!prices || typeof prices !== 'object') return null;
-  const prefer = ['holofoil', 'normal', 'reverseHolofoil', 'unlimited', '1stEdition'];
-  for (const key of prefer) {
-    const row = prices[key];
-    if (!row) continue;
-    if (typeof row.market === 'number' && row.market > 0) return row.market;
-    if (typeof row.mid === 'number' && row.mid > 0) return row.mid;
+  const prefer = ['holofoil', 'normal', 'reverseHolofoil', 'unlimitedHolofoil', 'unlimited', '1stEditionHolofoil', '1stEdition'];
+  const variants = {};
+  for (const [key, row] of Object.entries(prices)) {
+    const price = rowUsd(row);
+    if (price != null) variants[key] = price;
   }
-  // Fall back to any variant with a market price
-  for (const row of Object.values(prices)) {
-    if (typeof row?.market === 'number' && row.market > 0) return row.market;
-  }
-  return null;
+  const printing = prefer.find((key) => variants[key] != null) || Object.keys(variants)[0];
+  if (!printing) return null;
+  return { price: variants[printing], printing, variants };
+}
+
+function extractTcgplayerUsd(card) {
+  return extractTcgplayerQuote(card)?.price ?? null;
 }
 
 function extractCardmarketEur(card) {
@@ -68,6 +101,7 @@ export function createPokemonTcgApiClient({
   apiKey = process.env.POKEMON_TCG_API_KEY,
   baseUrl = process.env.POKEMON_TCG_API_URL || DEFAULT_BASE,
   fetchImpl = fetch,
+  retryDelayMs = 2000,
 } = {}) {
   const cache = new Map();
 
@@ -92,7 +126,14 @@ export function createPokemonTcgApiClient({
       if (value != null && value !== '') url.searchParams.set(key, String(value));
     }
     const headers = apiKey ? { 'X-Api-Key': apiKey } : {};
-    const response = await fetchImpl(url, { headers });
+    // The keyless tier returns sporadic 500s that succeed on retry.
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt) await sleep(retryDelayMs * attempt);
+      response = await fetchImpl(url, { headers });
+      if (response.status < 500) break;
+    }
+    if (response.status === 404) return null;
     if (!response.ok) throw new Error(`pokemontcg.io ${pathname} failed: ${response.status}`);
     return response.json();
   }
@@ -135,7 +176,16 @@ export function createPokemonTcgApiClient({
       if (identity.pokemontcgId) {
         card = await getCardById(identity.pokemontcgId);
       }
-      if (!card) {
+      // Catalog identities carry the TCGdex id; the exact card beats a name/set search.
+      for (const candidate of card ? [] : pokemontcgIdCandidates(identity.productId)) {
+        const hit = await getCardById(candidate);
+        if (hit && normalizeName(hit.name) === normalizeName(identity.name)) {
+          card = hit;
+          break;
+        }
+      }
+      // A valid catalog id that misses must not degrade to a name search (Pikachu has 100+ prints).
+      if (!card && pokemontcgIdCandidates(identity.productId).length === 0) {
         card = await searchCard(identity);
       }
       if (!card) {
@@ -143,7 +193,8 @@ export function createPokemonTcgApiClient({
         return null;
       }
 
-      const tcgUsd = extractTcgplayerUsd(card);
+      const tcgQuote = extractTcgplayerQuote(card);
+      const tcgUsd = tcgQuote?.price ?? null;
       const cmEur = extractCardmarketEur(card);
 
       if (tcgUsd == null && cmEur == null) {
@@ -157,7 +208,13 @@ export function createPokemonTcgApiClient({
         name: card.name ?? null,
         set: card.set?.name ?? null,
         number: card.number ?? null,
-        tcgplayer: tcgUsd != null ? { market: Math.round(tcgUsd * 100) / 100, mid: null, currency: 'USD' } : null,
+        tcgplayer: tcgUsd != null ? {
+          market: Math.round(tcgUsd * 100) / 100,
+          mid: null,
+          currency: 'USD',
+          printing: tcgQuote.printing,
+          variants: tcgQuote.variants,
+        } : null,
         cardmarket: cmEur,
       };
 
