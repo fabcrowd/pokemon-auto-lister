@@ -51,9 +51,24 @@ def _features(image_bgr: np.ndarray):
     return _sift.detectAndCompute(gray, None)
 
 
-@lru_cache(maxsize=4096)
 def _catalog_features(images_dir: str, card_id: str):
-    # backfill_coverage saves pokemontcg.io fallbacks as .png when TCGdex has no webp.
+    """SIFT features for one catalog image. A missing file is not cached."""
+    found = None
+    mtime = 0
+    for ext in (".webp", ".png"):
+        path = Path(images_dir) / f"{card_id}{ext}"
+        if not path.is_file():
+            continue
+        found = path
+        mtime = path.stat().st_mtime_ns
+        break
+    if found is None:
+        return None, None
+    return _catalog_features_cached(images_dir, card_id, mtime)
+
+
+@lru_cache(maxsize=512)
+def _catalog_features_cached(images_dir: str, card_id: str, _mtime: int):
     image = None
     for ext in (".webp", ".png"):
         path = Path(images_dir) / f"{card_id}{ext}"

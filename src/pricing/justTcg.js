@@ -122,6 +122,8 @@ function isSameCard(card, identity) {
   // Containment is only safe once the number pins the card ("Mew" would otherwise accept "Mewtwo").
   const namesAgree = got === want || (Boolean(identity.number) && (got.includes(want) || want.includes(got)));
   if (!namesAgree) return false;
+  // A name alone matches dozens of printings; require a number or a set before accepting.
+  if (!identity.number && !identity.set) return false;
   if (identity.number && normalizeNumber(identity.number) !== normalizeNumber(card.number)) return false;
   if (identity.set && !sameSetName(justTcgSetName(identity), card.set?.name || card.set_name)) return false;
   return true;
@@ -188,6 +190,7 @@ export function createJustTcgClient({
   baseUrl = process.env.JUSTTCG_API_URL || DEFAULT_BASE,
   v2BaseUrl = process.env.JUSTTCG_API_V2_URL || DEFAULT_V2_BASE,
   fetchImpl = fetch,
+  timeoutMs = 10_000,
 } = {}) {
   const priceCache = new Map();
 
@@ -204,6 +207,7 @@ export function createJustTcgClient({
     }
     const response = await fetchImpl(url, {
       headers: { 'x-api-key': apiKey },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       throw new Error(`JustTCG ${pathname} failed: ${response.status}`);
@@ -336,6 +340,7 @@ export function extractPriceGrid(card) {
   const graded = {};
 
   for (const v of card?.variants || []) {
+    if (String(v.language || 'English').toLowerCase() !== 'english') continue;
     const price = pickUsdPrice(v);
     if (price == null || !(price > 0)) continue;
 
@@ -345,7 +350,7 @@ export function extractPriceGrid(card) {
       const gradeNm = String(v.grading?.grade   || v.grade          || '').trim();
       if (!gradeNm) continue;
       graded[grader] = graded[grader] || {};
-      graded[grader][gradeNm] = Math.round(price * 100) / 100;
+      if (graded[grader][gradeNm] == null) graded[grader][gradeNm] = Math.round(price * 100) / 100;
       continue;
     }
 
@@ -353,7 +358,9 @@ export function extractPriceGrid(card) {
     const condition = normalizeCondition(v.condition);
     if (!condition) continue;
     rawByPrinting[printing] = rawByPrinting[printing] || { NM: null, LP: null, MP: null, HP: null, DMG: null };
-    rawByPrinting[printing][condition] = Math.round(price * 100) / 100;
+    if (rawByPrinting[printing][condition] == null) {
+      rawByPrinting[printing][condition] = Math.round(price * 100) / 100;
+    }
   }
 
   return { variants: rawByPrinting, graded };
@@ -369,24 +376,19 @@ export function attachPriceGrid(client) {
 
   client.getPriceGrid = async function getPriceGrid(identity) {
     if (!identity?.name) return null;
-    try {
-      const cards = await client.searchCards(identity);
-      if (!cards.length) return null;
-      const best = bestMatch(cards, identity);
-      if (!best) return null;
-      const grid = extractPriceGrid(best);
-      return {
-        source: 'justtcg',
-        name:   best.name,
-        set:    best.set?.name || best.set_name || null,
-        number: best.number ?? null,
-        variants: grid.variants,
-        graded:   grid.graded,
-      };
-    } catch (err) {
-      console.error('JustTCG price-grid lookup failed:', err.message);
-      return null;
-    }
+    const cards = await client.searchCards(identity);
+    if (!cards.length) return null;
+    const best = bestMatch(cards, identity);
+    if (!best) return null;
+    const grid = extractPriceGrid(best);
+    return {
+      source: 'justtcg',
+      name:   best.name,
+      set:    best.set?.name || best.set_name || null,
+      number: best.number ?? null,
+      variants: grid.variants,
+      graded:   grid.graded,
+    };
   };
   return client;
 }

@@ -12,7 +12,7 @@ try {
 }
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset } from "./lib/setup.js";
-import { loadDetector, detectCards, setConfThreshold } from "./lib/detect.js";
+import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
 import { filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
@@ -23,6 +23,8 @@ import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readCardNumber } from "./lib/ocr.js";
 import { setSizes, printingByNumber }  from "./lib/card-number.js";
+import { publicHttpsUrl }              from "./lib/net.js";
+import { FIRST_EDITION_MIN_SCORE, grayFromRgba, hasFirstEdition, stampScore } from "./lib/edition-stamp.js";
 import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
@@ -350,7 +352,14 @@ async function handleScanPage(sendResponse, era) {
     const domCards = domResp?.cards || [];
     console.log("[BG] DOM finder returned", domCards.length, "card-shaped images");
 
-    // Capture viewport once; we'll crop each DOM rect from it.
+    // The tab may have changed while the content script was answering. Capturing now would
+    // crop one page's boxes out of another page's pixels.
+    const freshTab = await chrome.tabs.get(targetTab.id).catch(() => null);
+    if (!freshTab?.active || freshTab.windowId !== targetTab.windowId) {
+      sendResponse({ error: "That tab is no longer in front. Scan again." });
+      return;
+    }
+    targetTab = freshTab;
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
     const b64 = dataUrl.split(",")[1];
     const bitmap = await b64ToBitmap(b64);
@@ -394,12 +403,13 @@ async function handleScanPage(sendResponse, era) {
         if (!photoBitmap) {
           photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
         }
+        const previousThreshold = getConfThreshold();
         setConfThreshold(0.12);
         let detectedBoxes;
         try {
           detectedBoxes = await detectCards(photoBitmap);
         } finally {
-          setConfThreshold(0.25);
+          setConfThreshold(previousThreshold);
         }
         const imageW = photoBitmap.width;
         const imageH = photoBitmap.height;
@@ -484,7 +494,7 @@ async function handleScanPage(sendResponse, era) {
     const srcWidth  = domResp.viewportWidth  || Math.round(bitmap.width  / dpr);
     const srcHeight = domResp.viewportHeight || Math.round(bitmap.height / dpr);
     bitmap.close();
-    await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight });
+    await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight }, targetTab.id);
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
@@ -534,7 +544,8 @@ async function handleDetect(imageB64, sendResponse) {
 
 // ─── tab relay ───────────────────────────────────────────────────────────────
 
-async function relayToTab(msg) {
+async function relayToTab(msg, tabId = null) {
+  if (tabId != null) _setTargetTabId(tabId);
   if (_targetTabId === null) {
     const tabs = await chrome.tabs.query({ active: true }).catch(() => []);
     const candidate = tabs.find(t => !_isInternalUrl(t.url) && t.windowId !== _popupWinId);
@@ -563,11 +574,44 @@ function _photoKey(entry) {
 
 // ─── pricing resolver ────────────────────────────────────────────────────────
 
+// Source pixels of card height; below this the stamp is a few blurry pixels.
+const STAMP_MIN_HEIGHT = 400;
+const STAMP_CARD_W = 375;
+const STAMP_CARD_H = 525;
+
+/**
+ * Recognize one card, then look for the 1st Edition stamp when its set (or any set
+ * the user may pick) was printed in 1st Edition. `firstEdition` stays unset otherwise.
+ * A stamp rules out the set choices that never had a 1st Edition.
+ */
+async function identifyCard(cardCanvas, era = null, sourceHeight = 0) {
+  const result = await recognizeCard(cardCanvas, era, sourceHeight);
+  const setCodes = result.setChoices ? result.setChoices.map((c) => c.setCode) : [result.identity?.setCode];
+  if (sourceHeight < STAMP_MIN_HEIGHT || !setCodes.some(hasFirstEdition)) return result;
+  result.firstEdition = hasFirstEditionStamp(cardCanvas);
+  if (!result.firstEdition || !result.setChoices) return result;
+  const stamped = result.setChoices.filter((c) => hasFirstEdition(c.setCode));
+  if (stamped.length !== 1) return { ...result, setChoices: stamped.length ? stamped : result.setChoices };
+  const identity = catalogCard(stamped[0].id);
+  if (!identity) return { ...result, setChoices: stamped };
+  return { ...result, identity, setChoices: undefined, ...(await priceIdentity(identity)) };
+}
+
+function hasFirstEditionStamp(cardCanvas) {
+  const small = new OffscreenCanvas(STAMP_CARD_W, STAMP_CARD_H);
+  const ctx = small.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(cardCanvas, 0, 0, STAMP_CARD_W, STAMP_CARD_H);
+  const { data } = ctx.getImageData(0, 0, STAMP_CARD_W, STAMP_CARD_H);
+  const score = stampScore(grayFromRgba(data, STAMP_CARD_W, STAMP_CARD_H), STAMP_CARD_W, STAMP_CARD_H);
+  console.log("[BG] 1st Edition stamp", score.toFixed(3));
+  return score >= FIRST_EDITION_MIN_SCORE;
+}
+
 /**
  * Recognize one rectified card. When close matches come from more than one set,
  * the card is not priced: the user picks the set and the popup asks "priceCard".
  */
-async function identifyCard(cardCanvas, era = null, sourceHeight = 0) {
+async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
   const embedding = await embedCard(cardCanvas);
   const hits = physicalHits(searchCatalog(embedding, 20), _meta);
   if (isCardBack(embedding, hits[0]?.score ?? 0)) {
@@ -673,11 +717,15 @@ async function priceIdentity(identity) {
 }
 
 let _metaById = null;
+function catalogCard(id) {
+  _metaById ??= new Map(_meta.map((card) => [card.id, card]));
+  return _metaById.get(id);
+}
+
 async function handlePriceCard(id, sendResponse) {
   if (!(await _ensureReady(sendResponse))) return;
   try {
-    if (!_metaById) _metaById = new Map(_meta.map((card) => [card.id, card]));
-    const identity = _metaById.get(id);
+    const identity = catalogCard(id);
     if (!identity) {
       sendResponse({ error: "That card isn't in the catalog." });
       return;
@@ -716,16 +764,20 @@ async function b64ToBitmap(b64) {
 }
 
 async function loadPhotoSource(rawUrl) {
-  if (!rawUrl) return null;
-  let url;
-  try { url = new URL(rawUrl); } catch { return null; }
-  if (url.protocol !== "https:" || url.username || url.password || isPrivateHost(url.hostname)) return null;
+  let current = publicHttpsUrl(rawUrl);
+  if (!current) return null;
   try {
-    const response = await fetch(url.href, { credentials: "omit", redirect: "follow", cache: "force-cache" });
-    let finalUrl;
-    try { finalUrl = new URL(response.url); } catch { return null; }
-    if (finalUrl.protocol !== "https:" || finalUrl.username || finalUrl.password || isPrivateHost(finalUrl.hostname)) return null;
-    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return null;
+    let response;
+    for (let hop = 0; hop < 4; hop++) {
+      response = await fetch(current.href, { credentials: "omit", redirect: "manual", cache: "force-cache" });
+      if (response.type === "opaqueredirect") return null;
+      if (response.status < 300 || response.status >= 400) break;
+      const next = publicHttpsUrl(response.headers.get("location") || "", current);
+      if (!next) return null;
+      current = next;
+      response = null;
+    }
+    if (!response?.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return null;
     const declaredSize = Number(response.headers.get("content-length")) || 0;
     if (declaredSize > 20 * 1024 * 1024) return null;
     const blob = await response.blob();
@@ -740,12 +792,4 @@ async function loadPhotoSource(rawUrl) {
     // Cross-origin sources without CORS access use the already captured viewport crop.
     return null;
   }
-}
-
-function isPrivateHost(host) {
-  const value = host.toLowerCase().replace(/^\[|\]$/g, "");
-  return value === "localhost" || value === "::1" || value === "0.0.0.0" ||
-    value.endsWith(".local") || value.endsWith(".internal") || /^(fc|fd|fe80):/.test(value) ||
-    /^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) ||
-    /^169\.254\./.test(value) || /^172\.(1[6-9]|2\d|3[01])\./.test(value);
 }

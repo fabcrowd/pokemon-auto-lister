@@ -58,3 +58,16 @@ test('getPrices does not fall back to a name search when the exact catalog card 
   assert.equal(await client.getPrices({ name: 'Pikachu', set: '151', number: '025', productId: 'sv03.5-025' }), null);
   assert.ok(calls.every((url) => !url.includes('q=')), 'no search query');
 });
+
+test('a name search sends the collector number and escapes quotes', async () => {
+  let query = '';
+  const fetchImpl = async (url) => {
+    query = new URL(String(url)).searchParams.get('q') || '';
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  const client = createPokemonTcgApiClient({ fetchImpl, retryDelayMs: 0 });
+  await client.getPrices({ name: 'Say "Hi"', number: '001' });
+  assert.match(query, /name:"Say \\"Hi\\""/);
+  assert.match(query, /number:1(?!\d)/);
+  assert.doesNotMatch(query, /001/);
+});

@@ -115,7 +115,10 @@ def _identify_rectified(rectified: np.ndarray) -> Dict[str, Any]:
         named = [h for h in get_name_index().candidates(read_name_lines(rectified)) if h.get("id") not in seen]
         if named:
             number = run_ocr(rectified).get("number")
-            ranked_named = _rank_name_prints(named, number, retrieved)[:_MAX_NAME_PRINTS]
+            ranked_named = _rank_name_prints(named, number, retrieved)
+            # With no number and no CLIP score every print ties, so the cap would drop the true one.
+            if number:
+                ranked_named = ranked_named[:_MAX_NAME_PRINTS]
             by_name = verify_candidates(rectified, ranked_named, k=_MAX_NAME_PRINTS)
             verified = sorted(verified + by_name, key=lambda h: h["inliers"], reverse=True)
             if verified and verified[0].get("id") in {h.get("id") for h in by_name}:

@@ -200,7 +200,10 @@ export async function scanAndPrice({
   const cardmarketResult = null;
   // TCGdex falls back to Cardmarket EUR × ECB rate for subsets TCGplayer data lacks. EU prices ran
   // 3-90% off US ones on Trainer/Galarian Gallery cards, so it only counts when nothing US-based exists.
-  const hasUsMarket = [tcgplayerResult, justtcgResult, pokemontcgapiResult?.tcgplayer].some((r) => r?.market > 0);
+  const hasUsMarket =
+    [tcgplayerResult, justtcgResult, pokemontcgapiResult?.tcgplayer, pokewalletResult, collectrResult].some((r) => r?.market > 0) ||
+    ebayResult?.median > 0 ||
+    pokegradeResult?.value > 0;
   const tcgdexComp = tcgdexResult?.basis === 'cardmarket-eur' && hasUsMarket ? null : tcgdexResult;
   const pokemontcgapiTcg = pokemontcgapiResult?.tcgplayer
     ? { ...pokemontcgapiResult.tcgplayer, source: 'pokemontcg-io', name: pokemontcgapiResult.name }
@@ -225,6 +228,10 @@ export async function scanAndPrice({
 
   let action = decision.action;
   let reason = decision.reason;
+  if (action === 'auto' && pokegradeResult?.confidence === 'low') {
+    action = 'needs_review';
+    reason = 'low PokeGrade confidence';
+  }
   if (samePrinting.ambiguous) {
     action = 'needs_review';
     reason = 'printing ambiguous';
@@ -250,6 +257,7 @@ export async function scanAndPrice({
     identityConflict: resolveResult.identityConflict,
     comps: decision.comps,
     suggested: decision.suggested,
+    market: decision.market,
     reason,
     action,
     grading: pokegradeResult?.grading ?? resolveResult.vellum?.grading ?? null,

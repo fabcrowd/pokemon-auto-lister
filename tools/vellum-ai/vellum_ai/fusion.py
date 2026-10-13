@@ -6,6 +6,10 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
+PREFIX_NUMBER_RE = re.compile(
+    r"\b([A-Z]{2,4})(\d{1,3})\s*/\s*([A-Z]{2,4})(\d{1,3})\b", re.I,
+)
+PROMO_NUMBER_RE = re.compile(r"\b((?:SWSH|SVP)\d{2,3})\b", re.I)
 NUMBER_RE = re.compile(r"(?<!\d)(\d{1,3})\s*/\s*(\d{1,3})(?!\d)")
 # OCR often glues set/lang onto the number: POREW091/088☆ or CRIEN 088/086
 NUMBER_GLUED_RE = re.compile(r"(?:POR|CRI|MEG|SV[I]?|TEF|TWM|PAL|OBF)?\s*(?:EN|EW|E|J)?\s*(\d{2,3})\s*/\s*(\d{2,3})", re.I)
@@ -44,17 +48,26 @@ def parse_ocr_text(text: str) -> Dict[str, Optional[str]]:
     )
     number = None
     total = None
-    match = (
-        NUMBER_RE.search(cleaned)
-        or NUMBER_GLUED_RE.search(cleaned.replace(" ", ""))
-        or NUMBER_GLUED_RE.search(cleaned)
-        or NUMBER_LOOSE_RE.search(cleaned.replace(" ", ""))
-        or NUMBER_LOOSE_RE.search(cleaned)
-    )
-    if match:
-        left = match.group(1)
-        total = match.group(2)
-        number = left if len(left) >= 2 else (left.lstrip("0") or "0")
+    prefixed = PREFIX_NUMBER_RE.search(cleaned)
+    if prefixed and prefixed.group(1).upper() == prefixed.group(3).upper():
+        number = f"{prefixed.group(1).upper()}{prefixed.group(2)}"
+        total = f"{prefixed.group(3).upper()}{prefixed.group(4)}"
+    else:
+        match = (
+            NUMBER_RE.search(cleaned)
+            or NUMBER_GLUED_RE.search(cleaned.replace(" ", ""))
+            or NUMBER_GLUED_RE.search(cleaned)
+            or NUMBER_LOOSE_RE.search(cleaned.replace(" ", ""))
+            or NUMBER_LOOSE_RE.search(cleaned)
+        )
+        if match:
+            left = match.group(1)
+            total = match.group(2)
+            number = left if len(left) >= 2 else (left.lstrip("0") or "0")
+        else:
+            promo = PROMO_NUMBER_RE.search(cleaned)
+            if promo:
+                number = promo.group(1).upper()
     set_code = None
     upper = cleaned.upper()
     # Prefer explicit set tokens; allow glued OCR like CRIEN / POREW
@@ -66,6 +79,8 @@ def parse_ocr_text(text: str) -> Dict[str, Optional[str]]:
     if not set_code:
         for code in SET_CODE_RE.findall(upper):
             if code in {"HP", "ATK", "WEAK", "RES", "RETREAT", "EN", "EW", "GAME", "MEGA", "ITS"}:
+                continue
+            if re.fullmatch(r"(?:TG|GG|SV|SWSH)\d+", code):
                 continue
             low = code.lower()
             if low in KNOWN_SET_CODES:

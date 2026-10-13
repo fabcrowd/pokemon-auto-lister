@@ -58,6 +58,62 @@ test('a Cardmarket-converted TCGdex price yields to any TCGplayer-based comp', a
   assert.equal(result.comps.pokemontcgapi, 1.34);
 });
 
+test('a Cardmarket-converted TCGdex price yields to eBay and Collectr USD comps', async () => {
+  const tcgdexClient = { getMarketPrice: async () => ({ market: 3.3, source: 'tcgdex', basis: 'cardmarket-eur' }) };
+  const ebaySoldsClient = { getRecentSolds: async () => ({ prices: [3.5], median: 3.5 }) };
+  const collectrClient = { getMarketPrice: async () => ({ market: 3.4 }) };
+  const result = await scanAndPrice({
+    frontImagePath: '/tmp/front.jpg', identityResolver: resolver(), tcgdexClient, ebaySoldsClient, collectrClient,
+  });
+  assert.equal(result.comps.tcgdex, null);
+  assert.equal(result.comps.ebay, 3.5);
+});
+
+test('scanAndPrice reports the unrounded median as market', async () => {
+  const tcgdexClient = { getMarketPrice: async () => ({ market: 0.46, source: 'tcgdex' }) };
+  const pokemonTcgApiClient = { getPrices: async () => ({ name: 'Victreebel', tcgplayer: { market: 0.44, currency: 'USD' } }) };
+  const result = await scanAndPrice({ frontImagePath: '/tmp/front.jpg', identityResolver: resolver(), tcgdexClient, pokemonTcgApiClient });
+  assert.equal(result.market, 0.45);
+});
+
+test('Base Set Charizard with 1st Edition and Unlimited prices waits for a printing choice', async () => {
+  const tcgdexClient = {
+    getMarketPrice: async () => ({
+      market: 450, source: 'tcgdex', printing: 'unlimited-holofoil',
+      variants: { '1st-edition-holofoil': 9000, 'unlimited-holofoil': 450 },
+    }),
+  };
+  const pokemonTcgApiClient = {
+    getPrices: async () => ({ name: 'Charizard', tcgplayer: { market: 460, printing: 'unlimitedHolofoil', variants: { unlimitedHolofoil: 460 } } }),
+  };
+  const opts = { frontImagePath: '/tmp/front.jpg', identityResolver: resolver(), tcgdexClient, pokemonTcgApiClient };
+
+  const unchosen = await scanAndPrice(opts);
+  assert.equal(unchosen.action, 'needs_review');
+  assert.equal(unchosen.reason, 'printing ambiguous');
+  assert.ok(unchosen.printings.includes('1steditionholofoil'));
+
+  const chosen = await scanAndPrice({ ...opts, printing: 'Unlimited Holofoil' });
+  assert.equal(chosen.action, 'auto');
+  assert.equal(chosen.suggested.ebay, 455);
+});
+
+test('low PokeGrade confidence still forces review after the printing filter drops its untagged value', async () => {
+  const pokegrade = { value: 100, confidence: 'low', identity };
+  const identityResolver = {
+    evaluateFrontImage: async () => ({ ...await resolver().evaluateFrontImage(), mode: 'dual', pokegrade }),
+  };
+  const tcgdexClient = { getMarketPrice: async () => ({ market: 100, source: 'tcgdex', printing: 'unlimited-holofoil' }) };
+  const pokemonTcgApiClient = { getPrices: async () => ({ name: 'Victreebel', tcgplayer: { market: 101, printing: 'unlimitedHolofoil' } }) };
+  const justTcgClient = { getMarketPrice: async () => ({ market: 900, source: 'justtcg', printing: '1st Edition Holofoil' }) };
+  const result = await scanAndPrice({
+    frontImagePath: '/tmp/front.jpg', identityResolver, tcgdexClient, pokemonTcgApiClient, justTcgClient, printing: 'Unlimited Holofoil',
+  });
+  assert.equal(result.comps.pokegrade, null);
+  assert.equal(result.action, 'needs_review');
+  assert.equal(result.reason, 'low PokeGrade confidence');
+});
+
 test('a Cardmarket-converted TCGdex price is used when it is the only price', async () => {
   const tcgdexClient = { getMarketPrice: async () => ({ market: 9.83, source: 'tcgdex', basis: 'cardmarket-eur' }) };
   const result = await scanAndPrice({ frontImagePath: '/tmp/front.jpg', identityResolver: resolver(), tcgdexClient });

@@ -168,3 +168,37 @@ Metrics: *find* = detected (IoU ≥ 0.5) and exact catalog id; *price* = find an
 - Blind test v1: find 0.462 → v2 (name path, labels, reprints, letterbox): 0.631 → v3 (upright crop): 0.723. Misses were inspected and fixed against, so this set is now partly tuned on
 - **Fresh blind test2 (never tuned on): find 0.964 (81/84)** with the shipped v4 detector and with v5; detect recall 0.969 (v4) / 1.000 (v5)
 - **test2 price 0.964 (81/84)** via TCGdex: every correctly found card priced as that exact product. TCGdex vs JustTCG on 57 shared ids: median diff 0%, 52/57 within 15% (outliers = 1st Edition vs Unlimited)
+
+# Deep debugging session (2026-10-12)
+
+## Fixed (tests first; Node 294/294, Python 219 OK)
+- [x] `decidePrice` counted string / NaN / 0 comps ('12.50' + 12 gave a $606 auto price). Only finite positive numbers count now.
+- [x] `/detect` showed the whole-dollar Mercari list price as `market_price` ($0.46 card showed $0.00). It now uses the unrounded median `market` from `decidePrice` / `scanAndPrice`.
+- [x] `/detect` never removed `data/detect-tmp/<uuid>` (264 dirs, ~60 MB). Removed in a `finally` now. The old dirs are still on disk.
+- [x] Cardmarket-EUR TCGdex comp was medianed with eBay / Collectr / PokeGrade / PokéWallet USD comps. All US comps now exclude it.
+- [x] eBay sales with a missing price were counted as $0.
+- [x] Dead `isUnclassifiedDetection` removed; CLAUDE.md now describes the real single-card path. `extension-overlay.spec.js` defines `originalFetch`.
+
+## Open (confirmed by reproduction, not fixed)
+Server
+- [x] Multi-printing cards go `auto` at the preferred printing. `compsForOnePrinting` now treats any source with more than one priced variant as ambiguous until a printing is chosen.
+- [x] Pricing fetches time out (TCGdex, JustTCG, pokemontcg.io, ECB rate).
+- [x] TCGdex tries the unpadded and zero-padded id. pokemontcg.io search sends the collector number and escapes quotes.
+- [x] JustTCG refuses a name-only match; `/api/price-grid` returns 400 without a set or number. The grid keeps English and the first price per condition.
+- [x] Sub-$0.50 cards whose list price rounds to $0 go to needs review. Low PokeGrade confidence still forces review after the printing filter.
+Python (tools/vellum-ai)
+- [x] Tilted cards are warped from the already-ordered quad. Steep-tilt tests pass (25° through 75°).
+- [x] A clearly read slab name is not replaced by another card at the misread number (Venusaur #16 no longer becomes Zapdos). A garbled name still resolves by set + number.
+- [x] SIFT feature cache is 512 entries and does not cache missing images.
+- [x] `TG06/TG30`, `SV001/SV122`, and `SWSH020` parse, and those tokens are not set codes.
+- [x] `identify_lot` dedupes by catalog id. Copies in one photo stay; a second photo keeps the sharper shot.
+- [x] A name with no OCR number is no longer cut at 80 prints.
+Extension (tools/extension-wasm)
+- [x] `printingByNumber` uses TCGdex official set totals (`lib/set-totals.js`), so 001/165 stays 151 instead of Mega Evolution. Prefixed subsets (H01/H32) use their own count.
+- [x] Number parser reads each token, so "SVI EN 001/198" parses and "EN001/165" does not.
+- [x] `loadPhotoSource` checks each redirect itself and blocks private hosts (`*.localhost`, IPv4-mapped, 100.64/10). Rebuilt into `dist/extension-wasm`. Reload the unpacked extension to pick it up.
+- [x] A scan aborts if the tab is no longer active, and the overlay is sent to the tab that was scanned.
+- [x] The photo-scan confidence floor is restored to the previous value, not left at 0.25.
+- [ ] Offscreen boxes counted and pinned to the top; lazy-load auto-rescan ignores era and overwrites the enriched overlay.
+- [x] The lot total follows the enabled condition. A missing condition is not filled with the NM price. Empty graded cells are skipped.
+- [ ] Price cache in extension storage still has no eviction.

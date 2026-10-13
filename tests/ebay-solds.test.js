@@ -90,3 +90,22 @@ test('auth failure throws explicit error', async () => {
     /eBay auth failed/,
   );
 });
+
+test('sales with a missing price are dropped, not counted as $0', async () => {
+  const fetchImpl = fakeAuthFetch(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      itemSales: [
+        { lastSoldPrice: { value: '10.00' } },
+        { lastSoldPrice: null },
+        { lastSoldPrice: { value: '' } },
+        { lastSoldPrice: { value: '12.00' } },
+      ],
+    }),
+  }));
+  const client = createEbaySoldsClient({ clientId: 'id', clientSecret: 'secret', fetchImpl });
+  const result = await client.getRecentSolds({ name: 'Pikachu', set: 'Base Set', number: '58/102' });
+  assert.deepEqual(result.prices, [10, 12]);
+  assert.equal(result.median, 11);
+});

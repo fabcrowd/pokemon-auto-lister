@@ -1,6 +1,8 @@
 // Read the collector number ("88/132") off the bottom of a large card and use it
 // to pick the printing. Post-processing for RapidOCR's PP-OCRv4 det/rec models.
 
+import { SET_TOTALS } from "./set-totals.js";
+
 const TEXT_THRESH = 0.3;   // text pixel in the detector map
 const BOX_THRESH = 0.5;    // mean score for a box to count as text
 const UNCLIP_RATIO = 1.6;
@@ -22,7 +24,7 @@ const ASCII_AT = {
   5489: "{", 5493: "j", 6624: " ",
 };
 
-const NUMBER = /(?<![\dA-Z])([A-Z]{0,3}\d{1,3})\/[A-Z]{0,3}(\d{2,3})/;
+const NUMBER = /([A-Z]{0,4})(\d{1,3})\/([A-Z]{0,4})(\d{2,3})/;
 const MAX_SET_TOTAL = 400;       // a larger printed total is a misread
 const SIZE_MIN = 0.95;           // catalog count vs printed total; secret rares push it up
 const SIZE_MAX = 1.5;
@@ -112,12 +114,23 @@ export function ctcDecode(probs, steps, classes) {
   return text;
 }
 
+function readNumberToken(token) {
+  const match = token.match(NUMBER);
+  if (!match) return null;
+  const [, numPrefix, numDigits, totalPrefix, totalDigits] = match;
+  if (numPrefix !== totalPrefix) return null;
+  return { number: `${numPrefix}${numDigits}`, total: Number(totalDigits) };
+}
+
 /** First "number/total" in the read lines, as {number, total}, or null. */
 export function parseCardNumber(lines) {
   for (const line of lines) {
-    const text = line.replace(/\s+/g, "").replace(/[Oo](?=[\d/])|(?<=[\d/])[Oo]/g, "0");
-    const match = text.match(NUMBER);
-    if (match) return { number: match[1], total: Number(match[2]) };
+    const fixed = line.replace(/[Oo](?=[\d/])|(?<=[\d/])[Oo]/g, "0");
+    const tokens = fixed.split(/\s+/).filter(Boolean);
+    for (const token of [...tokens, fixed.replace(/\s+/g, "")]) {
+      const read = readNumberToken(token);
+      if (read) return read;
+    }
   }
   return null;
 }
@@ -144,13 +157,35 @@ export function printingByNumber(rows, read, sizes) {
 
 const DIGIT_LOOKALIKES = { B: "8", O: "0", D: "0", S: "5", I: "1", Z: "2", G: "6" };
 
+function printedTotal(setCode, sizes) {
+  return SET_TOTALS[setCode] || sizes.get(setCode) || 0;
+}
+
+function subsetCount(rows, setCode, prefix) {
+  let count = 0;
+  for (const row of rows) {
+    if (row.setCode === setCode && plainNumber(row.number).startsWith(prefix)) count += 1;
+  }
+  return count;
+}
+
+function sizeFits(size, total) {
+  return size >= total * SIZE_MIN && size <= total * SIZE_MAX;
+}
+
 function printingByExactNumber(rows, read, sizes) {
   const wanted = plainNumber(read.number);
+  const prefix = wanted.match(/^[A-Z]+/)?.[0] || "";
   const sameNumber = rows.flatMap((row, index) => (plainNumber(row.number) === wanted ? [index] : []));
   if (read.total > MAX_SET_TOTAL) return sameNumber.length === 1 ? sameNumber[0] : null;
   const fits = sameNumber
-    .map((index) => ({ index, size: sizes.get(rows[index].setCode) || 0 }))
-    .filter(({ size }) => size >= read.total * SIZE_MIN && size <= read.total * SIZE_MAX)
+    .map((index) => {
+      const setCode = rows[index].setCode;
+      const setSize = printedTotal(setCode, sizes);
+      const size = prefix && !sizeFits(setSize, read.total) ? subsetCount(rows, setCode, prefix) : setSize;
+      return { index, size };
+    })
+    .filter(({ size }) => sizeFits(size, read.total))
     .sort((a, b) => Math.abs(a.size - read.total) - Math.abs(b.size - read.total));
   if (!fits.length) return null;
   if (fits.length > 1 && Math.abs(fits[0].size - read.total) === Math.abs(fits[1].size - read.total)) return null;

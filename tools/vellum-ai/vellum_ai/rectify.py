@@ -11,15 +11,16 @@ CANONICAL_SIZE: Tuple[int, int] = (750, 1050)  # width, height ≈ 63×88
 
 
 def order_corners(pts: np.ndarray) -> np.ndarray:
-    """Order four points as TL, TR, BR, BL."""
+    """Order four points clockwise as TL, TR, BR, BL, starting at the smallest x+y.
+
+    Sorting by angle around the centroid always yields four distinct corners; picking each corner
+    by its own x+y / y-x extreme returned the same point twice on a quad tilted exactly 45°.
+    """
     pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
-    s = pts.sum(axis=1)
-    diff = np.diff(pts, axis=1).reshape(-1)
-    tl = pts[np.argmin(s)]
-    br = pts[np.argmax(s)]
-    tr = pts[np.argmin(diff)]
-    bl = pts[np.argmax(diff)]
-    return np.array([tl, tr, br, bl], dtype=np.float32)
+    center = pts.mean(axis=0)
+    clockwise = pts[np.argsort(np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0]), kind="stable")]
+    start = int(np.argmin(clockwise.sum(axis=1)))
+    return np.roll(clockwise, -start, axis=0).astype(np.float32)
 
 
 def box_to_corners(xyxy: Sequence[float]) -> np.ndarray:
@@ -32,9 +33,14 @@ def rectify_card(
     image_bgr: np.ndarray,
     corners: np.ndarray,
     size: Tuple[int, int] = CANONICAL_SIZE,
+    ordered: bool = False,
 ) -> np.ndarray:
-    """Perspective-warp a card to ``size`` (width, height)."""
-    src = order_corners(corners)
+    """Perspective-warp a card to ``size`` (width, height).
+
+    ``ordered=True`` warps ``corners`` as given (TL, TR, BR, BL of the desired output) instead of
+    re-deriving the order from image position, so callers can pick which side ends up on top.
+    """
+    src = np.asarray(corners, dtype=np.float32).reshape(4, 2) if ordered else order_corners(corners)
     w, h = size
     dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
     matrix = cv2.getPerspectiveTransform(src, dst)

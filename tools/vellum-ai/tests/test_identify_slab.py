@@ -127,6 +127,29 @@ class SlabLabelIntegrationTests(unittest.TestCase):
         self.assertEqual(results[0].reason, "slab-label")
 
 
+    def test_misread_label_number_does_not_override_verified_visual_id(self):
+        lines = ["1999 POKEMON GAME", "#16", "VENUSAUR-HOLO", "BASE"]
+
+        def read(_image_bgr, box):
+            return lines if box[3] <= 160 else ["Solar Beam"]
+
+        meta = [
+            {"id": "base1-15", "name": "Venusaur", "set": "Base Set", "setCode": "base1", "number": "15"},
+            {"id": "base1-16", "name": "Zapdos", "set": "Base Set", "setCode": "base1", "number": "16"},
+        ]
+        visual = {"identity": {"name": "Venusaur", "set": "Base Set", "setCode": "base1", "number": "15",
+                               "productId": "base1-15"},
+                  "confidence": "high", "abstain": False, "reason": "local-feature-verify"}
+        with patch.object(identify_multi, "detect_all_cards_with_crops", return_value=[CARD_HIT]), \
+             patch.object(identify_multi, "identify_rectified_bytes", return_value=visual), \
+             patch.object(identify_multi, "_read_text", side_effect=read), \
+             patch.object(identify_multi, "_catalog_meta", return_value=meta), \
+             patch.object(identify_multi, "_catalog_set_years", return_value={"base1": 1999}):
+            results = identify_multi.identify_all_from_bytes(_jpeg(520, 640))
+        self.assertEqual(results[0].identity["productId"], "base1-15")
+        self.assertEqual(results[0].reason, "local-feature-verify")
+
+
 class CatalogSetYearsTests(unittest.TestCase):
     def test_missing_file_is_not_memoized(self):
         clear = getattr(identify_multi._catalog_set_years, "cache_clear", None)

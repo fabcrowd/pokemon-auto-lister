@@ -1,4 +1,4 @@
-import { explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
+import { detectedVariant, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 
 const btnScan      = document.getElementById("btn-scan");
@@ -258,6 +258,7 @@ async function scanPage() {
 
   _lastResult = { scanId: ++_scanSeq, cards: data.cards || [], srcWidth: data.srcWidth, srcHeight: data.srcHeight };
   _variantChoice = new Map();
+  _lastResult.cards.forEach(seedVariant);
   updateStats(_lastResult.cards, Math.round(performance.now() - t0));
   renderResults();
   refreshSourceIndicators(_lastResult.cards);
@@ -268,13 +269,13 @@ async function scanPage() {
     showMessage("No Pokémon cards detected on this page.");
   } else {
     const identified = cards.filter((c) => !c.abstain).length;
-    const unconfirmed = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null).unconfirmed;
+    const unconfirmed = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions()).unconfirmed;
     const needSet = cards.filter((c) => !isSetConfirmed(c)).length;
     const needPrinting = unconfirmed - needSet;
     const found = `Found ${cards.length} card${cards.length === 1 ? "" : "s"} (${identified} identified).`;
     const asks = [
       needSet ? `a set on ${needSet}` : "",
-      needPrinting ? `a printing on ${needPrinting}` : "",
+      needPrinting ? `a variant on ${needPrinting}` : "",
     ].filter(Boolean).join(" and ");
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
@@ -353,7 +354,7 @@ function confTier(confidence) {
 }
 
 function updateStats(cards, ms) {
-  const lot = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null);
+  const lot = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
   sDetected.textContent = cards.length > 0 ? String(cards.length) : "—";
   sValue.textContent    = lot.total > 0 ? "$" + lot.total.toFixed(2) : "—";
   sMs.textContent       = String(ms);
@@ -462,6 +463,7 @@ function replaceCard(idx, next) {
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   _variantChoice.delete(idx);
+  seedVariant(next, idx);
   renderResults();
   updateStats(cards, Number(sMs.textContent) || 0);
   pushOverlay();
@@ -502,17 +504,22 @@ async function pickSet(idx, id) {
   });
 }
 
+function seedVariant(card, idx) {
+  const seen = detectedVariant(card);
+  if (seen) _variantChoice.set(idx, seen);
+}
+
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
   const printings = Object.keys(grid?.variants || {});
   if (printings.length <= 1) return "";
   const picked = _variantChoice.get(idx) || "";
-  const blank = `<option value="" ${picked ? "" : "selected"}>Choose printing</option>`;
+  const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
   const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
-  const note = printingNote(grid);
+  const note = picked && picked === detectedVariant(card) ? "1st Edition stamp found" : printingNote(grid);
   return `<div class="variant-select-row">
-    <span class="lbl">Printing</span>
-    <select data-idx="${idx}" aria-label="Printing">${blank}${options}</select>
+    <span class="lbl">Variant</span>
+    <select data-idx="${idx}" aria-label="Variant">${blank}${options}</select>
     ${note ? `<span class="spread-warn">${escHtml(note)}</span>` : ""}
   </div>`;
 }
@@ -553,6 +560,7 @@ function renderGradedGrid(card, grid) {
   const cells = [];
   for (const g of graders) {
     for (const [grade, price] of Object.entries(grid.graded[g])) {
+      if (price == null || !Number.isFinite(Number(price))) continue;
       cells.push(`<div class="graded-cell"><span class="g-lbl">${escHtml(g)} ${escHtml(grade)}</span> <span class="g-val">$${Number(price).toFixed(2)}</span></div>`);
     }
   }

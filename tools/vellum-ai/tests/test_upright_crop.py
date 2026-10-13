@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vellum_ai import detect_multi  # noqa: E402
-from vellum_ai.rectify import find_card_quad  # noqa: E402
+from vellum_ai.rectify import find_card_quad, order_corners, rectify_card  # noqa: E402
 
 
 def _scene(deg: float):
@@ -43,6 +43,33 @@ class UprightCropTests(unittest.TestCase):
         body = crop[int(h * 0.5):int(h * 0.7), int(w * 0.2):int(w * 0.8)].mean(axis=(0, 1))
         self.assertGreater(top[2], 150)   # red band on top
         self.assertGreater(body[0], 150)  # blue body below
+
+    def test_steeply_tilted_cards_are_upright_without_distortion(self):
+        for deg in (25, 50, 60, 75, -25, -60):
+            with self.subTest(deg=deg):
+                img, box = _scene(deg)
+                crop = detect_multi._upright_crop(img, box)
+                self.assertIsNotNone(crop)
+                red = (crop[:, :, 2] > 150) & (crop[:, :, 0] < 100)
+                red_rows = red.mean(axis=1) > 0.5
+                self.assertAlmostEqual(red_rows.mean(), 70 / 420, delta=0.02)
+                self.assertTrue(red_rows[int(len(red_rows) * 0.03): int(len(red_rows) * 0.12)].all())
+
+    def test_order_corners_on_exact_45_degree_quad_returns_four_distinct_corners(self):
+        diamond = np.float32([[100, 0], [200, 100], [100, 200], [0, 100]])
+        ordered = order_corners(diamond)
+        self.assertEqual(len({tuple(p) for p in ordered.tolist()}), 4)
+        np.testing.assert_array_equal(ordered, diamond)
+
+    def test_rectify_card_ordered_skips_reordering(self):
+        img = np.zeros((40, 30, 3), np.uint8)
+        img[:20] = 255
+        quad = np.float32([[29, 39], [0, 39], [0, 0], [29, 0]])
+        flipped = rectify_card(img, quad, size=(30, 40), ordered=True)
+        self.assertLess(flipped[:10].mean(), 50)
+        self.assertGreater(flipped[-10:].mean(), 200)
+        default = rectify_card(img, quad, size=(30, 40))
+        self.assertGreater(default[:10].mean(), 200)
 
     def test_axis_aligned_card_keeps_the_plain_box_crop(self):
         img, box = _scene(0)

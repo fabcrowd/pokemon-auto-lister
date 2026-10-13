@@ -117,8 +117,8 @@ Two extensions: `tools/chrome-extension/` (tracked, dev) and `dist/extension-was
 ### Scan retry logic (`src/server.js`)
 - VellumAI abstain results are retried up to 2× with increasing JPEG quality before the
   preprocessing fallback chain: sharpen → CLAHE+sharpen → rotate 180° → tile split (3 tiles).
-- A single detection with no `conf` (`isUnclassifiedDetection`) skips the single-card fast
-  path and falls through to tile splitting.
+- A single detection, with or without `conf`, takes the single-card path on the original
+  buffer and only borrows the sidecar's box; tile splitting runs only if that path abstains.
 - Zero-confidence phantom detections are filtered (`c.conf >= 0.05` or absent). Do not
   remove — it prevents recursive re-detection explosion.
 

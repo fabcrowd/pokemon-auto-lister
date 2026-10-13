@@ -55,8 +55,8 @@ export function createEbaySoldsClient({
     const data = await response.json();
     const prices = (data.itemSales ?? [])
       .slice(0, MAX_SOLDS)
-      .map((sale) => Number(sale.lastSoldPrice?.value))
-      .filter((value) => !Number.isNaN(value));
+      .map((sale) => Number.parseFloat(sale.lastSoldPrice?.value))
+      .filter((value) => Number.isFinite(value) && value > 0);
 
     return { prices, median: median(prices) };
   }

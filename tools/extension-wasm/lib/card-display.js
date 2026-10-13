@@ -20,6 +20,12 @@ export function isPrintingConfirmed(grid, choice) {
   return typeof choice === 'string' && names.includes(choice);
 }
 
+/** The variant the scan saw on the card itself, or null when the user has to pick. */
+export function detectedVariant(card) {
+  if (card?.firstEdition !== true) return null;
+  return listPrintings(card.price_grid).find((name) => /^1stEdition/.test(name)) ?? null;
+}
+
 export function marketRange(grid) {
   const values = Object.values(grid?.variants || {})
     .map((variant) => variant?.market)
@@ -36,8 +42,8 @@ export function printingNote(grid) {
   const names = listPrintings(grid);
   if (names.length <= 1) return null;
   const range = marketRange(grid);
-  if (!range || range.low === range.high) return `${names.length} printings`;
-  return `${names.length} printings · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
+  if (!range || range.low === range.high) return `${names.length} variants`;
+  return `${names.length} variants · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
 }
 
 export function ageLabel(updatedAt, now = Date.now()) {
@@ -80,6 +86,7 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
     for (const condition of order) {
       if (conditions[condition] != null) return { price: conditions[condition], condition, printing };
     }
+    return null;
   }
   if (typeof card?.market_price === 'number' && names.length <= 1) {
     return { price: card.market_price, condition: null, printing };
@@ -87,7 +94,7 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   return null;
 }
 
-export function lotTotal(cards, choiceFor) {
+export function lotTotal(cards, choiceFor, enabledConditions = ['NM']) {
   let total = 0;
   let unconfirmed = 0;
   for (const card of cards || []) {
@@ -96,7 +103,7 @@ export function lotTotal(cards, choiceFor) {
       unconfirmed += 1;
       continue;
     }
-    const quote = quotedPrice(card, choice);
+    const quote = quotedPrice(card, choice, enabledConditions);
     if (quote) total += quote.price;
   }
   return { total, unconfirmed };

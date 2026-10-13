@@ -46,6 +46,13 @@ test('a letter O inside the number is a zero', () => {
   assert.deepEqual(parseCardNumber(['O7/1O2']), { number: '07', total: 102 });
 });
 
+test('words in front of the number are not part of it', () => {
+  assert.deepEqual(parseCardNumber(['SVI EN 001/198']), { number: '001', total: 198 });
+  assert.deepEqual(parseCardNumber(['MEW EN 001/165']), { number: '001', total: 165 });
+  assert.deepEqual(parseCardNumber(['ILLUS.KAGEMARU HIMENO 058/165']), { number: '058', total: 165 });
+  assert.equal(parseCardNumber(['EN001/165']), null);
+});
+
 test('text without a number/total gives nothing', () => {
   assert.equal(parseCardNumber(['DPBP#224', '2007Pokemon/Nintendo', '+20']), null);
   assert.equal(parseCardNumber([]), null);
@@ -84,6 +91,20 @@ test('a letter misread for a digit still finds the printing', () => {
   const withSizes = new Map([['ex15', 101], ['swsh9tg', 30]]);
   assert.equal(printingByNumber(energy, { number: 'B7', total: 101 }, withSizes), 0);
   assert.equal(printingByNumber(energy, { number: 'TG07', total: 30 }, withSizes), 1);
+});
+
+test('official set totals beat a closer catalog row count', () => {
+  const modern = [
+    { setCode: 'sv03.5', number: '1' },
+    { setCode: 'me01', number: '1' },
+  ];
+  const catalogCounts = new Map([['sv03.5', 207], ['me01', 188]]);
+  assert.equal(printingByNumber(modern, { number: '001', total: 165 }, catalogCounts), 0);
+});
+
+test('a letter-prefixed subset is matched by its own count', () => {
+  const holos = Array.from({ length: 32 }, (_, i) => ({ setCode: 'ecard2', number: `H${i + 1}` }));
+  assert.equal(printingByNumber(holos, { number: 'H01', total: 32 }, new Map([['ecard2', 169]])), 0);
 });
 
 test('an impossible total is ignored when only one printing has the number', () => {

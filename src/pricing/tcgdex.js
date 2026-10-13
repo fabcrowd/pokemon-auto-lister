@@ -33,12 +33,35 @@ function normalizeNumber(value) {
   return String(value || '').split('/')[0].trim().toLowerCase().replace(/^0+(?=.)/, '');
 }
 
+function collectorNumber(value) {
+  return String(value || '').split('/')[0].trim().replace(/^0+(?=.)/, '');
+}
+
+/** Ids to try: the printed form, then the other of zero-padded / unpadded for short numeric numbers. */
+function idVariants(id) {
+  const dash = String(id).lastIndexOf('-');
+  if (dash <= 0) return [id];
+  const set = id.slice(0, dash);
+  const bare = collectorNumber(id.slice(dash + 1));
+  const forms = [bare];
+  if (/^\d+$/.test(bare) && bare.length < 3) forms.push(bare.padStart(3, '0'));
+  return [...new Set(forms.filter(Boolean).map((num) => `${set}-${num}`))];
+}
+
 /** TCGdex card id for an identity: the catalog productId, else `${setCode}-${number}`. */
 export function tcgdexIdFor(identity) {
   const productId = String(identity?.productId || '');
   if (/^[A-Za-z0-9.]+-[A-Za-z0-9]+$/.test(productId)) return productId;
-  if (identity?.setCode && identity?.number) return `${identity.setCode}-${identity.number}`;
+  if (identity?.setCode && collectorNumber(identity.number)) {
+    return `${identity.setCode}-${collectorNumber(identity.number)}`;
+  }
   return null;
+}
+
+function idsToTry(identity) {
+  const primary = tcgdexIdFor(identity);
+  if (!primary) return [];
+  return [primary, ...idVariants(primary).filter((id) => id !== primary)];
 }
 
 function tcgplayerPrice(row) {
@@ -116,14 +139,14 @@ function cardmarketEur(cardmarket) {
  * Cached EUR→USD lookup. On failure it keeps the last good rate (a day-old ECB rate beats none) and
  * waits FX_RETRY_MS before asking again; null only when no rate was ever fetched.
  */
-export function ecbEurUsdRate({ fetchImpl = fetch, url = FX_URL, now = Date.now } = {}) {
+export function ecbEurUsdRate({ fetchImpl = fetch, url = FX_URL, now = Date.now, timeoutMs = 10_000 } = {}) {
   let cached = null;
   let retryAt = 0;
   return async function eurUsdRate() {
     if (cached && now() - cached.at <= FX_TTL_MS) return cached.rate;
     if (now() < retryAt) return cached?.rate ?? null;
     try {
-      const response = await fetchImpl(url);
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const rate = (await response.json())?.rates?.USD;
       // Sanity bounds: EUR/USD has stayed within 0.8-1.6 since the euro launched.
@@ -141,7 +164,8 @@ export function ecbEurUsdRate({ fetchImpl = fetch, url = FX_URL, now = Date.now 
 export function createTcgdexClient({
   baseUrl = process.env.TCGDEX_API_URL || DEFAULT_BASE,
   fetchImpl = fetch,
-  eurUsdRate = ecbEurUsdRate({ fetchImpl }),
+  timeoutMs = 10_000,
+  eurUsdRate = ecbEurUsdRate({ fetchImpl, timeoutMs }),
 } = {}) {
   const cache = new Map();
 
@@ -149,7 +173,9 @@ export function createTcgdexClient({
     const hit = cache.get(id);
     if (hit && Date.now() - hit.fetchedAt <= TTL_MS) return hit.card;
     const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const response = await fetchImpl(new URL(`cards/${encodeURIComponent(id)}`, root));
+    const response = await fetchImpl(new URL(`cards/${encodeURIComponent(id)}`, root), {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (response.status === 404) {
       cache.set(id, { card: null, fetchedAt: Date.now() });
       return null;
@@ -161,9 +187,12 @@ export function createTcgdexClient({
   }
 
   async function getMatchingCard(identity) {
-    const id = tcgdexIdFor(identity);
-    if (!id || !identity?.name) return null;
-    const card = await getCard(id);
+    if (!identity?.name || idsToTry(identity).length === 0) return null;
+    let card = null;
+    for (const id of idsToTry(identity)) {
+      card = await getCard(id);
+      if (card) break;
+    }
     // A wrong id (stale catalog, PokeGrade-style productId) must not price a different card:
     // name, and set + number whenever the identity states them.
     if (!card || normalizeName(card.name) !== normalizeName(identity.name)) return null;

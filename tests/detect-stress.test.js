@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -875,6 +875,40 @@ test('/detect: single rawCard with no conf uses original buffer and sidecar box'
       assert.equal(res.statusCode, 200);
       assert.equal(res.body.cards.length, 1);
       assert.deepEqual(res.body.cards[0].box, [5, 10, 105, 160]);
+    },
+  );
+});
+
+test('/detect: reports the unrounded market median, not the rounded list price', async () => {
+  await withServer(
+    {
+      scanAndPrice: async () => ({
+        ok: true,
+        identity: { name: 'Snorunt' },
+        market: 0.46,
+        suggested: { mercari: 0, ebay: 0 },
+        vellumConfidence: 'high',
+      }),
+    },
+    async ({ server }) => {
+      const res = await detectPost(server, { image_b64: TINY_JPEG_B64 });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.cards[0].market_price, 0.46);
+      assert.equal(res.body.cards[0].price_variant, 'market');
+    },
+  );
+});
+
+test('/detect: removes its temp directory after responding', async () => {
+  await withServer(
+    {
+      scanAndPrice: async () => ({ ok: true, identity: { name: 'Ditto' }, market: 1, vellumConfidence: 'high' }),
+    },
+    async ({ server, dataDir }) => {
+      const res = await detectPost(server, { image_b64: TINY_JPEG_B64 });
+      assert.equal(res.statusCode, 200);
+      const tmpRoot = path.join(dataDir, 'detect-tmp');
+      assert.deepEqual(existsSync(tmpRoot) ? readdirSync(tmpRoot) : [], []);
     },
   );
 });

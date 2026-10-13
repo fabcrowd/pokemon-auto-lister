@@ -60,6 +60,14 @@ class ResolveLabelTests(unittest.TestCase):
         p = parse_label(["2026POKEMONPOREN", "#123", "ROSASENCOURAGFMENT", "GEMMT", "10"])
         self.assertEqual(resolve_label(p, META)["productId"], "me03-123")
 
+    def test_clearly_read_name_is_not_replaced_by_another_card_at_that_number(self):
+        meta = [
+            {"id": "base1-15", "name": "Venusaur", "set": "Base Set", "setCode": "base1", "number": "15"},
+            {"id": "base1-16", "name": "Zapdos", "set": "Base Set", "setCode": "base1", "number": "16"},
+        ]
+        p = parse_label(["1999 POKEMON GAME", "#16", "VENUSAUR-HOLO", "BASE"])
+        self.assertIsNone(resolve_label(p, meta))
+
     def test_card_missing_from_catalog_gets_label_id_not_a_same_art_reprint(self):
         p = parse_label(["2023POKEMONCLVEN", "#003", "VENUSAUR", "GEMMT", "10"])
         ident = resolve_label(p, META)

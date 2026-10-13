@@ -107,3 +107,53 @@ test('a chosen printing prices only that printing', () => {
   assert.equal(decision.comps.justtcg, null);
   assert.equal(decision.suggested.ebay, 919);
 });
+
+test('one source preferring one printing is still ambiguous when its variants price two', () => {
+  const filtered = compsForOnePrinting({
+    tcgdex: { market: 450, printing: 'unlimited-holofoil', variants: { '1st-edition-holofoil': 9000, 'unlimited-holofoil': 450 } },
+    justtcg: { market: 460, printing: 'Unlimited Holofoil', variants: { 'Unlimited Holofoil': 460 } },
+  });
+  assert.equal(filtered.ambiguous, true);
+  assert.deepEqual([...filtered.printings].sort(), ['1steditionholofoil', 'unlimitedholofoil']);
+});
+
+test('a chosen printing reprices a source from its variants map', () => {
+  const filtered = compsForOnePrinting({
+    tcgdex: { market: 450, printing: 'unlimited-holofoil', variants: { '1st-edition-holofoil': 9000, 'unlimited-holofoil': 450 } },
+    pokemontcgapi: { market: 455, printing: 'unlimitedHolofoil', variants: { '1stEditionHolofoil': 9200, unlimitedHolofoil: 455 } },
+  }, '1st Edition Holofoil');
+  const decision = decidePrice(filtered.sources);
+  assert.equal(filtered.ambiguous, false);
+  assert.equal(decision.comps.tcgdex, 9000);
+  assert.equal(decision.comps.pokemontcgapi, 9200);
+  assert.equal(decision.action, 'auto');
+});
+
+test('a list price that rounds to $0 needs review', () => {
+  const decision = decidePrice({ tcgplayer: { market: 0.3 }, tcgdex: { market: 0.31 } });
+  assert.equal(decision.action, 'needs_review');
+  assert.match(decision.reason, /rounds to \$0/);
+  assert.equal(decision.market, 0.31);
+});
+
+test('decidePrice ignores string, NaN, and zero comps', () => {
+  const stringComp = decidePrice({ pokegrade: { value: '12.50' }, tcgdex: { market: 12 } });
+  assert.equal(stringComp.comps.pokegrade, null);
+  assert.equal(stringComp.action, 'needs_review');
+  assert.equal(stringComp.suggested.mercari, 12);
+
+  const nanComp = decidePrice({ ebay: { median: NaN }, tcgdex: { market: 10 } });
+  assert.equal(nanComp.comps.ebay, null);
+  assert.equal(nanComp.action, 'needs_review');
+
+  const zeroComp = decidePrice({ tcgplayer: { market: 0 }, tcgdex: { market: 10 }, justtcg: { market: 10.2 } });
+  assert.equal(zeroComp.comps.tcgplayer, null);
+  assert.equal(zeroComp.action, 'auto');
+});
+
+test('decidePrice returns the unrounded median as market', () => {
+  const decision = decidePrice({ tcgplayer: { market: 0.46 }, tcgdex: { market: 0.44 } });
+  assert.equal(decision.market, 0.45);
+  assert.equal(decision.suggested.mercari, 0);
+  assert.equal(decidePrice({}).market, null);
+});

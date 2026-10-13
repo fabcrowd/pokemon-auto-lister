@@ -38,6 +38,33 @@ test('tcgdexIdFor uses a catalog productId, else setCode + number', () => {
   assert.equal(tcgdexIdFor({ name: 'Pikachu' }), null);
 });
 
+test('tcgdexIdFor drops the printed set total', () => {
+  assert.equal(tcgdexIdFor({ setCode: 'base1', number: '4/102' }), 'base1-4');
+  assert.equal(tcgdexIdFor({ setCode: 'sv03', number: '223/197' }), 'sv03-223');
+});
+
+test('getMarketPrice finds the card whether the id is zero-padded or not', async () => {
+  const charizard = {
+    id: 'base1-4', localId: '4', name: 'Charizard', set: { id: 'base1', name: 'Base Set' },
+    pricing: { tcgplayer: { holofoil: { marketPrice: 450 } } },
+  };
+  const { fetchImpl, calls } = stubFetch({ 'base1-4': charizard, 'sv03.5-071': victreebel });
+  const client = createTcgdexClient({ fetchImpl });
+  assert.equal((await client.getMarketPrice({ name: 'Charizard', setCode: 'base1', number: '004' })).market, 450);
+  assert.equal((await client.getMarketPrice({ name: 'Victreebel', setCode: 'sv03.5', number: '71/165' })).market, 0.2);
+  assert.ok(calls.every((url) => !url.includes('%2F')));
+});
+
+test('a never-answering TCGdex request times out', { timeout: 2000 }, async () => {
+  const hang = (url, { signal } = {}) => new Promise((resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(signal.reason));
+  });
+  const client = createTcgdexClient({ fetchImpl: hang, timeoutMs: 20, eurUsdRate: async () => null });
+  await assert.rejects(client.getMarketPrice({ name: 'Victreebel', productId: 'sv03.5-071' }), /timeout|abort/i);
+  const rate = ecbEurUsdRate({ fetchImpl: hang, timeoutMs: 20 });
+  assert.equal(await rate(), null);
+});
+
 test('extractTcgdexUsd prefers holofoil, then normal, then reverse holo', () => {
   assert.equal(extractTcgdexUsd(victreebel.pricing.tcgplayer), 0.2);
   assert.equal(extractTcgdexUsd({ holofoil: { marketPrice: 9 }, normal: { marketPrice: 1 } }), 9);

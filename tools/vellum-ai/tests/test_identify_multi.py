@@ -162,6 +162,31 @@ class TestIdentifyAllFromBytes(unittest.TestCase):
         assert results == []
 
 
+class TestLotDedupe(unittest.TestCase):
+    def _card(self, product_id, name, number, photo, conf="high"):
+        return CardResult(
+            index=0, box=(0, 0, 10, 10),
+            identity={"name": name, "number": number, "productId": product_id},
+            confidence=conf, abstain=False, reason=None, source_image=photo,
+        )
+
+    def test_different_prints_and_same_photo_copies_all_stay(self):
+        from vellum_ai.identify_multi import dedupe_lot_cards
+
+        cards = [
+            self._card("base1-4", "Charizard", "4", "a.jpg"),
+            self._card("base4-4", "Charizard", "4", "a.jpg"),
+            self._card("base1-99", "Pikachu", "99", "a.jpg", "low"),
+            self._card("base1-99", "Pikachu", "99", "a.jpg", "high"),
+            self._card("base1-99", "Pikachu", "99", "b.jpg", "medium"),
+        ]
+        kept = dedupe_lot_cards(cards)
+        ids = sorted(card.identity["productId"] + "@" + card.source_image for card in kept)
+        self.assertEqual(ids, ["base1-4@a.jpg", "base1-99@a.jpg", "base1-99@a.jpg", "base4-4@a.jpg"])
+        pikachu = [card for card in kept if card.identity["productId"] == "base1-99"]
+        self.assertTrue(all(card.source_image == "a.jpg" for card in pikachu))
+
+
 class TestDeduplication(unittest.TestCase):
     """identify_lot deduplication logic via LotResult dedup path."""
 

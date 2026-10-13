@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 
 import sharp from 'sharp';
 import { parseBoundary, parseMultipart } from './server/multipart.js';
@@ -94,7 +94,10 @@ function mapPricedToCard(priced, box) {
   const confidence = confidenceFromVellum(priced?.vellumConfidence);
   let market_price = null;
   let price_variant = null;
-  if (priced?.suggested && typeof priced.suggested === 'object') {
+  if (typeof priced?.market === 'number' && Number.isFinite(priced.market)) {
+    market_price = priced.market;
+    price_variant = 'market';
+  } else if (priced?.suggested && typeof priced.suggested === 'object') {
     for (const [key, val] of Object.entries(priced.suggested)) {
       if (typeof val === 'number' && Number.isFinite(val)) {
         market_price = val;
@@ -214,7 +217,18 @@ async function handleDetect(req, res, { dataDir, scanAndPrice, multiCardSplitter
 
   const detectDir = path.join(dataDir, 'detect-tmp', randomUUID());
   mkdirSync(detectDir, { recursive: true });
+  try {
+    return await detectInDir(res, imageBuffer, detectDir, { scanAndPrice, multiCardSplitter });
+  } finally {
+    try {
+      rmSync(detectDir, { recursive: true, force: true });
+    } catch (err) {
+      console.error('detect-tmp cleanup failed:', err.message);
+    }
+  }
+}
 
+async function detectInDir(res, imageBuffer, detectDir, { scanAndPrice, multiCardSplitter }) {
   let rawCards = null;
   if (multiCardSplitter?.detectRaw) {
     rawCards = await multiCardSplitter.detectRaw(imageBuffer);
@@ -234,8 +248,6 @@ async function handleDetect(req, res, { dataDir, scanAndPrice, multiCardSplitter
   if (!rawCards || rawCards.length <= 1) {
     const box =
       Array.isArray(rawCards?.[0]?.box) ? rawCards[0].box : [0, 0, 640, 480];
-    // Sidecar found 1 card but couldn't classify it (conf/class undefined) — flag for tile fallback.
-    const isUnclassifiedDetection = rawCards?.length === 1 && !Number.isFinite(rawCards[0]?.conf);
 
     let processedBuffer = imageBuffer;
     try {
@@ -377,6 +389,9 @@ async function handlePriceGrid(params, res, priceGridClient) {
   };
   if (!identity.name) {
     return sendJson(res, 400, { error: 'name is required' });
+  }
+  if (!identity.set && !identity.number && !identity.id) {
+    return sendJson(res, 400, { error: 'set or number is required' });
   }
   try {
     const result = await priceGridClient.getPriceGrid(identity);

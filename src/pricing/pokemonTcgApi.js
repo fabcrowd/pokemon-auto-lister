@@ -102,6 +102,7 @@ export function createPokemonTcgApiClient({
   baseUrl = process.env.POKEMON_TCG_API_URL || DEFAULT_BASE,
   fetchImpl = fetch,
   retryDelayMs = 2000,
+  timeoutMs = 10_000,
 } = {}) {
   const cache = new Map();
 
@@ -130,7 +131,7 @@ export function createPokemonTcgApiClient({
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (attempt) await sleep(retryDelayMs * attempt);
-      response = await fetchImpl(url, { headers });
+      response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
       if (response.status < 500) break;
     }
     if (response.status === 404) return null;
@@ -150,10 +151,11 @@ export function createPokemonTcgApiClient({
 
   async function searchCard(identity) {
     const parts = [];
-    if (identity.name) parts.push(`name:"${identity.name}"`);
-    if (identity.number) parts.push(`number:${identity.number}`);
+    const quoted = (value) => String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    if (identity.name) parts.push(`name:"${quoted(identity.name)}"`);
+    if (identity.number) parts.push(`number:${normalizeNumber(identity.number)}`);
     if (identity.setCode) parts.push(`set.id:${identity.setCode}`);
-    else if (identity.set) parts.push(`set.name:"${identity.set}"`);
+    else if (identity.set) parts.push(`set.name:"${quoted(identity.set)}"`);
     if (!parts.length) return null;
     const payload = await request('/cards', { q: parts.join(' '), pageSize: 10 });
     const cards = Array.isArray(payload?.data) ? payload.data : [];

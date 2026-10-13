@@ -89,9 +89,12 @@ class CardResult:
     crop_b64: str = ""
 
     def identity_key(self) -> Optional[str]:
-        """Stable dedup key: name + normalised number."""
+        """Stable dedup key: catalog id, else name + normalised number."""
         if not self.identity:
             return None
+        product_id = str(self.identity.get("productId") or "").strip()
+        if product_id:
+            return product_id
         name = str(self.identity.get("name") or "").strip().lower()
         raw_num = str(self.identity.get("number") or "")
         num = raw_num.split("/")[0].lstrip("0") or "0"
@@ -388,6 +391,27 @@ def identify_all_from_bytes(
     return results
 
 
+def dedupe_lot_cards(cards: List[CardResult]) -> List[CardResult]:
+    """Keep every copy from one photo. A later photo of the same card keeps the sharper shot."""
+    rank = {"high": 3, "medium": 2, "low": 1}
+    no_key: List[CardResult] = []
+    by_key: Dict[str, List[CardResult]] = {}
+    for card in cards:
+        key = card.identity_key()
+        if key is None:
+            no_key.append(card)
+            continue
+        by_key.setdefault(key, []).append(card)
+    kept: List[CardResult] = []
+    for group in by_key.values():
+        photos: Dict[str, List[CardResult]] = {}
+        for card in group:
+            photos.setdefault(card.source_image, []).append(card)
+        best = max(photos, key=lambda photo: max(rank.get(card.confidence, 0) for card in photos[photo]))
+        kept.extend(photos[best])
+    return kept + no_key
+
+
 def identify_lot(lot_folder: Path) -> LotResult:
     """Identify all cards across all images in lot_folder.
 
@@ -407,24 +431,7 @@ def identify_lot(lot_folder: Path) -> LotResult:
         cards = identify_all_from_bytes(raw, source_image=img_path.name)
         all_results.extend(cards)
 
-    # Deduplicate: for each identity key, keep the result with best confidence
-    _CONF_RANK = {"high": 3, "medium": 2, "low": 1}
-    seen: Dict[str, CardResult] = {}
-    unidentified: List[CardResult] = []
-
-    for card in all_results:
-        key = card.identity_key()
-        if key is None:
-            unidentified.append(card)
-            continue
-        existing = seen.get(key)
-        if existing is None:
-            seen[key] = card
-        else:
-            if _CONF_RANK.get(card.confidence, 0) > _CONF_RANK.get(existing.confidence, 0):
-                seen[key] = card
-
-    deduped = list(seen.values()) + unidentified
+    deduped = dedupe_lot_cards(all_results)
     identified = [c for c in deduped if not c.abstain and c.identity]
 
     return LotResult(

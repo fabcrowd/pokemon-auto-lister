@@ -43,8 +43,8 @@ the other files are kept.
 2. Click the scanner icon. The popup opens.
 3. Click **SCAN PAGE**.
 4. Each card gets a badge with its name, set, and price. When several
-   printings share the same art, the badge shows the price range. Pick the
-   printing in the popup. The lot total skips that card until you do.
+   variants share the same art, the badge shows the price range. Pick the
+   variant in the popup. The lot total skips that card until you do.
 5. The popup lists the cards. Condition chips (NM / LP / MP / HP / DMG)
    change which price is shown when the source has a full grid.
 
@@ -98,9 +98,9 @@ site's frame are not visible to it.
 **"Card pictures are still loading."** The page drew the card frame before the
 photo arrived. Wait a second and scan again.
 
-**Prices look wrong.** Printings that share the same art (Base Set unlimited,
+**Prices look wrong.** Variants that share the same art (Base Set unlimited,
 Shadowless, 1st Edition) cannot be told apart from the picture. The badge
-shows the price range. Use the **Printing** menu in the popup. That card stays
+shows the price range. Use the **Variant** menu in the popup. That card stays
 out of the lot total until you pick one.
 
 **Settings says the local dashboard is "Not detected".** Only matters if you

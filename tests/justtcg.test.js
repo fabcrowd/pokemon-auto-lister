@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createJustTcgClient, extractNearMintUsd, justTcgSetName, sameSetName, scoreMatch } from '../src/pricing/justTcg.js';
+import { createJustTcgClient, extractNearMintUsd, extractPriceGrid, justTcgSetName, sameSetName, scoreMatch } from '../src/pricing/justTcg.js';
 import { decidePrice } from '../src/pricing/pricing.js';
 
 test('extractNearMintUsd prefers Holofoil Near Mint USD', () => {
@@ -212,6 +212,22 @@ test('sameSetName requires the same set, not a prefix-sharing sibling', () => {
 test('getMarketPrice without a number refuses a longer name (Mew is not Mewtwo)', async () => {
   const client = stubClient([{ id: 'm2', name: 'Mewtwo', number: '10/102', set: { name: 'Base Set' }, variants: nm(5) }]);
   assert.equal(await client.getMarketPrice({ name: 'Mew', set: 'Base Set' }), null);
+});
+
+test('getMarketPrice refuses a name-only match', async () => {
+  const client = stubClient([{ id: 'x', name: 'Charizard', number: '11', set: { name: 'Obsidian Flames' }, variants: nm(2.5) }]);
+  assert.equal(await client.getMarketPrice({ name: 'Charizard' }), null);
+});
+
+test('extractPriceGrid keeps the English price and the first row per condition', () => {
+  const grid = extractPriceGrid({
+    variants: [
+      { type: 'raw', condition: 'Near Mint', printing: 'Holofoil', language: 'English', price: 2.5 },
+      { type: 'raw', condition: 'Near Mint', printing: 'Holofoil', language: 'Japanese', price: 40 },
+      { type: 'raw', condition: 'Near Mint', printing: 'Holofoil', language: 'English', price: 9 },
+    ],
+  });
+  assert.equal(grid.variants.Holofoil.NM, 2.5);
 });
 
 test('sameSetName handles JustTCG era prefixes and "and" spellings', () => {

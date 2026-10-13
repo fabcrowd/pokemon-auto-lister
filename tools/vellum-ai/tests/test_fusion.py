@@ -20,6 +20,14 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(parsed["number"], "004")
         self.assertEqual(parsed["total"], "102")
 
+    def test_parse_ocr_prefixed_numbers(self) -> None:
+        gallery = parse_ocr_text("TG06/TG30")
+        self.assertEqual((gallery["number"], gallery["total"], gallery["setCode"]), ("TG06", "TG30", None))
+        shiny = parse_ocr_text("SV001/SV122")
+        self.assertEqual((shiny["number"], shiny["total"]), ("SV001", "SV122"))
+        promo = parse_ocr_text("SWSH020")
+        self.assertEqual(promo["number"], "SWSH020")
+
     def test_parse_ocr_glued_por(self) -> None:
         parsed = parse_ocr_text("POREW091/088☆")
         self.assertEqual(parsed["number"], "091")

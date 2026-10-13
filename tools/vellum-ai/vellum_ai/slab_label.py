@@ -124,8 +124,14 @@ def resolve_label(
     if want_set:
         in_set = [m for m in matches if m.get("setCode") == want_set]
         if not in_set:
-            # A mapped set code plus number pins the print even when OCR garbles the name.
-            in_set = [m for m in meta if m.get("setCode") == want_set and _norm_number(m.get("number")) == number]
+            # Number alone is only safe when the set has no card by the name that was read.
+            # A clear "Venusaur" plus a misread #16 must not become Zapdos.
+            name_in_set = [
+                m for m in meta
+                if m.get("setCode") == want_set and _key(m.get("name")) == parsed["name_key"]
+            ]
+            if not name_in_set:
+                in_set = [m for m in meta if m.get("setCode") == want_set and _norm_number(m.get("number")) == number]
         matches = in_set or matches
     if len(matches) > 1:
         # The variety line often names the set outright ("EVOLUTIONS", "HIDDENFATES").

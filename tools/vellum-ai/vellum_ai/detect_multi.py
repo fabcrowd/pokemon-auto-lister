@@ -475,8 +475,8 @@ def _upright_crop(image_bgr: np.ndarray, box) -> Optional[np.ndarray]:
         return None
     if np.linalg.norm(quad[1] - quad[0]) > np.linalg.norm(quad[2] - quad[1]):
         # order_corners picked a long side as "top": turn the corner order a quarter so the card is portrait.
-        quad = np.roll(quad, -1, axis=0) if quad[0][1] < quad[1][1] else np.roll(quad, 1, axis=0)
-    return rectify_card(region, quad.astype(np.float32))
+        quad = np.roll(quad, 1, axis=0) if quad[0][1] < quad[1][1] else np.roll(quad, -1, axis=0)
+    return rectify_card(region, quad.astype(np.float32), ordered=True)
 
 
 def pad_to_square(img: np.ndarray):

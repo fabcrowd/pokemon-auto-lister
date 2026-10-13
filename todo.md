@@ -6,6 +6,60 @@ The existing backend `GET /api/price-grid` is documented as a JustTCG price-grid
 
 ---
 
+## V. Variant detection from the card itself (2026-10-12)
+
+The popup now says "Choose variant". These steps let the scan pick the variant when the card shows it.
+
+### V1. 1st Edition stamp — DONE (uncommitted)
+- `tools/extension-wasm/lib/edition-stamp.js`: masked template match of the real stamp (cut from a Jungle Marowak photo, `lib/first-edition-stamp.js`) in the area left of the stat bar, below the art. Card resized to 375x525, 8 stamp sizes, 134 ms per card.
+- It runs only when the card's set (or a set the user may pick) had a 1st Edition: base1, base2, base3, base5, gym1, gym2, neo1–neo4. It also needs the card to be at least 400 source px tall.
+- Stamp found:
+  - The popup preselects the `1stEdition*` price and notes "1st Edition stamp found". The user can still change it.
+  - Set choices are narrowed to 1st Edition sets. When one remains, the card is priced at once (Marowak: Jungle / Aquapolis / Fates Collide / Base Set 2 → Jungle).
+- No stamp: nothing changes; the user picks.
+- Measured on 154 ShopGoodwill crops (35 stamped, 25 lots fetched with `scripts/fetch-goodwill-lot.mjs`):
+  - 33/35 stamps found and 0/119 false stamps.
+  - Stamps score 0.68–0.94; the best non-stamp scores 0.63; the threshold is 0.70.
+  - Misses: one stamp under holo glare, one partial close-up.
+- Gap: TCGdex has no 1st Edition price for Base Set (`base1-4` has only `holofoil`), so a stamped Base Set card stays "Choose variant" until V3.
+- Open: when no stamp is seen on a sharp (≥600 px) card from a 1st Edition set, preselect Unlimited?
+  - That would save a pick on most WotC cards.
+  - Cost: about 1 in 12 real 1st Editions would be priced low (glare).
+  - Needs a decision.
+
+### V2. Shadowless (Base Set only)
+- Cue: Unlimited Base Set cards have a dark drop shadow along the right edge of the art frame; Shadowless and 1st Edition Base Set do not (seen on the 279630487 Ivysaur vs the 276846227 Squirtle).
+- Measure first, as for V1:
+  - Labelled set: the base1 cards in lots 279630487/279630443 (Unlimited) against 273298162, 274640714, 274639003, 276846227, 277838115, 279336484, 279118621 and 276737413 (Shadowless; already downloaded).
+  - Feature: the luminance profile across the art frame's right border, in rows 20–38% of card height. Shadow means a dark band between the gold frame and the card body. Locate the frame edge per crop; the finder's boxes are loose.
+  - Ship only if it separates like V1 does (no false Shadowless at the chosen threshold).
+- Only for `base1`. A 1st Edition stamp on base1 already implies Shadowless.
+- Result values: `shadowless: true | false | null`. `false` = shadow seen, so Unlimited can be preselected; that is safe because it is the cheaper price.
+
+### V3. Price source for Shadowless and Base Set 1st Edition (TCGCSV)
+- TCGdex/pokemontcg.io have one Base Set price (Unlimited). [TCGCSV](https://tcgcsv.com) mirrors TCGplayer daily, keyless:
+  - Group 604 is "Base Set".
+  - Group 1663 is "Base Set (Shadowless)". Each product there has "Unlimited Holofoil" (= Shadowless) and "1st Edition Holofoil" rows, e.g. Charizard 106999: Shadowless $2,257.87; 1st Ed has no market price, only low/mid.
+- Plan:
+  - `lib/tcgcsv.js`: fetch `/tcgplayer/3/1663/products` + `/prices` once a day into `chrome.storage.local`, keyed by card number (`extendedData` Number "4/102").
+  - For `base1-*` cards, add the variants `shadowless` and `1stEditionHolofoil` / `1stEditionNormal` to the grid next to the TCGdex Unlimited price.
+  - Use market price, then mid; mark "few sales" when market is missing.
+  - Add `https://tcgcsv.com/*` to `host_permissions`.
+- Tests: parser on a saved TCGCSV sample (products + prices), base1 number join, missing-market fallback, non-base1 untouched.
+
+### V4. Promo and other stamps (plan only; build after V2/V3)
+- Stamp kinds seen or known:
+  - Prerelease, Staff, and W (Wizards promo) stamps on the art.
+  - League / Championship stamps.
+  - Set-logo stamps on reverse holos (e.g. Crystal Guardians stamped reverse holo, which abstains today).
+  - Pokémon Center stamps.
+- Before building:
+  - Check that a price source lists the stamped versions separately (TCGplayer usually has separate products, e.g. "Prerelease"). Without a price, detecting a stamp only adds a label.
+  - Collect positives per stamp from ShopGoodwill searches ("prerelease pokemon", "staff stamp"). The same template approach applies, with one template per stamp and an area per layout era.
+- Order: Prerelease/Staff (fixed spot on the art, high price impact), then reverse-holo set stamps.
+
+---
+
 ## 0. Show set + number prominently, and confirm the variant before pricing
 
 This is **the most important thing on this list** and belongs before the condition grid. The screenshot from the last build shows "Charizard  $928.06" on a Base-Set Charizard image. That number is TCGPlayer's **unlimited holofoil market price**. The exact same art prints as:

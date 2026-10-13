@@ -149,6 +149,7 @@ test.describe('Extension overlay', () => {
 
   test('server pill shows ok when /health returns 200', async ({ page }) => {
     await page.addInitScript(() => {
+      const originalFetch = window.fetch;
       window.fetch = async (url) => {
         if (url.includes('/health')) return { ok: true };
         return originalFetch(url);

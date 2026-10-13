@@ -51,6 +51,10 @@ export function postedListPrice(card) {
   return null;
 }
 
+function usablePrice(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -70,10 +74,24 @@ function rowPrinting(row) {
   return normalizePrinting(row.printing);
 }
 
+/** A source's full printing → price map, keyed by normalized printing. */
+function rowVariants(row) {
+  const out = new Map();
+  if (!row?.variants || typeof row.variants !== 'object') return out;
+  for (const [key, value] of Object.entries(row.variants)) {
+    const printing = normalizePrinting(key);
+    const price = usablePrice(value);
+    if (printing && price !== null && !out.has(printing)) out.set(printing, price);
+  }
+  return out;
+}
+
 /**
  * Keep comps from one printing. A 1st Edition price and an Unlimited price are never medianed together.
  * When the caller has not chosen and the sources disagree, the largest agreeing group is priced and
- * the result is marked ambiguous. A tie prices nothing.
+ * the result is marked ambiguous. A tie prices nothing. Any card with more than one priced printing
+ * (across the sources' variants maps) is ambiguous until a printing is chosen; a chosen printing is
+ * priced from each source's variants map when the source preferred a different one.
  * @param {Record<string, object|null>} sources
  * @param {string} [chosenPrinting]
  */
@@ -98,10 +116,20 @@ export function compsForOnePrinting(sources = {}, chosenPrinting) {
     if (ranked[0][1].length > ranked[1][1].length) selected = ranked[0][0];
   }
 
-  const ambiguous = groups.size > 1 && !wanted;
+  const priced = new Set(groups.keys());
+  for (const row of Object.values(sources)) {
+    for (const printing of rowVariants(row).keys()) priced.add(printing);
+  }
+
+  const ambiguous = priced.size > 1 && !wanted;
   const next = {};
   for (const [key, row] of Object.entries(sources)) {
     const printing = rowPrinting(row);
+    const chosenPrice = wanted && printing && printing !== wanted ? rowVariants(row).get(wanted) : undefined;
+    if (chosenPrice !== undefined) {
+      next[key] = { ...row, printing: wanted, market: chosenPrice };
+      continue;
+    }
     const otherEdition = Boolean(selected) && printing && printing !== selected;
     const untaggedWhileSplit = !printing && groups.size > 1;
     const unresolvedTie = !selected && groups.size > 1;
@@ -111,7 +139,7 @@ export function compsForOnePrinting(sources = {}, chosenPrinting) {
     sources: next,
     printing: selected,
     ambiguous,
-    printings: [...groups.keys()],
+    printings: [...priced],
   };
 }
 
@@ -123,16 +151,16 @@ export function decidePrice(
   const ebayMultiplier = multipliers.ebayMultiplier ?? 1.0;
 
   const comps = {
-    pokegrade: pokegrade?.value ?? null,
-    collectr: collectr?.market ?? null,
-    tcgplayer: tcgplayer?.market ?? null,
-    ebay: ebay?.median ?? null,
-    rapidapi: rapidapi?.market ?? null,
-    justtcg: justtcg?.market ?? null,
-    pokewallet: pokewallet?.market ?? null,
-    pokemontcgapi: pokemontcgapi?.market ?? null,
-    tcgdex: tcgdex?.market ?? null,
-    cardmarket: cardmarket?.market ?? null,
+    pokegrade: usablePrice(pokegrade?.value),
+    collectr: usablePrice(collectr?.market),
+    tcgplayer: usablePrice(tcgplayer?.market),
+    ebay: usablePrice(ebay?.median),
+    rapidapi: usablePrice(rapidapi?.market),
+    justtcg: usablePrice(justtcg?.market),
+    pokewallet: usablePrice(pokewallet?.market),
+    pokemontcgapi: usablePrice(pokemontcgapi?.market),
+    tcgdex: usablePrice(tcgdex?.market),
+    cardmarket: usablePrice(cardmarket?.market),
   };
 
   const availableEntries = Object.entries(comps).filter(([, value]) => value !== null && value !== undefined);
@@ -164,13 +192,19 @@ export function decidePrice(
   }
 
   let suggested = null;
+  let market = null;
   if (available.length > 0) {
     const base = median(available);
+    market = Math.round(base * 100) / 100;
     suggested = {
       mercari: formatListPrice(base * mercariMultiplier),
       ebay: formatListPrice(base * ebayMultiplier),
     };
+    if (action === 'auto' && (suggested.mercari === 0 || suggested.ebay === 0)) {
+      action = 'needs_review';
+      reason = 'list price rounds to $0';
+    }
   }
 
-  return { action, reason, comps, suggested };
+  return { action, reason, comps, suggested, market };
 }

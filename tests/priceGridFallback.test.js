@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 
 import { chainPriceGrids } from '../src/pricing/priceGrid.js';
 import { tcgdexPriceGrid } from '../src/pricing/tcgdex.js';
+import { createServer } from '../src/server.js';
 
 test('tcgdexPriceGrid maps TCGdex printings to the extension grid (market as NM)', () => {
   const grid = tcgdexPriceGrid({
@@ -35,6 +37,23 @@ test('chainPriceGrids keeps the first source when it answers', async () => {
 test('chainPriceGrids rethrows when every source fails', async () => {
   const broken = { getPriceGrid: async () => { throw new Error('down'); } };
   await assert.rejects(chainPriceGrids(broken, broken).getPriceGrid({ name: 'Mew' }), /down/);
+});
+
+test('GET /api/price-grid rejects a name with no set or number', async () => {
+  const server = createServer({ priceGridClient: { getPriceGrid: async () => ({ source: 'justtcg' }) } });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    const status = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/api/price-grid?name=Charizard' }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      }).on('error', reject);
+    });
+    assert.equal(status, 400);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('chainPriceGrids reports no data (not an error) when a later source answers null', async () => {

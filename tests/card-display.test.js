@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   ageLabel,
+  detectedVariant,
   isPrintingConfirmed,
   lotTotal,
   printingNote,
@@ -47,7 +48,7 @@ test('one printing is quoted and counted', () => {
 test('several printings are not quoted until the user picks one', () => {
   assert.equal(isPrintingConfirmed(charizard.price_grid, null), false);
   assert.equal(quotedPrice(charizard, null), null);
-  assert.match(printingNote(charizard.price_grid), /3 printings/);
+  assert.match(printingNote(charizard.price_grid), /3 variants/);
   assert.match(printingNote(charizard.price_grid), /\$928\.00/);
   assert.match(printingNote(charizard.price_grid), /\$38,?000\.00|\$38000\.00/);
   const lot = lotTotal([charizard], () => null);
@@ -61,6 +62,19 @@ test('a chosen printing is the only price that counts', () => {
   assert.equal(quote.printing, '1stEditionHolofoil');
   assert.equal(lotTotal([charizard], () => '1stEditionHolofoil').total, 38000);
   assert.equal(lotTotal([charizard], () => '1stEditionHolofoil').unconfirmed, 0);
+});
+
+test('a card with the 1st Edition stamp starts on its 1st Edition price', () => {
+  assert.equal(detectedVariant({ ...charizard, firstEdition: true }), '1stEditionHolofoil');
+  const jungle = { firstEdition: true, price_grid: { variants: { unlimited: {}, '1stEditionNormal': {} } } };
+  assert.equal(detectedVariant(jungle), '1stEditionNormal');
+});
+
+test('no stamp, or no 1st Edition price, leaves the variant to the user', () => {
+  assert.equal(detectedVariant({ ...charizard, firstEdition: false }), null);
+  assert.equal(detectedVariant(charizard), null);
+  assert.equal(detectedVariant({ firstEdition: true, price_grid: { variants: { holofoil: {} } } }), null);
+  assert.equal(detectedVariant({ firstEdition: true, price_grid: null }), null);
 });
 
 test('a legacy price with no printing map still counts', () => {
@@ -85,6 +99,17 @@ test('a card whose set is not chosen is not quoted or counted', () => {
   const picked = { ...unsure, setConfirmed: true, market_price: 8.85 };
   assert.equal(isSetConfirmed(picked), true);
   assert.equal(lotTotal([picked], () => null).total, 8.85);
+});
+
+test('the lot total follows the enabled condition', () => {
+  const card = {
+    market_price: 400,
+    price_grid: {
+      variants: { normal: { conditions: { NM: 400, LP: 250, MP: null, HP: null, DMG: null } } },
+    },
+  };
+  assert.equal(lotTotal([card], () => null, ['LP']).total, 250);
+  assert.equal(lotTotal([card], () => null, ['HP']).total, 0);
 });
 
 test('a card with one possible set needs no set choice', () => {

@@ -185,10 +185,10 @@
     const values = names
       .map((name) => variants[name]?.market)
       .filter((price) => typeof price === 'number' && price > 0);
-    if (values.length < 2) return names.length + ' printings';
+    if (values.length < 2) return names.length + ' variants';
     const low = Math.min(...values);
     const high = Math.max(...values);
-    return names.length + ' printings · $' + low.toFixed(2) + '–$' + high.toFixed(2);
+    return names.length + ' variants · $' + low.toFixed(2) + '–$' + high.toFixed(2);
   }
 
   function drawBadge(x1, y1, x2, y2, card, accentColor) {
