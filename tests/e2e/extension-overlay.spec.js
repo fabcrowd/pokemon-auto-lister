@@ -32,6 +32,7 @@ test.describe('Extension overlay', () => {
         },
         writable: true,
       });
+      window.chrome = { runtime: { sendMessage: () => Promise.resolve() } };
     });
   });
 
