@@ -1,22 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { REPEATED_NAME_MIN, SMALL_SOURCE_CONFIDENCE_CAP, markRepeatedNames } from '../tools/extension-wasm/lib/fusion.js';
+import { BELOW_HIGH_CONFIDENCE, REPEATED_NAME_MIN, markRepeatedNames } from '../tools/extension-wasm/lib/fusion.js';
 import { classifyCard, confTier } from '../tools/extension-wasm/lib/card-display.js';
 
-const sure = (name, id) => ({ identity: { id, name, set: 'Fossil' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] });
+const sure = (name, id) => ({ identity: { id, name, set: 'Fossil' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1], market_price: 4.5 });
 
-test('three boxes with one name stay in the list, keep the name, and are no longer sure', () => {
+test('three boxes with one name keep the name and price, lose "high", and are flagged for a check', () => {
   const lot = [sure('Arbok', 'a1'), sure('Arbok', 'a2'), sure('Magnemite', 'm1'), sure('arbok ', 'a3')];
   const out = markRepeatedNames(lot);
   assert.equal(out.length, lot.length);
   for (const i of [0, 1, 3]) {
     assert.equal(out[i].identity.name, lot[i].identity.name);
-    assert.equal(out[i].unsure, true);
+    assert.notEqual(out[i].unsure, true, 'no blocking picker');
     assert.equal(out[i].repeatedName, true);
-    assert.ok(out[i].confidence <= SMALL_SOURCE_CONFIDENCE_CAP);
-    assert.notEqual(confTier(out[i].confidence), 'high');
-    assert.equal(classifyCard(out[i]), 'pick');
+    assert.equal(out[i].confidence, BELOW_HIGH_CONFIDENCE);
+    assert.equal(confTier(out[i].confidence), 'medium');
+    assert.equal(out[i].market_price, lot[i].market_price);
+    assert.equal(classifyCard(out[i]), 'identified');
   }
   assert.equal(out[2], lot[2]);
   assert.equal(lot[0].unsure, undefined, 'the input is not mutated');
@@ -35,16 +36,16 @@ test('a low confidence is not raised, and abstains are not counted or changed', 
   const lot = [unsureOne, sure('Arbok', 'a2'), sure('Arbok', 'a3'), abstained, abstained];
   const out = markRepeatedNames(lot);
   assert.equal(out[0].confidence, 0.3);
-  assert.equal(out[0].unsure, true);
+  assert.equal(out[0].repeatedName, true);
   assert.equal(out[3], abstained);
   const withAbstains = markRepeatedNames([sure('Arbok', 'a1'), sure('Arbok', 'a2'), abstained]);
-  assert.equal(withAbstains[0].unsure, undefined);
+  assert.equal(withAbstains[0].repeatedName, undefined);
 });
 
 test('a name found only through a set menu still counts', () => {
   const menu = (n) => ({ identity: { name: 'Arbok' }, confidence: 0.9, abstain: false, setChoices: [{ id: 'x' }, { id: 'y' }], n });
   const out = markRepeatedNames([menu(1), menu(2), menu(3)]);
-  assert.ok(out.every((c) => c.unsure === true && c.identity.name === 'Arbok'));
+  assert.ok(out.every((c) => c.repeatedName === true && c.identity.name === 'Arbok'));
 });
 
 test('a bulk lot of many different cards is untouched', () => {

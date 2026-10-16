@@ -159,3 +159,28 @@ test('applyTitlePrior leaves a lot page alone, prefill included', () => {
   });
   assert.equal(out, card);
 });
+
+const capped = (identity, over = {}) => ({ identity, confidence: 0.79, confidenceBeforeSetCap: 0.9, setUnconfirmed: true, abstain: false, ...over });
+const charizard = { id: 'base1-4', name: 'Charizard', set: 'Base Set', setCode: 'base1', number: '4' };
+const listing = (h1) => ({ kind: 'listing', page: { h1 } });
+
+test('a title with the card name, number and set confirms the printing and restores the confidence', () => {
+  const [out] = applyTitlePrior([capped(charizard)], listing('Charizard 4/102 Base Set Holo PSA 9'));
+  assert.equal(out.confidence, 0.9);
+  assert.equal(out.setUnconfirmed, false);
+  assert.equal(out.identity.id, 'base1-4');
+});
+
+test('a number alone, another set or a lot title does not confirm the printing', () => {
+  for (const h1 of ['Charizard #4', 'Charizard 4/102 Legendary Collection', 'Charizard 4/102 Base Set 2', 'Lot of 10 Base Set cards Charizard 4/102 Base Set', 'Blastoise 4/102 Base Set']) {
+    const [out] = applyTitlePrior([capped(charizard)], listing(h1));
+    assert.equal(out.confidence, 0.79, h1);
+    assert.equal(out.setUnconfirmed, true, h1);
+  }
+});
+
+test('the title never lifts a read that something else lowered further', () => {
+  const small = capped(charizard, { confidence: 0.49, smallSource: true });
+  const [out] = applyTitlePrior([small], listing('Charizard 4/102 Base Set'));
+  assert.equal(out.confidence, 0.49);
+});

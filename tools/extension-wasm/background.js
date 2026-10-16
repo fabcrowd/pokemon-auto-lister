@@ -18,10 +18,11 @@ import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
-import { capHeightFor, capSmallSource, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
+import { capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
+import { setRangeOf } from "./lib/card-display.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
@@ -607,7 +608,7 @@ async function handleScanPage(sendResponse, era) {
         const checked = markRepeatedNames(photoReads);
         const repeated = checked.filter((card, i) => card !== photoReads[i]);
         if (repeated.length) {
-          console.log("[BG]   ", repeated.length, "boxes named", JSON.stringify(repeated[0].identity?.name), "- marked unsure");
+          console.log("[BG]   ", repeated.length, "boxes named", JSON.stringify(repeated[0].identity?.name), "- held below high");
           cards.splice(photoFirst, checked.length, ...checked);
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
@@ -1052,7 +1053,26 @@ const STAMP_CARD_H = 525;
 async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null, capHeight = sourceHeight) {
   const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
-  return capSmallSource(read, capHeight);
+  // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
+  return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
+}
+
+// A name whose set is still open is shown with what the candidate printings sell for, so the row is useful before anyone picks.
+async function withSetRange(read) {
+  const choices = read.setChoices || [];
+  if (read.abstain || choices.length < 2 || read.setRange) return read;
+  const priced = [];
+  for (const choice of choices) {
+    const card = catalogCard(choice.id);
+    if (!card) continue;
+    try {
+      priced.push(await priceIdentity(card));
+    } catch (err) {
+      console.log("[BG] no price for", choice.id, err?.message || err);
+    }
+  }
+  const setRange = setRangeOf(priced);
+  return setRange ? { ...read, setRange } : read;
 }
 
 async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
@@ -1153,6 +1173,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
       if (identity && result.identity?.id !== identity.id) {
         console.log("[BG] promo number", number, "→", identity.id);
         result.identity = identity;
+        result.setUnconfirmed = false;
         result.setChoices = undefined;
         result.abstain = false;
         Object.assign(result, await priceIdentity(identity));
@@ -1353,7 +1374,9 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
       ...unpriced,
     };
   }
-  return { identity, confidence, abstain, ocrText, ...(await priceIdentity(identity)) };
+  // Other sets print this name: the printing rests on the picture alone until a number, symbol, stamp or title confirms it.
+  const setUnconfirmed = physicalHits(printingsOf(identity.name).map((index) => ({ index })), _meta).length > 1;
+  return { identity, confidence, abstain, ocrText, ...(setUnconfirmed ? { setUnconfirmed } : {}), ...(await priceIdentity(identity)) };
 }
 
 let _catalogNames = null;

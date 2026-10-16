@@ -18,13 +18,39 @@ const meta = [
 const hit = (index, score) => ({ index, score });
 
 test('close same-name matches from different sets are offered as choices', () => {
-  const hits = [hit(0, 0.908), hit(1, 0.903), hit(2, 0.898), hit(3, 0.897), hit(4, 0.871)];
+  const hits = [hit(0, 0.908), hit(1, 0.903), hit(2, 0.898), hit(3, 0.897), hit(4, 0.84)];
   const choices = setChoices(meta[0], hits, meta);
   assert.deepEqual(choices.map((c) => c.id), ['ex8-93', 'ex10-98', 'ex15-87']);
 });
 
+const reprints = [
+  { id: 'base1-2', name: 'Blastoise', set: 'Base Set', setCode: 'base1', number: '2' },
+  { id: 'base4-2', name: 'Blastoise', set: 'Base Set 2', setCode: 'base4', number: '2' },
+  { id: 'lc-2', name: 'Blastoise', set: 'Legendary Collection', setCode: 'lc', number: '2' },
+  { id: 'base1-15', name: 'Venusaur', set: 'Base Set', setCode: 'base1', number: '15' },
+  { id: 'xy1-30', name: 'Blastoise', set: 'XY', setCode: 'xy1', number: '30' },
+];
+
+test('Base Set and Base Set 2 within 0.05 of each other are both offered, the name kept', () => {
+  // Measured on labelled HiBid crops: the right printing was within 0.05 of the best same-name hit 96% of the time (0.03: 88%).
+  const hits = [hit(0, 0.86), hit(1, 0.82), hit(2, 0.812)];
+  const choices = setChoices(reprints[0], hits, reprints);
+  assert.deepEqual(choices.map((c) => c.id), ['base1-2', 'base4-2', 'lc-2']);
+  assert.ok(choices.every((c) => c.name === 'Blastoise'));
+});
+
+test('a printing more than 0.05 behind is not offered', () => {
+  const hits = [hit(0, 0.86), hit(4, 0.80)];
+  assert.deepEqual(setChoices(reprints[0], hits, reprints).map((c) => c.id), ['base1-2']);
+});
+
+test('a near-tied card with a different name does not make the set unsure', () => {
+  const hits = [hit(0, 0.86), hit(3, 0.859), hit(1, 0.7)];
+  assert.deepEqual(setChoices(reprints[0], hits, reprints).map((c) => c.id), ['base1-2']);
+});
+
 test('a match far below the best is not offered', () => {
-  const hits = [hit(0, 0.908), hit(4, 0.871)];
+  const hits = [hit(0, 0.908), hit(4, 0.84)];
   assert.deepEqual(setChoices(meta[0], hits, meta).map((c) => c.id), ['ex8-93']);
 });
 

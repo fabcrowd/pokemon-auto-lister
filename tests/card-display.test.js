@@ -14,6 +14,9 @@ import {
   modelFileLabel,
   explainScanError,
   isSetConfirmed,
+  isUnsure,
+  setRangeOf,
+  setRangeNote,
 } from '../tools/extension-wasm/lib/card-display.js';
 
 const charizard = {
@@ -239,4 +242,44 @@ test('lotTotal leaves out cards that are only a guess', () => {
   assert.equal(lotTotalForUnsure([priced({ abstain: true })], choose).total, 0);
   assert.equal(lotTotalForUnsure([priced({ unsure: true })], choose).total, 0);
   assert.equal(lotTotalForUnsure([priced({ abstain: true, setConfirmed: true })], choose).total, 5);
+});
+
+const grid = (nm) => ({ variants: { normal: { market: nm, conditions: { NM: nm, LP: null, MP: null, HP: null, DMG: null } } } });
+const setNamed = (extra = {}) => ({ identity: { name: 'Blastoise' }, confidence: 0.79, abstain: false, setChoices: [{ id: 'base1-2' }, { id: 'base4-2' }], ...extra });
+
+test('a price range across the candidate printings: lowest to highest, one entry per printing', () => {
+  const range = setRangeOf([
+    { price_grid: grid(40), market_price: 40 },
+    { price_grid: { variants: { holofoil: { conditions: { NM: 55, LP: 30 } }, reverse: { conditions: { NM: null, LP: 20 } } } }, market_price: null },
+    { price_grid: null, market_price: 12.5 },
+    { price_grid: null, market_price: null },
+  ]);
+  assert.deepEqual(range, { low: 12.5, high: 55, count: 3 });
+  assert.equal(setRangeOf([{ price_grid: null, market_price: null }]), null);
+  assert.equal(setRangeOf([]), null);
+  assert.deepEqual(setRangeOf([{ price_grid: grid(9), market_price: 9 }, { price_grid: grid(9), market_price: 9 }]), { low: 9, high: 9, count: 2 });
+});
+
+test('the range is worded for the row and the overlay', () => {
+  assert.equal(setRangeNote({ low: 1.65, high: 4.7, count: 3 }), '3 sets · $1.65–$4.70');
+  assert.equal(setRangeNote({ low: 9, high: 9, count: 2 }), '2 sets · $9.00');
+  assert.equal(setRangeNote(null), null);
+});
+
+test('a name with several possible sets and a price range is shown, not asked about', () => {
+  const ranged = setNamed({ setRange: { low: 5, high: 40, count: 2 } });
+  assert.equal(isUnsure(ranged), false);
+  assert.equal(isIdentified(ranged), true);
+  assert.equal(classifyCard(ranged), 'identified');
+  assert.equal(isSetConfirmed(ranged), false, 'the set is still open, so no single price is quoted');
+  assert.equal(quotedPrice(ranged, null), null);
+  assert.equal(lotTotal([ranged], () => null).total, 0);
+  assert.equal(lotTotal([ranged], () => null).unconfirmed, 1);
+  assert.match(scanStatus([ranged]), /1 identified/);
+});
+
+test('several possible sets and no price at all still ask, and low confidence still asks', () => {
+  assert.equal(isUnsure(setNamed()), true);
+  assert.equal(classifyCard(setNamed()), 'pick');
+  assert.equal(isUnsure(setNamed({ setRange: { low: 5, high: 40, count: 2 }, confidence: 0.3 })), true);
 });

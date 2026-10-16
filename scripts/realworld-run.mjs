@@ -241,6 +241,8 @@ async function main() {
           picker: /Which card is this/i.test(row.querySelector('.picker-title')?.textContent || ''),
           candidates: [...row.querySelectorAll('.pick-card .pick-name')].map((v) => text(v)),
           setNotSure: /Set not sure/i.test(text(row.querySelector('.card-sub'))),
+          setRange: text(row.querySelector('.set-range')),
+          repeatNote: Boolean(row.querySelector('.repeat-note')),
           prices: [...row.querySelectorAll('.price-cell:not(.na) .val, .g-val')].map((v) => text(v)),
           priceNote: [...row.querySelectorAll('.spread-warn, .no-price')].map((v) => text(v)).join(' | '),
         }));
@@ -282,6 +284,7 @@ async function main() {
       rec.unsure = ui.rows.filter((r) => r.picker).length;
       rec.identified = ui.rows.filter((r) => known(r) && !r.picker && r.stripe !== 'abstain').length;
       rec.priced = ui.rows.filter((r) => r.prices.some((p) => p.startsWith('$'))).length;
+      rec.useful = ui.rows.filter((r) => known(r) && (r.prices.some((p) => p.startsWith('$')) || r.setRange)).length;
       rec.cardNames = ui.rows.map((r) => r.name);
       rec.totalStat = ui.totalStat;
       rec.scanMsStat = ui.msStat;

@@ -91,24 +91,55 @@ export function confTier(confidence) {
   return 'low';
 }
 
+const RANGE_CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'];
+
+function pricesOf(item) {
+  const prices = [];
+  for (const variant of Object.values(item?.price_grid?.variants || {})) {
+    const at = RANGE_CONDITIONS.map((c) => variant?.conditions?.[c]).find((v) => typeof v === 'number' && v > 0);
+    if (at != null) prices.push(at);
+  }
+  if (!prices.length && typeof item?.market_price === 'number' && item.market_price > 0) prices.push(item.market_price);
+  return prices;
+}
+
+/**
+ * Lowest to highest price over the printings a name could be, one entry per printing, using each
+ * printing's best available condition (NM first). null when no printing has a price.
+ */
+export function setRangeOf(items) {
+  const all = (items || []).map(pricesOf).filter((prices) => prices.length);
+  if (!all.length) return null;
+  const flat = all.flat();
+  return { low: Math.min(...flat), high: Math.max(...flat), count: all.length };
+}
+
+export function setRangeNote(range) {
+  if (!range) return null;
+  const sets = `${range.count} sets`;
+  return range.low === range.high ? `${sets} · ${formatUsd(range.high)}` : `${sets} · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
+}
+
+const hasSetRange = (card) => card?.setRange?.high > 0;
+
 // More than one possible set means the user has to pick before we quote.
 export function isSetConfirmed(card) {
   return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true;
 }
 
-/** The scanner is guessing: it abstained, the set is open, or confidence is low. */
+/** The scanner is guessing: it abstained, the set is open with nothing to show for it, or confidence is low. */
 export function isUnsure(card) {
   if (!card || card.cardBack || card.setConfirmed === true) return false;
   return card.unsure === true
     || Boolean(card.abstain)
-    || (card.setChoices?.length || 0) > 1
+    || ((card.setChoices?.length || 0) > 1 && !hasSetRange(card))
     || confTier(card.confidence) === 'low';
 }
 
 /** A card the scanner named, is not guessing about, and whose set is settled. */
 export function isIdentified(card) {
   if (!card || card.cardBack) return false;
-  return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && isSetConfirmed(card);
+  return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && (isSetConfirmed(card) || hasSetRange(card));
 }
 
 /**

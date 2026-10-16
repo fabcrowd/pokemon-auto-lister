@@ -1,9 +1,12 @@
 // A listing's own title ("Charizard 4/102 Base Set Holo PSA 9") is a weak hint about which card the
 // photo shows. It only reorders what the matcher already proposed and prefills the search box; it never
-// adds a candidate, never touches confidence, and never makes an unsure row sure.
+// adds a candidate, and never makes an unsure row sure. The one thing it can raise is a printing that was held
+// below "high" only because nothing but the picture chose it: a title naming the card, its number and its set
+// is an independent signal for that printing.
 
 import { isUnsure } from "./card-display.js";
 import { choiceName } from "./set-choice.js";
+import { UNCONFIRMED_SET_CONFIDENCE_CAP } from "./fusion.js";
 
 const SITES = "ebay|mercari|hibid|tcgplayer|pricecharting|pokellector|etsy|amazon(?:\\.com)?|whatnot|facebook marketplace|shop ?goodwill(?:\\.com)?";
 const SITE_SUFFIX = new RegExp(`\\s*[|\\-\\u2013\\u2014\\u00b7:]\\s*(?:[^|\\-\\u2013\\u2014\\u00b7:]*\\bon\\s+)?(?:${SITES})\\b[^|]*$`, "i");
@@ -131,6 +134,25 @@ export function rerankByTitle(candidates, parsed, knownNames = []) {
   return order.every((o, i) => o.i === i) ? candidates : order.map((o) => o.c);
 }
 
+/** The title names this card, its collector number and its set, so it confirms this printing. */
+export function titleConfirmsPrinting(parsed, card) {
+  if (!parsed?.tokens?.length || parsed.lot || !parsed.number || !card?.number) return false;
+  if (numberKey(card.number) !== parsed.number) return false;
+  const name = nameWords(card.name);
+  const set = words(card.set);
+  return name.length > 0 && set.length > 0 && hasRun(parsed.tokens, name) && setNamed(parsed.tokens, set, parsed.number);
+}
+
+// "Base Set 2" is not "Base Set": a digit right after the set's words belongs to the set unless it is the card's number.
+function setNamed(tokens, set, number) {
+  for (let at = 0; at + set.length <= tokens.length; at++) {
+    if (!set.every((word, i) => tokens[at + i] === word)) continue;
+    const next = tokens[at + set.length];
+    if (next === undefined || !/^\d{1,2}$/.test(next) || numberKey(next) === number) return true;
+  }
+  return false;
+}
+
 function queryFor(parsed, name) {
   const number = parsed.number ? parsed.number + (parsed.total ? `/${parsed.total}` : "") : "";
   return [name, number].filter(Boolean).join(" ");
@@ -154,6 +176,12 @@ export function applyTitlePrior(cards, { kind, page, knownNames = [], log = () =
       next = { ...card, ...(setChoices !== card.setChoices ? { setChoices } : {}), ...(candidates !== card.candidates ? { candidates } : {}) };
       log(`title prior: moved ${(candidates !== card.candidates ? candidates : setChoices)[0].name} to front`);
       break;
+    }
+    const heldBack = card.setUnconfirmed === true && card.identity?.id && card.confidenceBeforeSetCap > card.confidence
+      && card.confidence === UNCONFIRMED_SET_CONFIDENCE_CAP;
+    if (heldBack && parsedTitles.some((parsed) => titleConfirmsPrinting(parsed, card.identity))) {
+      const { confidenceBeforeSetCap, ...rest } = next;
+      next = { ...rest, confidence: confidenceBeforeSetCap, setUnconfirmed: false };
     }
     if (isUnsure(card)) {
       for (const parsed of parsedTitles) {

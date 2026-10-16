@@ -2,7 +2,11 @@
 // At listing-photo size the recognizer scores different sets of the same
 // Pokémon within a few hundredths of each other, so its top pick is a guess.
 
-const NEAR = 0.03;
+// Same-name printings this close to the best one are one guess: the set is not sure. Measured 2026-10-16 on
+// the labelled HiBid crops (centre crop, catalog 2026-10-11, 134 reads whose name was right): the true
+// printing scored within 0.03 of the best same-name hit 88% of the time, 0.04 93%, 0.05 96%, 0.06 97%.
+// Where only one printing was inside 0.05 it was the right one in 13 of 14. Refit with the thresholds in fusion.js.
+const NEAR = 0.05;
 const MAX_CHOICES = 4;
 
 // "Vibrava δ" and "Vibrava" are the same name for choosing a set.

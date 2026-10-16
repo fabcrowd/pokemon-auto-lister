@@ -1,4 +1,4 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, sourceFooter, sourceName, splitByRecognition } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -452,6 +452,9 @@ function renderCardRow(card, idx) {
     : lone && card.priceError ? `<div class="spread-warn">${escHtml(card.priceError)}</div>` : "";
   // The candidates already include the set choices; a second menu would ask the same question twice.
   const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
+  const rangeNote  = !setKnown ? setRangeNote(card.setRange) : null;
+  const rangeRow   = rangeNote ? `<div class="spread-warn set-range">${escHtml(rangeNote)} · best guess, pick the set for one price</div>` : "";
+  const repeatRow  = card.repeatedName ? `<div class="spread-warn repeat-note">Same name found several times in this photo. Check it.</div>` : "";
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const condRow    = setKnown ? renderConditionGrid(card, printing) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
@@ -469,6 +472,8 @@ function renderCardRow(card, idx) {
     </div>
     ${askRow}
     ${pricingRow}
+    ${rangeRow}
+    ${repeatRow}
     ${setRow}
     ${variantRow}
     ${condRow}
@@ -646,7 +651,7 @@ function renderSetRow(card, idx) {
   const status = card.pricing ? `<span class="spread-warn">Getting price…</span>`
     : card.priceError ? `<span class="spread-warn">${escHtml(card.priceError)}</span>` : "";
   return `<div class="variant-select-row set-select-row">
-    <span class="lbl">Set</span>
+    <span class="lbl">Set?</span>
     <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
     ${status}
   </div>`;
@@ -823,7 +828,8 @@ function computeDisplayForOverlay(card, idx) {
   if (card.abstain) return null;
   const id = card.identity || {};
   if (!isSetConfirmed(card)) {
-    return { name: id.name || null, price: null, printingNote: "set not sure — pick it in the popup", footer: null };
+    const range = setRangeNote(card.setRange);
+    return { name: id.name || null, price: null, printingNote: range ? `set not sure · ${range}` : "set not sure — pick it in the popup", footer: null };
   }
   const printing = chosenPrinting(card, idx);
   const quote = quotedPrice(card, printing, enabledConditions());

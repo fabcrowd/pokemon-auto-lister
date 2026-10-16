@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fuseResults } from '../tools/extension-wasm/lib/fusion.js';
+import { capUnconfirmedSet, fuseResults, UNCONFIRMED_SET_CONFIDENCE_CAP } from '../tools/extension-wasm/lib/fusion.js';
+import { confTier } from '../tools/extension-wasm/lib/card-display.js';
 
 test('a name that leads a near-tie beats one lookalike', () => {
   const meta = [
@@ -74,4 +75,95 @@ test('rank decides who leads and how far ahead; the reported similarity still se
     { index: 0, score: 0.5, rank: 0.5 },
   ], null, meta, []);
   assert.equal(low.reason, 'low_sim');
+});
+
+const pair = (names, scores) => ({
+  meta: names.map((name) => ({ name })),
+  hits: scores.map((score, index) => ({ index, score })),
+});
+
+test('the accept thresholds are unchanged: a lead of 0.022 is still accepted, only the high tier needs more', () => {
+  const { meta, hits } = pair(['Lugia', 'Gyarados'], [0.84, 0.818]);
+  const result = fuseResults(hits, null, meta, []);
+  assert.equal(result.abstain, false);
+  assert.equal(result.reason, 'clear_gap');
+  assert.equal(confTier(result.confidence), 'medium');
+});
+
+test('high needs a lead of 0.025 and a similarity of 0.82; the same read below either is medium', () => {
+  const sure = pair(['Charizard', 'Charmeleon'], [0.84, 0.81]);
+  assert.equal(confTier(fuseResults(sure.hits, null, sure.meta, []).confidence), 'high');
+  const smallLead = pair(['Charizard', 'Charmeleon'], [0.84, 0.82]);
+  assert.equal(confTier(fuseResults(smallLead.hits, null, smallLead.meta, []).confidence), 'medium');
+  const lowSim = pair(['Charizard', 'Charmeleon'], [0.81, 0.77]);
+  const low = fuseResults(lowSim.hits, null, lowSim.meta, []);
+  assert.equal(low.abstain, false);
+  assert.equal(confTier(low.confidence), 'medium');
+  assert.equal(low.confidence, 0.79);
+});
+
+test('a lower confidence is not raised, and the other accept paths are never high', () => {
+  const weak = pair(['Wartortle', 'Squirtle'], [0.74, 0.5]);
+  assert.equal(fuseResults(weak.hits, null, weak.meta, []).confidence, 0.74);
+  const sameName = pair(['Blastoise', 'Blastoise'], [0.93, 0.925]);
+  const named = fuseResults(sameName.hits, null, sameName.meta, []);
+  assert.equal(named.reason, 'name_match');
+  assert.notEqual(confTier(named.confidence), 'high');
+  const tie = pair(['Eevee', 'Shellder'], [0.99, 0.985]);
+  const highSim = fuseResults(tie.hits, null, tie.meta, []);
+  assert.equal(highSim.reason, 'high_sim');
+  assert.notEqual(confTier(highSim.confidence), 'high');
+});
+
+const reprintRead = (over = {}) => ({
+  identity: { name: 'Blastoise' },
+  confidence: 0.9,
+  abstain: false,
+  setChoices: [
+    { id: 'base1-2', name: 'Blastoise', setCode: 'base1', number: '2' },
+    { id: 'base4-2', name: 'Blastoise', setCode: 'base4', number: '2' },
+  ],
+  ...over,
+});
+
+test('reprints with the same art keep the name but are never shown as high', () => {
+  const read = reprintRead();
+  const out = capUnconfirmedSet(read);
+  assert.equal(out.identity.name, 'Blastoise');
+  assert.equal(out.abstain, false);
+  assert.equal(out.setChoices.length, 2);
+  assert.equal(out.confidence, UNCONFIRMED_SET_CONFIDENCE_CAP);
+  assert.notEqual(confTier(out.confidence), 'high');
+  assert.equal(confTier(out.confidence), 'medium');
+  assert.equal(read.confidence, 0.9, 'the input is not mutated');
+});
+
+test('a set confirmed by number, symbol or stamp has no choices left and keeps its confidence', () => {
+  const confirmed = reprintRead({ identity: { id: 'base1-2', name: 'Blastoise', setCode: 'base1' }, setChoices: undefined });
+  assert.equal(capUnconfirmedSet(confirmed), confirmed);
+  assert.equal(confTier(capUnconfirmedSet(confirmed).confidence), 'high');
+});
+
+test('a card with a single printing in reach and a read that already is lower are left alone', () => {
+  const single = reprintRead({ setChoices: [{ id: 'base1-2' }] });
+  assert.equal(capUnconfirmedSet(single), single);
+  const low = reprintRead({ confidence: 0.6 });
+  assert.equal(capUnconfirmedSet(low), low);
+  const abstained = reprintRead({ abstain: true, confidence: 0.4 });
+  assert.equal(capUnconfirmedSet(abstained), abstained);
+  assert.equal(capUnconfirmedSet(null), null);
+});
+
+test('a printing picked only by how the picture looks is capped when other sets print the card, and kept when a read settled it', () => {
+  const lookOnly = { identity: { id: 'base4-2', name: 'Blastoise', setCode: 'base4' }, confidence: 0.89, abstain: false, setUnconfirmed: true };
+  const out = capUnconfirmedSet(lookOnly);
+  assert.equal(out.confidence, UNCONFIRMED_SET_CONFIDENCE_CAP);
+  assert.equal(out.confidenceBeforeSetCap, 0.89);
+  assert.equal(out.identity.id, 'base4-2');
+  assert.notEqual(confTier(out.confidence), 'high');
+  const settled = { ...lookOnly, setUnconfirmed: false };
+  assert.equal(capUnconfirmedSet(settled), settled);
+  const read = { ...lookOnly };
+  delete read.setUnconfirmed;
+  assert.equal(capUnconfirmedSet(read), read, 'number, symbol and rules reads never carry the flag');
 });
