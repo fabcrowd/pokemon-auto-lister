@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,12 +26,12 @@ test('the sealed test build differs from the shipped one only in the source-URL 
     );
     assert.equal(build.status, 0, build.stderr || build.stdout);
 
-    // The ONNX runtime is downloaded into dist/extension-wasm/vendor by setup_vendor.ps1, not tracked; the test build needs it too.
-    const vendorDir = path.join(repoRoot, 'dist', 'extension-wasm', 'vendor');
-    const vendor = existsSync(vendorDir) ? listFiles(vendorDir).map((file) => `vendor/${file}`) : [];
-    const built = listFiles(outputRoot).map((file) => file.split(path.sep).join('/')).filter((file) => !file.startsWith('vendor/')).sort();
-    assert.deepEqual(listFiles(outputRoot).map((file) => file.split(path.sep).join('/')).filter((file) => file.startsWith('vendor/')).sort(), vendor.sort());
-    const source = listFiles(sourceRoot).map((file) => file.split(path.sep).join('/')).sort();
+    // The ONNX runtime is downloaded into tools/extension-wasm/vendor by setup_vendor.ps1; only the pinned files ship.
+    const pinned = JSON.parse(readFileSync(path.join(repoRoot, 'scripts', 'vendor-hashes.json'), 'utf8')).files;
+    const built = listFiles(outputRoot).map((file) => file.split(path.sep).join('/')).sort();
+    const source = listFiles(sourceRoot).map((file) => file.split(path.sep).join('/'))
+      .filter((file) => !file.startsWith('vendor/') || file.slice('vendor/'.length) in pinned)
+      .sort();
     assert.deepEqual(built, [...source, 'lib/net-shipped.js'].sort());
     for (const relative of source.filter((file) => file !== 'lib/net.js')) {
       assert.deepEqual(readFileSync(path.join(outputRoot, relative)), readFileSync(path.join(sourceRoot, relative)), relative);

@@ -71,7 +71,7 @@ Look up card prices by card identifier.
 **www.pokemonpricetracker.com**
 Look up condition-based prices by card identifier, using the API key you entered. Used only if you add a key.
 
-**github.com, objects.githubusercontent.com, release-assets.githubusercontent.com**
+**github.com/fabcrowd/pokemon-auto-lister/releases/download/*, objects.githubusercontent.com, release-assets.githubusercontent.com**
 Download the recognition models and lookup data on first run (about 140 MB). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
 
 ## Data usage (Privacy practices tab)

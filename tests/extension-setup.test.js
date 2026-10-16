@@ -98,3 +98,38 @@ test('sha256 of a downloaded file is compared in lowercase hex', async () => {
   const { sha256Hex } = await import('../tools/extension-wasm/lib/setup.js');
   assert.equal(await sha256Hex(body), expected);
 });
+
+test('every downloaded file is pinned to a sha256', async () => {
+  const { ASSETS, OPTIONAL_ASSETS } = await import('../tools/extension-wasm/lib/setup.js');
+  for (const asset of [...ASSETS, ...OPTIONAL_ASSETS]) {
+    assert.match(asset.sha256 ?? '', /^[0-9a-f]{64}$/, asset.name);
+  }
+});
+
+test('a required file whose bytes do not match its pin is rejected and not stored', async () => {
+  const { ASSETS } = await import('../tools/extension-wasm/lib/setup.js');
+  for (const asset of ASSETS) {
+    stored.clear();
+    const url = assetUrl(asset.name);
+    for (const other of ASSETS.filter((a) => a !== asset)) stored.set(assetUrl(other.name), new Uint8Array([1]));
+    serve({ [url]: new Uint8Array([6, 6, 6]) });
+    await assert.rejects(downloadModels(), /damaged/, asset.name);
+    assert.equal(stored.has(url), false, asset.name);
+  }
+});
+
+test('an optional file whose bytes match its pin is stored', async () => {
+  const { getOptionalAsset, OPTIONAL_ASSETS } = await import('../tools/extension-wasm/lib/setup.js');
+  // The real files are tens of MB; this checks the accept path with the pin swapped for a known body.
+  const body = new Uint8Array([7, 7, 7]);
+  const asset = OPTIONAL_ASSETS[0];
+  const original = asset.sha256;
+  asset.sha256 = createHash('sha256').update(body).digest('hex');
+  try {
+    serve({ [assetUrl(asset.name)]: body });
+    assert.deepEqual(new Uint8Array(await getOptionalAsset(asset.name)), body);
+    assert.equal(stored.has(assetUrl(asset.name)), true);
+  } finally {
+    asset.sha256 = original;
+  }
+});

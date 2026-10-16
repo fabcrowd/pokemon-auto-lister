@@ -1,4 +1,8 @@
+import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
+import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
+// dev-only:start
 import { LIMITS, describeSize } from "./lib/test-photos.js";
+// dev-only:end
 
 const pptCard   = document.getElementById("ppt-card");
 const pptStatus = document.getElementById("ppt-status");
@@ -10,9 +14,11 @@ const btnSave   = document.getElementById("save-ppt");
 const btnChange = document.getElementById("change-ppt");
 const btnClear  = document.getElementById("clear-ppt");
 
+// dev-only:start
 const backendDetails = document.getElementById("advanced-backend");
 const backendStatus  = document.getElementById("backend-status");
 const backendDetail  = document.getElementById("backend-detail");
+// dev-only:end
 
 /* ─── PPT key UI ─── */
 
@@ -33,7 +39,7 @@ function setPptDisconnected() {
 }
 
 async function loadKey() {
-  const { pptApiKey } = await new Promise((r) => chrome.storage.sync.get("pptApiKey", (res) => r(res || {})));
+  const pptApiKey = await getPptKey();
   if (pptApiKey) {
     setPptConnected();
     pptKeyEl.value = pptApiKey;
@@ -76,7 +82,7 @@ btnSave.addEventListener("click", async () => {
   const result = await probePpt(key);
   btnSave.disabled = false;
   if (!result.ok) { showTest("Test failed: " + result.reason, "err"); return; }
-  await new Promise((r) => chrome.storage.sync.set({ pptApiKey: key }, r));
+  await savePptKey(key);
   showTest("Key verified and saved.", "ok");
   setPptConnected();
 });
@@ -88,12 +94,42 @@ btnChange.addEventListener("click", () => {
 });
 
 btnClear.addEventListener("click", async () => {
-  await new Promise((r) => chrome.storage.sync.remove("pptApiKey", r));
+  await clearPptKey();
   setPptDisconnected();
   pptKeyEl.value = "";
   showTest("", "info");
 });
 
+/* ─── Site access ─── */
+
+const siteToggle = document.getElementById("site-access");
+const siteStatus = document.getElementById("site-access-status");
+const siteNote   = document.getElementById("site-access-note");
+
+function showSiteAccess(on) {
+  siteToggle.checked = on;
+  siteStatus.textContent = on ? "On" : "Off";
+  siteStatus.className = "source-status " + (on ? "connected" : "off");
+}
+
+siteToggle.addEventListener("change", async () => {
+  // The browser accepts the permission prompt only when it is asked for straight from the click.
+  if (siteToggle.checked) {
+    const granted = await requestAllSites(chrome.permissions);
+    siteNote.textContent = granted ? "Scans will read full-size photos." : "Access was not given. Scans use a screenshot of the page.";
+  } else {
+    const removed = await releaseAllSites(chrome.permissions);
+    siteNote.textContent = removed
+      ? "Scans use a screenshot of the page."
+      : "Chrome would not remove it here. You can remove it in chrome://extensions under Details, Site access.";
+  }
+  showSiteAccess(await hasAllSites(chrome.permissions));
+});
+
+hasAllSites(chrome.permissions).then(showSiteAccess);
+watchAllSites(chrome.permissions, showSiteAccess);
+
+// dev-only:start
 /* ─── Backend probe ─── */
 
 async function probeBackend() {
@@ -125,6 +161,7 @@ async function probeBackend() {
     // leave collapsed by default
   }
 })();
+// dev-only:end
 
 /* ─── Corrections ─── */
 
@@ -149,9 +186,22 @@ async function refreshCorrectionCount() {
   if (!known) showCorrectionsStatus("Couldn't read the saved corrections. Reload this page to try again.", "err");
 }
 
+// The first export of corrections that have no fingerprint yet loads the models and embeds them, which takes a while.
+function onExportProgress(msg) {
+  if (msg.action !== "exportProgress") return;
+  showCorrectionsStatus(
+    msg.phase === "models" ? "Loading the card models…" : `Preparing the export: ${msg.done} of ${msg.total}…`,
+    "info",
+  );
+}
+
 btnExportCorrections.addEventListener("click", async () => {
+  btnExportCorrections.disabled = true;
+  chrome.runtime.onMessage.addListener(onExportProgress);
   const resp = await chrome.runtime.sendMessage({ action: "exportCorrections" }).catch(() => null);
-  if (!resp?.corrections) { showCorrectionsStatus("Export failed. Try again.", "err"); return; }
+  chrome.runtime.onMessage.removeListener(onExportProgress);
+  btnExportCorrections.disabled = false;
+  if (!resp?.corrections) { showCorrectionsStatus(resp?.error || "Export failed. Try again.", "err"); return; }
   const file = {
     exportedAt: new Date().toISOString(),
     extVersion: chrome.runtime.getManifest().version,
@@ -163,7 +213,10 @@ btnExportCorrections.addEventListener("click", async () => {
   link.download = `card-scanner-corrections-${file.exportedAt.slice(0, 10)}.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  showCorrectionsStatus(`Exported ${resp.corrections.length} corrections.`, "ok");
+  showCorrectionsStatus(
+    `Exported ${resp.corrections.length} corrections.` + (resp.failed ? ` ${resp.failed} had no usable picture and were exported without a fingerprint.` : ""),
+    resp.failed ? "err" : "ok",
+  );
 });
 
 btnClearCorrections.addEventListener("click", async () => {
@@ -197,6 +250,7 @@ referencesToggle.addEventListener("change", async () => {
   showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
 });
 
+// dev-only:start
 /* ─── Test photos ─── */
 
 const testToggle = document.getElementById("test-collection");
@@ -266,9 +320,13 @@ btnClearPhotos.addEventListener("click", async () => {
   showTestStatus("Cleared. 0 test photos saved.", "ok");
 });
 
+// dev-only:end
+
 refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
+// dev-only:start
 refreshPhotoCount();
 loadCollectionToggle();
+// dev-only:end
 loadKey();

@@ -1,7 +1,7 @@
 // Per-condition + graded pricing for the extension.
 //
 // Three stacked sources, tried in order:
-//   1. Local backend proxy (http://127.0.0.1:3000/api/price-grid) if the Node dashboard is running
+//   1. Developer builds only: local backend proxy (the Node dashboard, if it is running)
 //      → JustTCG via existing server-side key, best data, no key exposed to extension
 //   2. PokemonPriceTracker.com direct, if the user has pasted a key into options
 //      → NM/LP/MP/HP/DMG + PSA/BGS/CGC/SGC in one call
@@ -24,11 +24,16 @@
 //     spreadRatio: <number>                       // max/min across printings
 //   }
 
+import { getPptKey } from "./ppt-key.js";
+
+// dev-only:start
 const BACKEND_URL = "http://127.0.0.1:3000/api/price-grid";
 const HEALTH_URL  = "http://127.0.0.1:3000/api/health";
+// dev-only:end
 const PPT_BASE    = "https://www.pokemonpricetracker.com/api/v2/cards";
 const CONDITIONS  = ["NM", "LP", "MP", "HP", "DMG"];
 
+// dev-only:start
 // ---- backend health probe (cached with TTL so we retry if the user starts the server later) ----
 
 const BACKEND_PROBE_TTL_MS       = 60 * 1000; // reprobe every minute
@@ -59,13 +64,7 @@ export function getBackendStatus() {
   return { ..._backendProbe };
 }
 
-// ---- key management ----
-
-async function getPptKey() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get("pptApiKey", (res) => resolve(res?.pptApiKey || null));
-  });
-}
+// dev-only:end
 
 // ---- orchestrator ----
 
@@ -77,11 +76,13 @@ async function getPptKey() {
 export async function getConditionGrid(identity) {
   if (!identity?.name) return null;
 
+  // dev-only:start
   // 1. Backend proxy (JustTCG)
   if (await probeBackend()) {
     const r = await fetchBackend(identity);
     if (r) return r;
   }
+  // dev-only:end
 
   // 2. PokemonPriceTracker (user key required, needs tcgPlayerId)
   const pptKey = await getPptKey();
@@ -93,6 +94,7 @@ export async function getConditionGrid(identity) {
   return null;
 }
 
+// dev-only:start
 // ---- source 1: local backend ----
 
 async function fetchBackend(identity) {
@@ -127,6 +129,8 @@ function normalizeBackend(j) {
     spreadRatio,
   };
 }
+
+// dev-only:end
 
 // ---- source 2: PokemonPriceTracker ----
 

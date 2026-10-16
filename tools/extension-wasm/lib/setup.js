@@ -4,25 +4,53 @@
 const RELEASES =
   "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/";
 
-const CACHE_NAME = "cardscanner-models-v2.1";
+// The "p" marks a cache whose files were all checked against a pinned hash. Caches from builds that did not
+// check (older names) are deleted by pruneOldCaches, so those files are downloaded and verified once.
+export const CACHE_NAME = "cardscanner-models-v2.1p";
+
+export async function pruneOldCaches() {
+  for (const name of await caches.keys()) {
+    if (name.startsWith("cardscanner-models-") && name !== CACHE_NAME) await caches.delete(name);
+  }
+}
 
 // Files are cached by URL, so moving one file to a new release downloads only
 // that file for people who already have the rest.
-const ASSETS = [
-  { name: "clip_visual_int8.onnx", bytes: 89_000_000, release: "v2.0" },
+export const ASSETS = [
+  {
+    name: "clip_visual_int8.onnx",
+    bytes: 89_000_000,
+    release: "v2.0",
+    sha256: "77538aade655907f58db20510909210f52c45dc858a9d05ffce7420b62b59689",
+  },
   {
     name: "card_detect.onnx",
     bytes: 10_606_263,
     release: "v2.1",
     sha256: "5e17ae58b25843be1ee19f5dce4e0e5981a23411564a69eb633bb0694d582ac5",
   },
-  { name: "catalog.bin.gz",        bytes: 42_200_000, release: "v2.0" },
-  { name: "meta.json",             bytes:  4_800_000, release: "v2.0" },
-  { name: "id_map.json",           bytes:    234_000, release: "v2.0" },
+  {
+    name: "catalog.bin.gz",
+    bytes: 42_200_000,
+    release: "v2.0",
+    sha256: "2f3c50cec84937ff63ae5196da040e441599a5df6f28de829db79dd2b2dd7e13",
+  },
+  {
+    name: "meta.json",
+    bytes: 4_800_000,
+    release: "v2.0",
+    sha256: "5febdc04fa74a456b80f6f322bc58fd22f1c4bb5e685abda3c50a12edfd88866",
+  },
+  {
+    name: "id_map.json",
+    bytes: 234_000,
+    release: "v2.0",
+    sha256: "2d60e5a300369d36bd512d750819eb720c470f1a58bce3018cfef320aeee335f",
+  },
 ];
 
 // Fetched in the background after setup; scanning works without them.
-const OPTIONAL_ASSETS = [
+export const OPTIONAL_ASSETS = [
   {
     name: "ocr_det.onnx",
     release: "v2.2",
@@ -112,11 +140,9 @@ export async function downloadModels(onProgress) {
 
     // Reassemble and store in cache
     const blob = new Blob(chunks);
-    if (asset.sha256) {
-      const actual = await sha256Hex(await blob.arrayBuffer());
-      if (actual !== asset.sha256) {
-        throw new Error(`The card finder download is damaged (${asset.name}). Try again.`);
-      }
+    const actual = await sha256Hex(await blob.arrayBuffer());
+    if (actual !== asset.sha256) {
+      throw new Error(`The card finder download is damaged (${asset.name}). Try again.`);
     }
     const cachedResponse = new Response(blob, {
       headers: { "content-type": _contentType(asset.name) },

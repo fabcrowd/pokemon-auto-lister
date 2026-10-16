@@ -3,6 +3,12 @@
  * Not part of the default Playwright run. Profile is reused so the download happens once.
  *
  *   node tests/e2e/live-scan.mjs [photo.jpg]
+ *
+ * EXT_DIR=extension-wasm-sealed loads dist/<that folder>. Only the sealed build fetches the full-size photo
+ * from this script's http://127.0.0.1 page; the shipped checks refuse a loopback address, so every other
+ * build scans a screenshot here.
+ * FORCE_SCREENSHOT=1 sets the developer-only forceScreenshotPath switch (the scan then acts as if the
+ * extension had no access to the image's site).
  */
 
 import { chromium } from 'playwright';
@@ -14,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { clearStaleServiceWorker } from '../../scripts/lib/profile-cache.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const extPath = path.join(root, 'dist', 'extension-wasm');
+const extPath = path.resolve(root, 'dist', process.env.EXT_DIR || 'extension-wasm');
+const forceScreenshot = process.env.FORCE_SCREENSHOT === '1';
 const photoPath = process.argv[2]
   ? path.resolve(process.argv[2])
   : path.join(root, 'data', 'detect-marketplace', 'goodwill', '279630564', '00.jpg');
@@ -78,7 +85,7 @@ if (localOcr) {
   const seeding = await launch();
   try {
     const added = await (await extensionWorker(seeding)).evaluate(async ({ port, names }) => {
-      const cache = await caches.open('cardscanner-models-v2.1');
+      const cache = await caches.open('cardscanner-models-v2.1p');
       let count = 0;
       for (const name of names) {
         const url = `https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.2/${name}`;
@@ -111,6 +118,7 @@ try {
 
 const worker = await extensionWorker(context);
 const extensionId = new URL(worker.url()).hostname;
+await worker.evaluate((force) => chrome.storage.local.set({ forceScreenshotPath: force }), forceScreenshot);
 
 const listing = await context.newPage();
 await listing.goto(`http://127.0.0.1:${port}/lot`);
@@ -225,7 +233,15 @@ if (await setSelect.count()) {
   console.log('set pick', JSON.stringify(setPick, null, 2));
 }
 
+const sourceLines = logs.filter((line) => /photo .*\((source image|viewport crop)\)/.test(line));
 const report = {
+  ext: path.basename(extPath),
+  forceScreenshot,
+  photoPath: {
+    sourceImage: sourceLines.filter((line) => line.includes('(source image)')).length,
+    viewportCrop: sourceLines.filter((line) => line.includes('(viewport crop)')).length,
+  },
+  identified: logs.filter((line) => line.includes('[BG] identified')).slice(-1),
   elapsedMs,
   scanEnabled,
   layout,

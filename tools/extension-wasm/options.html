@@ -187,6 +187,13 @@
       outline-offset: 2px;
     }
 
+    .disclaimer {
+      margin-top: 32px;
+      color: #6b7290;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
     a.link {
       color: #6366f1;
       text-decoration: none;
@@ -293,6 +300,24 @@
     </div>
   </div>
 
+  <div class="section-title">Page photos</div>
+  <div class="source-card" id="site-access-card">
+    <div class="source-head">
+      <div class="source-name">Full-size photos</div>
+      <div class="source-status off" id="site-access-status">Off</div>
+    </div>
+    <div class="source-desc">
+      By default the scanner reads a screenshot of the page you scan. If you allow it to read photos on the sites you scan,
+      it can use the full-size picture instead, which is more accurate. Photos are fetched without your cookies and
+      analyzed on this device.
+    </div>
+    <div class="source-body">
+      <label class="toggle" for="site-access"><input type="checkbox" id="site-access"> Read full-size photos on sites you scan (more accurate)</label>
+      <div class="test-result info" id="site-access-note" role="status" tabindex="-1"></div>
+    </div>
+  </div>
+
+  <!-- dev-only:start -->
   <!-- Source 3: Local backend (advanced) -->
   <details class="advanced" id="advanced-backend">
     <summary><span>Advanced: Local dashboard</span>&nbsp;&nbsp;<span class="source-status off" id="backend-status">Not detected</span></summary>
@@ -303,6 +328,7 @@
       <span id="backend-detail">Not reachable. If you installed the dashboard, make sure <code>npm start</code> is running and <code>JUSTTCG_API_KEY</code> is set in your <code>.env</code>.</span>
     </div>
   </details>
+  <!-- dev-only:end -->
 
   <div class="section-title">Corrections</div>
   <div class="source-card" id="corrections-card">
@@ -327,6 +353,7 @@
     </div>
   </div>
 
+  <!-- dev-only:start -->
   <div class="section-title">Test photos</div>
   <div class="source-card" id="test-photos-card">
     <div class="source-head">
@@ -347,6 +374,9 @@
       <div class="test-result info" id="test-photos-status" role="status" tabindex="-1"></div>
     </div>
   </div>
+  <!-- dev-only:end -->
+
+  <p class="disclaimer">Not affiliated with Nintendo, Creatures, GAME FREAK or The Pokémon Company.</p>
 
   <script type="module" src="options.js"></script>
 </body>

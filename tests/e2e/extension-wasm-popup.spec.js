@@ -63,7 +63,7 @@ test.describe('Consumer extension popup', () => {
     }));
     expect(paint.background).toBe('rgb(8, 9, 13)');
     if (paint.wizard !== 'none') {
-      expect(paint.wizardText).toMatch(/Download the AI models|Unlock full prices/);
+      expect(paint.wizardText).toMatch(/Download the AI models|Read full-size photos|Unlock full prices/);
     }
     expect(errors, errors.join('\n')).toEqual([]);
 

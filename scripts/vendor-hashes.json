@@ -1,0 +1,8 @@
+{
+  "ortVersion": "1.17.3",
+  "files": {
+    "ort.wasm.min.js": "7164cd2f49f85bb09673f7e4a255f0a71bc2af8f9a88f65bbd096b1ad834d8f8",
+    "ort-wasm.wasm": "969afd00c79afead28a90b6acd01bd64abe4b5ac8bc9650c3dee3aefc6e0cea6",
+    "ort-wasm-simd.wasm": "6783fcd6647ce1b426a527c31412a9c40894552faa609e9c931b3239a3438071"
+  }
+}

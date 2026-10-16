@@ -148,6 +148,10 @@ export function explainScanError(message) {
   if (/receiving end does not exist|could not establish connection/i.test(raw)) {
     return 'Reload the Card Scanner extension, then try again.';
   }
+  // The page can be read only after the user clicks the toolbar icon on it, or if site access was allowed.
+  if (/cannot access (contents|a chrome)|must request permission|activetab|<all_urls>/i.test(raw)) {
+    return 'Card Scanner cannot read this tab. Click the Card Scanner icon while you are on the page you want to scan.';
+  }
   if (/models not loaded/i.test(raw)) {
     return 'The card models are still downloading.';
   }

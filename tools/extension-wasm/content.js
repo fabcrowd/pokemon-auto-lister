@@ -1,7 +1,7 @@
-// Injected into every tab — renders a full-viewport card-scanner overlay.
+// Injected into the tab the user scans (never declared in the manifest) — renders a full-viewport card-scanner overlay.
 (function () {
   // Guard against double-injection — scripting.executeScript may re-run this file
-  // on the same page (e.g. once from action.onClicked + once from relayToTab fallback).
+  // on the same page (e.g. a scan followed by an overlay relay).
   if (window.__cardScannerLoaded) return;
   window.__cardScannerLoaded = true;
 
@@ -517,15 +517,6 @@
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
     } else if (msg.action === 'clearOverlay') {
       clearOverlay();
-    } else if (msg.action === 'findCardsDiag') {
-      const diag = findCardImages({ diag: true });
-      sendResponse({
-        ...diag,
-        viewportWidth:  window.innerWidth,
-        viewportHeight: window.innerHeight,
-        devicePixelRatio: window.devicePixelRatio || 1,
-      });
-      return false;
     } else if (msg.action === 'findCards') {
       const { cards, photos, pending } = findCardImages();
       sendResponse({
@@ -539,9 +530,22 @@
       return false;
     } else if (msg.action === 'startObserving') {
       startObserving();
+    // dev-only:start
+    } else if (msg.action === 'findCardsDiag') {
+      const diag = findCardImages({ diag: true });
+      sendResponse({
+        ...diag,
+        viewportWidth:  window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      });
+      return false;
+    // dev-only:end
     }
   });
 
+  // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
   window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving };
+  // dev-only:end
 }());

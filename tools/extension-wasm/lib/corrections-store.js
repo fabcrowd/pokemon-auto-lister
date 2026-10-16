@@ -4,7 +4,9 @@
 const DB_NAME = "card-scanner";
 const CORRECTIONS = "corrections";
 const SCANS = "scans";
+// dev-only:start
 const PHOTOS = "testPhotos";
+// dev-only:end
 const REFERENCES = "references";
 const KEEP_SCANS = 2;
 
@@ -22,7 +24,9 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
           db.createObjectStore(CORRECTIONS, { keyPath: "id", autoIncrement: true });
         }
         if (!db.objectStoreNames.contains(SCANS)) db.createObjectStore(SCANS, { keyPath: "scanId" });
+        // dev-only:start
         if (!db.objectStoreNames.contains(PHOTOS)) db.createObjectStore(PHOTOS, { keyPath: "id" });
+        // dev-only:end
         if (!db.objectStoreNames.contains(REFERENCES)) db.createObjectStore(REFERENCES, { keyPath: "id" });
       };
       request.onsuccess = () => {
@@ -93,6 +97,7 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       return saved;
     }),
     getScan: (scanId) => run("readonly", SCANS, (store) => store.get(scanId)),
+    // dev-only:start
     /** Insert, or replace the photo with the same id. */
     savePhoto: (photo) => run("readwrite", PHOTOS, (store) => store.put(photo)),
     countPhotos: () => run("readonly", PHOTOS, (store) => store.count()),
@@ -108,12 +113,14 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       return { get result() { return found; } };
     })),
     clearPhotos: () => run("readwrite", PHOTOS, (store) => store.clear()),
+    // dev-only:end
     /** Insert, or replace the reference with the same id (the id of its correction). */
     saveReference: (ref) => run("readwrite", REFERENCES, (store) => store.put(ref)),
     allReferences: () => run("readonly", REFERENCES, (store) => store.getAll()),
     countReferences: () => run("readonly", REFERENCES, (store) => store.count()),
     deleteReference: (id) => run("readwrite", REFERENCES, (store) => store.delete(id)),
     clearReferences: () => run("readwrite", REFERENCES, (store) => store.clear()),
+    // dev-only:start
     /** Swap every reference for `rows` in one transaction, so no reader sees half a set. */
     replaceReferences: (rows, { clearCorrections = false } = {}) => run("readwrite", [REFERENCES, CORRECTIONS], (storeOf) => {
       if (clearCorrections) storeOf(CORRECTIONS).clear();
@@ -122,5 +129,6 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       for (const row of rows) last = refs.put(row);
       return last;
     }),
+    // dev-only:end
   };
 }

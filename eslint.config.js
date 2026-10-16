@@ -78,6 +78,7 @@ export default [
       'playwright-report/**',
       'test-results/**',
       'runs/**',
+      'tools/extension-wasm/vendor/**',
       'tools/vellum-ai/.venv*/**',
       'tools/vellum-ai/**/__pycache__/**',
       'diagnose-*.js',

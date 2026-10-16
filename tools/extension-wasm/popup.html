@@ -509,7 +509,7 @@
     }
     .setup-title { font-size: 15px; font-weight: 700; color: #c5cadc; text-align: center; }
     .setup-desc { font-size: 12px; color: #50566e; text-align: center; max-width: 380px; line-height: 1.6; }
-    #btn-setup, #btn-wiz-upgrade {
+    #btn-setup, #btn-wiz-upgrade, #btn-wiz-access {
       padding: 0 32px;
       height: 40px;
       border-radius: 8px;
@@ -656,7 +656,7 @@
     <!-- Step 1 — download models -->
     <div class="wiz-section" id="wiz-step-1">
       <div class="wiz-steps">
-        <div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
+        <div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
       </div>
       <div class="setup-title">Download the AI models</div>
       <div class="setup-desc">
@@ -668,10 +668,27 @@
       <div class="setup-bars" id="setup-bars"></div>
     </div>
 
-    <!-- Step 2 — optional PPT upgrade -->
+    <!-- Step 2 — optional site access -->
+    <div class="wiz-section" id="wiz-step-access">
+      <div class="wiz-steps">
+        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
+      </div>
+      <div class="setup-title">Read full-size photos (optional)</div>
+      <div class="setup-desc">
+        By default the scanner reads a screenshot of the page you scan.
+        Allow it to read photos on the sites you scan and it can use the full-size picture, which is more accurate.
+      </div>
+      <div class="setup-desc" style="margin-top:-4px"><small>Photos are fetched without your cookies and analyzed on this device. You can change this any time in Settings.</small></div>
+      <div class="wiz-row">
+        <button id="btn-wiz-access">Allow</button>
+        <button class="wiz-skip" id="btn-wiz-access-skip">Not now</button>
+      </div>
+    </div>
+
+    <!-- Step 3 — optional PPT upgrade -->
     <div class="wiz-section" id="wiz-step-2">
       <div class="wiz-steps">
-        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div>
+        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div>
       </div>
       <div class="setup-title">Unlock full prices (optional)</div>
       <div class="setup-desc">

@@ -1,6 +1,8 @@
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { escHtml, guessOf, isUnsure, matchesLabel, renderPickList } from "./lib/card-picker.js";
+import { getPptKey } from "./lib/ppt-key.js";
+import { hasAllSites, requestAllSites } from "./lib/site-access.js";
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
@@ -16,6 +18,9 @@ const hintLink     = document.getElementById("hint-link");
 const hintDismiss  = document.getElementById("hint-dismiss");
 const wizStep1     = document.getElementById("wiz-step-1");
 const wizStep2     = document.getElementById("wiz-step-2");
+const wizStepAccess = document.getElementById("wiz-step-access");
+const btnWizAccess  = document.getElementById("btn-wiz-access");
+const btnWizAccessSkip = document.getElementById("btn-wiz-access-skip");
 const btnWizUpgrade = document.getElementById("btn-wiz-upgrade");
 const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sDetected    = document.getElementById("s-detected");
@@ -72,7 +77,7 @@ async function checkReady() {
 
 /* ─── Wizard (first-run flow) ─── */
 
-// Onboarding state: { step: 1 | 2 | 'done' }
+// Onboarding state: { step: 1 | 'access' | 2 | 'done' }
 async function getOnboarding() {
   return new Promise((r) =>
     chrome.storage.sync.get("onboarding", (res) => r(res?.onboarding || { step: 1 })),
@@ -84,6 +89,7 @@ async function setOnboarding(state) {
 
 function showWizStep(n) {
   wizStep1.classList.toggle("active", n === 1);
+  wizStepAccess.classList.toggle("active", n === "access");
   wizStep2.classList.toggle("active", n === 2);
   setupOverlay.style.display = "flex";
 }
@@ -92,16 +98,19 @@ function hideWizard() { setupOverlay.style.display = "none"; }
 /**
  * Decide what to show on popup load:
  *   - models not ready → wizard step 1 (download)
+ *   - models ready + onboarding not done + site access not granted or declined → optional site-access step
  *   - models ready + onboarding not done + no PPT key → wizard step 2 (optional upsell)
  *   - otherwise → hidden
  */
 async function maybeStartWizard(modelsReady) {
   const onboarding = await getOnboarding();
-  const { pptApiKey } = await new Promise((r) =>
-    chrome.storage.sync.get("pptApiKey", (res) => r(res || {})),
-  );
+  const pptApiKey = await getPptKey();
   if (!modelsReady) {
     showWizStep(1);
+    return;
+  }
+  if (onboarding.step !== "done" && onboarding.step !== 2 && !(await hasAllSites(chrome.permissions))) {
+    showWizStep("access");
     return;
   }
   if (onboarding.step !== "done" && !pptApiKey) {
@@ -123,14 +132,26 @@ btnSetup.addEventListener("click", async () => {
   if (resp?.ok) {
     setModelStatus("ok", "AI ready");
     btnScan.disabled = false;
-    // Move the wizard forward: show the PPT upsell step (unless already keyed/skipped)
-    await setOnboarding({ step: 2 });
+    // Move the wizard forward: site access, then the PPT upsell (each skipped when already settled)
+    await setOnboarding({ step: "access" });
     await maybeStartWizard(true);
   } else {
     console.error("model download failed", resp?.error || "unknown error");
     setupStatus.textContent = "The download stopped. Check your connection and try again.";
     btnSetup.disabled = false;
   }
+});
+
+btnWizAccess.addEventListener("click", async () => {
+  // The permission prompt is allowed only when asked for straight from this click.
+  await requestAllSites(chrome.permissions);
+  await setOnboarding({ step: 2 });
+  await maybeStartWizard(true);
+});
+
+btnWizAccessSkip.addEventListener("click", async () => {
+  await setOnboarding({ step: 2 });
+  await maybeStartWizard(true);
 });
 
 btnWizUpgrade.addEventListener("click", async () => {

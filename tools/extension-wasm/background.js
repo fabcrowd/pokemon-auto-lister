@@ -11,7 +11,7 @@ try {
   console.error("[BG] ORT env init failed:", e.message);
 }
 
-import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset } from "./lib/setup.js";
+import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
 import { extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
@@ -22,8 +22,14 @@ import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNa
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
-import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, singleFlight, withEmbeddings } from "./lib/references.js";
+import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
+// dev-only:start
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
+// dev-only:end
+import { sendToTab } from "./lib/tab-messaging.js";
+import { hasSiteAccess } from "./lib/site-access.js";
+import { getPptKey } from "./lib/ppt-key.js";
+import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
@@ -52,15 +58,19 @@ let _autoScanInFlight = false;
 // between a scan and the user's pick, and memory does not survive that.
 const _corrections = createCorrectionsStore();
 
+// The key moves out of sync storage the first time the worker starts after the update.
+getPptKey().catch(() => {});
+
 // Persists _targetTabId across service-worker restarts (chrome.storage.session survives SW idle kills).
 function _setTargetTabId(id) {
   _targetTabId = id;
   chrome.storage.session.set({ targetTabId: id }).catch(() => {});
 }
 
-// Returns true for browser-internal URLs that never have a content script.
+// True for browser-internal pages. A tab whose address the extension may not read has no url;
+// that is "unknown", not internal, or the scanner could never follow the user to a new tab.
 function _isInternalUrl(url) {
-  if (!url) return true;
+  if (!url) return false;
   return url.startsWith("chrome-extension://")
       || url.startsWith("chrome://")
       || url.startsWith("about:")
@@ -68,33 +78,14 @@ function _isInternalUrl(url) {
       || url.startsWith("devtools://");
 }
 
-// Idempotently inject content.js so sendMessage can reach it. Safe to call repeatedly —
-// content.js has its own `__cardScannerLoaded` guard against double-init.
-async function _ensureContentScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"],
-    });
-  } catch {
-    // Restricted URL (chrome://, store page) or activeTab not granted — nothing to do.
-  }
-}
-
 // ─── icon click → open popup window (gets camera permission prompt) ──────────
 
-chrome.action.onClicked.addListener(async () => {
-  // Capture the tab the user is on RIGHT NOW, before focus switches to the popup window.
-  // relayToTab uses this so overlay messages go to the correct page.
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (activeTab && !_isInternalUrl(activeTab.url)) {
-    _setTargetTabId(activeTab.id);
-    // Proactively inject content.js so the first scan can relay immediately — covers tabs
-    // that were already open before the extension installed.
-    chrome.scripting
-      .executeScript({ target: { tabId: activeTab.id }, files: ["content.js"] })
-      .catch(() => {});
-  }
+chrome.action.onClicked.addListener(async (clickedTab) => {
+  // The tab the icon was clicked on is the one activeTab was granted for. Asking the browser for "the
+  // current tab" instead could return the scanner window if that was the last thing focused.
+  const activeTab = clickedTab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  // Nothing is injected here: the page is touched only when the user presses Scan.
+  if (activeTab && !_isInternalUrl(activeTab.url)) _setTargetTabId(activeTab.id);
 
   if (_popupWinId !== null) {
     try {
@@ -107,8 +98,8 @@ chrome.action.onClicked.addListener(async () => {
 
   // After a SW restart _popupWinId is null even if the window still exists — find it.
   const popupUrl = chrome.runtime.getURL("popup.html");
-  const [existingTab] = await chrome.tabs.query({ url: popupUrl });
-  if (existingTab?.windowId != null) {
+  const [existingTab] = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [popupUrl] });
+  if (existingTab?.windowId != null && existingTab.windowId >= 0) {
     _popupWinId = existingTab.windowId;
     try {
       await chrome.windows.update(_popupWinId, { focused: true });
@@ -149,8 +140,8 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (tabId !== _targetTabId) return;
   if (changeInfo.status === "loading") {
-    // Page is navigating — clear the old overlay reference so stale overlays
-    // don't linger. The content script will reinject itself on the new page.
+    // Page is navigating — tell the old page's script to drop its overlay. The new page has no script
+    // until the next scan injects one.
     chrome.tabs.sendMessage(tabId, { action: "clearOverlay" }).catch(() => {});
   }
 });
@@ -165,6 +156,7 @@ async function tryAutoLoad() {
     const { targetTabId } = await chrome.storage.session.get("targetTabId");
     if (targetTabId != null) _targetTabId = targetTabId;
   } catch {}
+  await pruneOldCaches().catch((err) => console.error("[BG] clearing old model caches failed:", err?.message || err));
   const ready = await checkModelsReady();
   if (ready) await loadModels();
 }
@@ -244,7 +236,18 @@ function _loadNumberReader() {
 
 // ─── message handler ─────────────────────────────────────────────────────────
 
+// Messages that drive the scanner come only from this extension's own pages. A page's content script may
+// send newCardsDetected and nothing else.
+const OWN_PAGE_ONLY = new Set([
+  "checkReady", "startSetup", "detect", "priceCard", "scanPage",
+  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear",
+]);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (OWN_PAGE_ONLY.has(msg.action) && !isOwnPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) {
+    sendResponse({ error: "Not allowed." });
+    return false;
+  }
   switch (msg.action) {
     case "checkReady":
       // The service worker starts blank after Chrome suspends it. Models stay
@@ -275,20 +278,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "scanPage":
       handleScanPage(sendResponse, eraById(msg.era));
       return true; // async
-
-    case "findCards":
-    case "saveCorrection":
-    case "countCorrections":
-    case "exportCorrections":
-    case "clearCorrections":
-    case "countReferences":
-    case "importReferences":
-    case "startReferences":
-    case "countTestPhotos":
-    case "testPhotoIds":
-    case "getTestPhotos":
-    case "clearTestPhotos":
-      return handleOwnPageMessage(msg, sender, sendResponse);
 
     case "clearPageOverlay":
       relayToTab({ action: "relayClear" });
@@ -325,6 +314,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         handleScanPage(() => { _autoScanInFlight = false; });
       }
       return false;
+
+    default:
+      // Corrections, references, and search: the extension's own pages only (checked in the handler).
+      if (Object.hasOwn(_ownPageActions, msg.action)) return handleOwnPageMessage(msg, sender, sendResponse);
   }
 });
 
@@ -355,7 +348,9 @@ function readBitmap(bitmap) {
 async function handleScanPage(sendResponse, era) {
   console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId, "era =", era?.id || "any");
   if (!(await _ensureReady(sendResponse))) return;
+  // dev-only:start
   const collecting = await testSetCollecting();
+  // dev-only:end
 
   // Resolve a scannable target tab — fall back to the most-recent non-popup active tab.
   let targetTab = null;
@@ -363,22 +358,30 @@ async function handleScanPage(sendResponse, era) {
     try { targetTab = await chrome.tabs.get(_targetTabId); } catch { targetTab = null; }
   }
   if (!targetTab || _isInternalUrl(targetTab.url) || targetTab.windowId === _popupWinId) {
-    const candidates = await chrome.tabs.query({ windowType: "normal" }).catch(() => []);
-    const normalWindows = candidates.filter((t) => t.windowId !== _popupWinId && !_isInternalUrl(t.url));
-    normalWindows.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
-    targetTab = normalWindows[0] ?? null;
+    const open = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+    const choice = chooseFallbackTab(open, _popupWinId);
+    targetTab = choice.tab;
     if (targetTab) _setTargetTabId(targetTab.id);
+    else {
+      sendResponse({
+        error: choice.reason === "unreadable"
+          ? "Card Scanner cannot read this tab. Click the Card Scanner icon while you are on the page you want to scan."
+          : "No scannable tab — open a webpage first",
+      });
+      return;
+    }
   }
-  if (!targetTab) {
-    sendResponse({ error: "No scannable tab — open a webpage first" });
+  // Check before anything is injected: the user may have moved to another tab while the models loaded.
+  const front = await chrome.tabs.get(targetTab.id).catch(() => null);
+  if (!front?.active) {
+    sendResponse({ error: "That tab is no longer in front. Scan again." });
     return;
   }
   console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId);
 
   try {
-    // Make sure the content script is live, then ask it which images look like cards.
-    await _ensureContentScript(targetTab.id);
-    let domResp = await chrome.tabs.sendMessage(targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+    // Ask the page which images look like cards; sendToTab injects the content script if it is not there yet.
+    let domResp = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
     if (domResp?.error) {
       sendResponse({ error: "Could not query page for cards: " + domResp.error });
       return;
@@ -387,7 +390,7 @@ async function handleScanPage(sendResponse, era) {
     // Scanning then would report "no cards" and run detection on a blank image.
     if ((domResp.pending || 0) > 0 && !(domResp.cards?.length) && !(domResp.photos?.length)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      const again = await chrome.tabs.sendMessage(targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+      const again = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
       if (!again?.error) domResp = again;
     }
     if (!(domResp.cards?.length) && !(domResp.photos?.length) && (domResp.pending || 0) > 0) {
@@ -441,7 +444,8 @@ async function handleScanPage(sendResponse, era) {
       let sourceTransform = null;
       try {
         const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
-        photoBitmap = sourceCanMap ? await loadPhotoSource(ph.src) : null;
+        // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
+        photoBitmap = sourceCanMap && await canReadPhotoSource(ph.src) ? await loadPhotoSource(ph.src) : null;
         if (photoBitmap) {
           sourceTransform = imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
           if (!sourceTransform) {
@@ -465,7 +469,9 @@ async function handleScanPage(sendResponse, era) {
         const imageW = photoBitmap.width;
         const imageH = photoBitmap.height;
         const boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
+        // dev-only:start
         if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
+        // dev-only:end
         console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
                     imageW + "x" + imageH, fromSource ? "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
                     "boxes;", boxes.length, "passed card-size validation",
@@ -564,7 +570,7 @@ async function handleScanPage(sendResponse, era) {
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
-    chrome.tabs.sendMessage(targetTab.id, { action: "startObserving" }).catch(() => {});
+    sendToTab(chrome, targetTab.id, { action: "startObserving" }).catch(() => {});
 
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded })
@@ -602,6 +608,7 @@ async function encodeCrop(cardCanvas) {
   }
 }
 
+// dev-only:start
 // ─── test-set collection ─────────────────────────────────────────────────────
 
 async function testSetCollecting() {
@@ -631,6 +638,7 @@ async function collectTestPhoto(bitmap, detections, pageUrl) {
     console.error("[BG] saving test photo failed:", err?.message || err);
   }
 }
+// dev-only:end
 
 // Only the extension's own pages may read or write corrections; a web page's content script may not.
 const _ownPageActions = {
@@ -664,7 +672,7 @@ const _ownPageActions = {
     return { ok: true };
   },
   countCorrections: async () => ({ count: await _corrections.count() }),
-  exportCorrections: async () => ({ corrections: withEmbeddings(await _corrections.all(), await _corrections.allReferences()) }),
+  exportCorrections: async () => exportCorrections(),
   clearCorrections: async () => {
     // References first: a failure after this leaves corrections without references, which are rebuilt, not references without corrections.
     await _corrections.clearReferences();
@@ -673,6 +681,12 @@ const _ownPageActions = {
     return { ok: true };
   },
   countReferences: async () => ({ count: await _corrections.countReferences() }),
+  startReferences: async () => {
+    if (_ready) embedPendingReferences();
+    else tryAutoLoad().catch((err) => console.error("[BG] model reload failed", err?.message || err));
+    return { ok: true };
+  },
+  // dev-only:start
   importReferences: async (msg) => {
     const rows = (Array.isArray(msg.references) ? msg.references : []).flatMap((ref) => {
       const embedding = decodeEmbedding(ref?.embedding);
@@ -683,11 +697,6 @@ const _ownPageActions = {
     await _corrections.replaceReferences(rows, { clearCorrections: msg.clearCorrections === true });
     referencesChanged();
     return { imported: rows.length };
-  },
-  startReferences: async () => {
-    if (_ready) embedPendingReferences();
-    else tryAutoLoad().catch((err) => console.error("[BG] model reload failed", err?.message || err));
-    return { ok: true };
   },
   countTestPhotos: async () => {
     const stats = statsFromIds(await _corrections.photoIds());
@@ -702,10 +711,15 @@ const _ownPageActions = {
     await _corrections.clearPhotos();
     return { ok: true };
   },
+  // dev-only:end
 };
 
 function handleOwnPageMessage(msg, sender, sendResponse) {
-  if (!sender.url?.startsWith(chrome.runtime.getURL(""))) {
+  if (!isOwnPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) {
+    sendResponse({ error: "Not allowed." });
+    return false;
+  }
+  if (!Object.hasOwn(_ownPageActions, msg.action)) {
     sendResponse({ error: "Not allowed." });
     return false;
   }
@@ -767,6 +781,46 @@ async function withReferenceHit(embedding, hits) {
   }
 }
 
+async function embedCrop(cropDataUrl) {
+  const bitmap = await b64ToBitmap(cropDataUrl.replace(/^data:image\/jpeg;base64,/, ""));
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return embedSerial(canvas);
+}
+
+// Runs only when the user presses Export, never during a scan. Corrections without a fingerprint get one
+// first so the exported file is complete whether or not the "recognize corrected cards" option is on.
+// The new fingerprints are kept in the browser only when that option is on, as the privacy policy says.
+async function exportCorrections() {
+  const progress = (status) => chrome.runtime.sendMessage({ action: "exportProgress", ...status }).catch(() => {});
+  const [heads, refs] = await Promise.all([_corrections.correctionHeads(), _corrections.allReferences()]);
+  let rows = refs;
+  let failed = 0;
+  if (correctionsToEmbed(heads, refs).length) {
+    progress({ phase: "models" });
+    await tryAutoLoad();
+    if (!_ready) throw new Error("The card models aren't downloaded yet. Finish setup in the scanner window, then export again.");
+    const keep = await referencesInUse();
+    ({ rows, failed } = await referencesForExport({
+      heads,
+      refs,
+      getCorrection: (id) => _corrections.getCorrection(id),
+      embedCrop,
+      onProgress: (status) => progress({ phase: "embedding", ...status }),
+      onEmbedded: async (row) => {
+        if (!keep) return;
+        // Cleared or replaced while the model ran: a reference with no correction behind it would be an orphan.
+        const now = await _corrections.getCorrection(row.id);
+        if (now?.ts !== row.ts || now.pickedId !== row.cardId) return;
+        await _corrections.saveReference(row);
+        referencesChanged();
+      },
+    }));
+  }
+  return { corrections: withEmbeddings(await _corrections.all(), rows), failed };
+}
+
 // Only made while the option is on, so nothing is embedded for someone who never asked for it.
 async function embedPendingOnce() {
   if (!_ready || !(await referencesInUse())) return;
@@ -775,11 +829,7 @@ async function embedPendingOnce() {
     try {
       const correction = await _corrections.getCorrection(head.id);
       if (!correction?.crop || correction.ts !== head.ts) continue;
-      const bitmap = await b64ToBitmap(correction.crop.replace(/^data:image\/jpeg;base64,/, ""));
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      canvas.getContext("2d").drawImage(bitmap, 0, 0);
-      bitmap.close();
-      const embedding = await embedSerial(canvas);
+      const embedding = await embedCrop(correction.crop);
       // The answer may have been replaced or cleared while the model ran.
       const now = await _corrections.getCorrection(correction.id);
       if (now?.ts !== correction.ts || now.pickedId !== correction.pickedId) continue;
@@ -840,22 +890,16 @@ async function handleDetect(imageB64, sendResponse) {
 async function relayToTab(msg, tabId = null) {
   if (tabId != null) _setTargetTabId(tabId);
   if (_targetTabId === null) {
-    const tabs = await chrome.tabs.query({ active: true }).catch(() => []);
-    const candidate = tabs.find(t => !_isInternalUrl(t.url) && t.windowId !== _popupWinId);
+    const tabs = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+    const { tab: candidate } = chooseFallbackTab(tabs, _popupWinId);
     if (candidate) _setTargetTabId(candidate.id);
   }
   if (_targetTabId === null) return;
   const relayMsg = msg.action === "relayOverlay"
     ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight }
     : { action: "clearOverlay" };
-  try {
-    await chrome.tabs.sendMessage(_targetTabId, relayMsg);
-  } catch {
-    try {
-      await chrome.scripting.executeScript({ target: { tabId: _targetTabId }, files: ["content.js"] });
-      chrome.tabs.sendMessage(_targetTabId, relayMsg).catch(() => {});
-    } catch { /* restricted URL */ }
-  }
+  // A page the extension may not touch (no access granted, or a browser page) just gets no overlay.
+  await sendToTab(chrome, _targetTabId, relayMsg).catch(() => {});
 }
 
 // Stable key for a photo/image rect so the multi-card preemption set can
@@ -1370,6 +1414,25 @@ async function b64ToBitmap(b64) {
   const blob     = new Blob([bytes], { type: "image/jpeg" });
   return createImageBitmap(blob);
 }
+
+// The full-size photo is fetched only from sites the user gave the extension access to.
+async function canReadPhotoSource(rawUrl) {
+  // dev-only:start
+  if (await forcedScreenshotPath()) return false;
+  // dev-only:end
+  return hasSiteAccess(chrome.permissions, rawUrl);
+}
+
+// dev-only:start
+// Lets a test measure the screenshot path in a build that has site access.
+async function forcedScreenshotPath() {
+  try {
+    return (await chrome.storage.local.get("forceScreenshotPath")).forceScreenshotPath === true;
+  } catch {
+    return false;
+  }
+}
+// dev-only:end
 
 async function loadPhotoSource(rawUrl) {
   let current = publicHttpsUrl(rawUrl);

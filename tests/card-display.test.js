@@ -165,6 +165,13 @@ test('scan failures are explained without service-worker jargon', () => {
   assert.equal(explainScanError('No scannable tab — open a webpage first'), 'No scannable tab — open a webpage first');
 });
 
+test('a tab the extension was not opened on says how to give it access', () => {
+  const advice = /Click the Card Scanner icon/;
+  assert.match(explainScanError('Could not query page for cards: Cannot access contents of the page. Extension manifest must request permission to access the respective host.'), advice);
+  assert.match(explainScanError("Either the '<all_urls>' or 'activeTab' permission is required."), advice);
+  assert.match(explainScanError('Cannot access a chrome:// URL'), advice);
+});
+
 test('a Shadowless border is shown but never picks the higher Shadowless price', () => {
   const card = {
     variant: { edition: 'shadowless', finish: 'holofoil', stamp: 'none' },

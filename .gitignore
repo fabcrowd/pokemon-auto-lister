@@ -29,3 +29,6 @@ test-results/
 /clip_visual_*.onnx.data
 /*.png
 /*-summary.json
+
+# onnxruntime-web, fetched by scripts/setup_vendor.ps1 and verified against scripts/vendor-hashes.json
+tools/extension-wasm/vendor/

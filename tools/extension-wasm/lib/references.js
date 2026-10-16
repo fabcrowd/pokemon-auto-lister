@@ -126,3 +126,40 @@ export function promoteHit(hits, index) {
   if (at <= 0) return hits;
   return [{ index, score: hits[0].score }, ...hits.filter((_, i) => i !== at)];
 }
+
+/**
+ * The reference rows an export needs: the current ones, plus a fresh embedding for every
+ * correction that lacks one. New rows go to `onEmbedded`, which decides whether to keep them.
+ * A failure on one crop is logged and counted and the rest go on; if every crop fails the cause is
+ * thrown, because a file with no fingerprints would look like a finished export.
+ * @returns {{ rows: object[], failed: number, firstError: string|null }}
+ */
+export async function referencesForExport({
+  heads, refs, getCorrection, embedCrop, onProgress, onEmbedded,
+  onError = (err) => console.error("[export] embedding a correction failed:", err?.message || err),
+}) {
+  const missing = correctionsToEmbed(heads, refs);
+  const missingIds = new Set(missing.map((head) => head.id));
+  const rows = currentReferences(refs, heads).filter((ref) => !missingIds.has(ref.id));
+  let failed = 0;
+  let done = 0;
+  let firstError = null;
+  for (const head of missing) {
+    try {
+      const correction = await getCorrection(head.id);
+      if (correction?.crop && correction.ts === head.ts) {
+        const row = referenceRow(correction, await embedCrop(correction.crop));
+        rows.push(row);
+        await onEmbedded?.(row);
+      }
+    } catch (err) {
+      failed += 1;
+      firstError ??= String(err?.message || err);
+      onError(err);
+    }
+    done += 1;
+    onProgress?.({ done, total: missing.length });
+  }
+  if (missing.length > 0 && failed === missing.length) throw new Error(`Couldn't read the saved pictures: ${firstError}`);
+  return { rows, failed, firstError };
+}
