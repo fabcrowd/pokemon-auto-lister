@@ -9,6 +9,10 @@ const CLIP_SIZE = 224;
 // Upper fraction of the card to use as the art crop
 const ART_CROP_FRAC = 0.45;
 
+// Bump when the crop or preprocessing changes: vectors saved under another version are not comparable.
+// 1 (stored rows have no version): top 45% stretched to 224x224. 2: centred square of that strip.
+export const EMBEDDING_VERSION = 2;
+
 let _session = null;
 
 export async function loadEmbedder(modelBuffer) {
@@ -37,12 +41,23 @@ export async function embedCard(cardCanvas) {
 
 // --- helpers ---
 
+/**
+ * Source square for the art crop. It must match tools/vellum-ai/catalog/embed_all.py, which cuts the
+ * top int(h * 0.45) rows and lets open_clip resize the short side to 224 and center-crop: a centred
+ * square of the strip, never a stretched one (stretching cut self-match at #1 from 96.7% to 54.7%).
+ */
+export function artSourceRect(width, height) {
+  const stripH = Math.max(1, Math.floor(height * ART_CROP_FRAC));
+  const side = Math.min(width, stripH);
+  return { sx: (width - side) / 2, sy: (stripH - side) / 2, side };
+}
+
 function cropArt(src) {
-  const cropH = Math.round(src.height * ART_CROP_FRAC);
-  const out   = new OffscreenCanvas(CLIP_SIZE, CLIP_SIZE);
-  const ctx   = out.getContext("2d", { willReadFrequently: true });
-  // Draw only the upper ART_CROP_FRAC of the card, scaled to 224×224
-  ctx.drawImage(src, 0, 0, src.width, cropH, 0, 0, CLIP_SIZE, CLIP_SIZE);
+  const { sx, sy, side } = artSourceRect(src.width, src.height);
+  const out = new OffscreenCanvas(CLIP_SIZE, CLIP_SIZE);
+  const ctx = out.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, sx, sy, side, side, 0, 0, CLIP_SIZE, CLIP_SIZE);
   return out;
 }
 

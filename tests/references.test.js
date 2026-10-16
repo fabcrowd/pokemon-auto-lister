@@ -15,6 +15,9 @@ import {
   singleFlight,
   withEmbeddings,
 } from '../tools/extension-wasm/lib/references.js';
+import { EMBEDDING_VERSION } from '../tools/extension-wasm/lib/embed.js';
+
+const V = EMBEDDING_VERSION;
 
 function unit(...head) {
   const v = new Float32Array(EMBEDDING_DIM);
@@ -34,8 +37,8 @@ test('the thresholds are conservative placeholders', () => {
 
 test('referenceHit returns the best reference when it clears the minimum and beats the catalog by the margin', () => {
   const refs = [
-    { id: 'a', cardId: 'card-a', embedding: at(0.95) },
-    { id: 'b', cardId: 'card-b', embedding: at(0.97) },
+    { id: 'a', cardId: 'card-a', v: V, embedding: at(0.95) },
+    { id: 'b', cardId: 'card-b', v: V, embedding: at(0.97) },
   ];
   const hit = referenceHit(query, refs, 0.9);
   assert.equal(hit.cardId, 'card-b');
@@ -43,17 +46,17 @@ test('referenceHit returns the best reference when it clears the minimum and bea
 });
 
 test('referenceHit stays quiet below the minimum', () => {
-  assert.equal(referenceHit(query, [{ id: 'a', cardId: 'x', embedding: at(0.9) }], 0.5), null);
+  assert.equal(referenceHit(query, [{ id: 'a', cardId: 'x', v: V, embedding: at(0.9) }], 0.5), null);
 });
 
 test('referenceHit stays quiet when the catalog is nearly as sure', () => {
-  const refs = [{ id: 'a', cardId: 'x', embedding: at(0.95) }];
+  const refs = [{ id: 'a', cardId: 'x', v: V, embedding: at(0.95) }];
   assert.equal(referenceHit(query, refs, 0.94), null);
   assert.equal(referenceHit(query, refs, 0.9)?.cardId, 'x');
 });
 
 test('referenceHit honours its own min and margin', () => {
-  const refs = [{ id: 'a', cardId: 'x', embedding: at(0.8) }];
+  const refs = [{ id: 'a', cardId: 'x', v: V, embedding: at(0.8) }];
   assert.equal(referenceHit(query, refs, 0.5), null);
   assert.equal(referenceHit(query, refs, 0.5, { min: 0.7 })?.cardId, 'x');
   assert.equal(referenceHit(query, refs, 0.79, { min: 0.7, margin: 0 })?.cardId, 'x');
@@ -66,7 +69,7 @@ test('referenceHit with nothing to compare is null', () => {
 });
 
 test('referenceHit skips references of the wrong length', () => {
-  const refs = [{ id: 'a', cardId: 'x', embedding: new Float32Array(3).fill(1) }];
+  const refs = [{ id: 'a', cardId: 'x', v: V, embedding: new Float32Array(3).fill(1) }];
   assert.equal(referenceHit(query, refs, 0, { min: 0 }), null);
 });
 
@@ -105,7 +108,7 @@ test('correctionsToEmbed lists corrections with a crop and no matching reference
     { id: 'b', ts: 2, pickedId: 'y', crop },
     { id: 'c', ts: 3, pickedId: 'z', crop: null },
   ];
-  const refs = [{ id: 'a', cardId: 'x', ts: 1, embedding: unit(1) }];
+  const refs = [{ id: 'a', cardId: 'x', ts: 1, v: V, embedding: unit(1) }];
   assert.deepEqual(correctionsToEmbed(corrections, refs).map((c) => c.id), ['b']);
 });
 
@@ -115,8 +118,8 @@ test('correctionsToEmbed treats a reference for an older answer as missing', () 
     { id: 'b', ts: 2, pickedId: 'new', crop },
   ];
   const refs = [
-    { id: 'a', cardId: 'x', ts: 1, embedding: unit(1) },
-    { id: 'b', cardId: 'old', ts: 2, embedding: unit(1) },
+    { id: 'a', cardId: 'x', ts: 1, v: V, embedding: unit(1) },
+    { id: 'b', cardId: 'old', ts: 2, v: V, embedding: unit(1) },
   ];
   assert.deepEqual(correctionsToEmbed(corrections, refs).map((c) => c.id), ['a', 'b']);
 });
@@ -128,8 +131,8 @@ test('withEmbeddings adds base64 only where a current reference exists', () => {
     { id: 'c', ts: 3, pickedId: 'z', crop },
   ];
   const refs = [
-    { id: 'a', cardId: 'x', ts: 1, embedding: unit(1) },
-    { id: 'c', cardId: 'old', ts: 3, embedding: unit(1) },
+    { id: 'a', cardId: 'x', ts: 1, v: V, embedding: unit(1) },
+    { id: 'c', cardId: 'old', ts: 3, v: V, embedding: unit(1) },
   ];
   const out = withEmbeddings(corrections, refs);
   assert.deepEqual(Array.from(decodeEmbedding(out[0].embedding)), Array.from(unit(1)));
@@ -168,7 +171,7 @@ test('decodeEmbedding refuses vectors that are not unit length', () => {
 
 test('referenceHit skips references and queries that do not give a finite score', () => {
   const bad = new Float32Array(EMBEDDING_DIM).fill(NaN);
-  const refs = [{ id: 'a', cardId: 'bad', embedding: bad }, { id: 'b', cardId: 'ok', embedding: at(0.97) }];
+  const refs = [{ id: 'a', cardId: 'bad', v: V, embedding: bad }, { id: 'b', cardId: 'ok', v: V, embedding: at(0.97) }];
   assert.equal(referenceHit(query, refs, 0.5)?.cardId, 'ok');
   const nanQuery = query.map(() => NaN);
   assert.equal(referenceHit(nanQuery, refs, 0), null);
@@ -182,11 +185,11 @@ test('correctionsToEmbed works from light records that only say whether a crop e
 test('currentReferences drops references whose correction changed or is gone, and keeps imported ones', () => {
   const heads = [{ id: 'a', ts: 1, pickedId: 'x' }, { id: 'b', ts: 5, pickedId: 'y' }, { id: 'c', ts: 3, pickedId: 'z' }];
   const refs = [
-    { id: 'a', cardId: 'x', ts: 1 },
-    { id: 'b', cardId: 'y', ts: 2 },
-    { id: 'c', cardId: 'old', ts: 3 },
-    { id: 'gone', cardId: 'x', ts: 1 },
-    { id: 'import:s:0', cardId: 'x', ts: null },
+    { id: 'a', cardId: 'x', ts: 1, v: V },
+    { id: 'b', cardId: 'y', ts: 2, v: V },
+    { id: 'c', cardId: 'old', ts: 3, v: V },
+    { id: 'gone', cardId: 'x', ts: 1, v: V },
+    { id: 'import:s:0', cardId: 'x', ts: null, v: V },
   ];
   assert.deepEqual(currentReferences(refs, heads).map((r) => r.id), ['a', 'import:s:0']);
 });
@@ -236,4 +239,49 @@ test('singleFlight reports a failing task and keeps going', async () => {
   await request();
   assert.deepEqual(errors, ['boom']);
   assert.equal(runs, 2);
+});
+
+test('referenceRow stamps the current embedding version', () => {
+  assert.equal(referenceRow({ id: 's:0', pickedId: 'card-a', ts: 7 }, unit(1)).v, EMBEDDING_VERSION);
+});
+
+test('referenceHit ignores references made with an older or unknown crop', () => {
+  const old = { id: 'a', cardId: 'x', embedding: at(0.99) };
+  assert.equal(referenceHit(query, [old], 0.5), null);
+  assert.equal(referenceHit(query, [{ ...old, v: EMBEDDING_VERSION - 1 }], 0.5), null);
+  assert.equal(referenceHit(query, [{ ...old, v: V }], 0.5)?.cardId, 'x');
+  const mixed = [old, { id: 'b', cardId: 'y', v: V, embedding: at(0.95) }];
+  assert.equal(referenceHit(query, mixed, 0.5)?.cardId, 'y');
+});
+
+test('correctionsToEmbed re-embeds a reference made with an older crop, keeping the correction', () => {
+  const corrections = [{ id: 'a', ts: 1, pickedId: 'x', crop }, { id: 'b', ts: 2, pickedId: 'y', crop }];
+  const refs = [
+    { id: 'a', cardId: 'x', ts: 1, embedding: unit(1) },
+    { id: 'b', cardId: 'y', ts: 2, v: V, embedding: unit(1) },
+  ];
+  assert.deepEqual(correctionsToEmbed(corrections, refs).map((c) => c.id), ['a']);
+});
+
+test('currentReferences drops references of an older version, imported ones included', () => {
+  const heads = [{ id: 'a', ts: 1, pickedId: 'x' }, { id: 'b', ts: 2, pickedId: 'y' }];
+  const refs = [
+    { id: 'a', cardId: 'x', ts: 1, embedding: unit(1) },
+    { id: 'b', cardId: 'y', ts: 2, v: V, embedding: unit(1) },
+    { id: 'import:1', cardId: 'z', ts: null, embedding: unit(1) },
+    { id: 'import:2', cardId: 'z', ts: null, v: V, embedding: unit(1) },
+  ];
+  assert.deepEqual(currentReferences(refs, heads).map((r) => r.id), ['b', 'import:2']);
+});
+
+test('withEmbeddings exports no embedding made with an older crop, and names the version of those it does', () => {
+  const corrections = [{ id: 'a', ts: 1, pickedId: 'x', crop }, { id: 'b', ts: 2, pickedId: 'y', crop }];
+  const refs = [
+    { id: 'a', cardId: 'x', ts: 1, embedding: unit(1) },
+    { id: 'b', cardId: 'y', ts: 2, v: V, embedding: unit(1) },
+  ];
+  const out = withEmbeddings(corrections, refs);
+  assert.equal('embedding' in out[0], false);
+  assert.equal(out[0].pickedId, 'x');
+  assert.equal(out[1].embeddingVersion, V);
 });

@@ -1,6 +1,8 @@
 // Reference memory: the embedding of each crop the user corrected, so a card seen and
 // corrected once can be found by looking, not only by the catalog.
 
+import { EMBEDDING_VERSION } from "./embed.js";
+
 export const EMBEDDING_DIM = 512;
 const UNIT_TOLERANCE = 1e-3;
 
@@ -9,6 +11,10 @@ const UNIT_TOLERANCE = 1e-3;
 // never from the sealed test set.
 export const REFERENCE_MIN = 0.93;
 export const REFERENCE_MARGIN = 0.02;
+
+// A vector made with another art crop sits in a different place and says nothing about this one.
+// Rows saved before versions existed have no `v`; they are version 1, the stretched crop.
+const isCurrentVersion = (ref) => (ref?.v ?? 1) === EMBEDDING_VERSION;
 
 /**
  * The best reference for a query embedding, or null. It counts only if its cosine
@@ -20,6 +26,7 @@ export function referenceHit(query, refs, catalogTopScore, { min = REFERENCE_MIN
   let best = null;
   for (const ref of refs || []) {
     const vec = ref.embedding;
+    if (!isCurrentVersion(ref)) continue;
     if (!vec || vec.length !== EMBEDDING_DIM) continue;
     let dot = 0;
     for (let d = 0; d < EMBEDDING_DIM; d++) dot += query[d] * vec[d];
@@ -57,10 +64,10 @@ export function decodeEmbedding(text) {
 
 // ts says which answer the vector was made from: a replaced correction keeps its id but gets a new ts.
 export function referenceRow(correction, embedding) {
-  return { id: correction.id, cardId: correction.pickedId, ts: correction.ts, embedding };
+  return { id: correction.id, cardId: correction.pickedId, ts: correction.ts, v: EMBEDDING_VERSION, embedding };
 }
 
-const isCurrent = (ref, correction) => Boolean(ref) && ref.ts === correction.ts && ref.cardId === correction.pickedId;
+const isCurrent = (ref, correction) => Boolean(ref) && isCurrentVersion(ref) && ref.ts === correction.ts && ref.cardId === correction.pickedId;
 
 /** Corrections (or light heads with hasCrop) that have a crop but no reference made from their current answer. */
 export function correctionsToEmbed(corrections, refs) {
@@ -68,10 +75,11 @@ export function correctionsToEmbed(corrections, refs) {
   return corrections.filter((c) => (c.crop || c.hasCrop) && !isCurrent(byId.get(c.id), c));
 }
 
-/** References still made from their correction's current answer; imported ones (ts null) have no correction. */
+/** References still made from their correction's current answer, with the current crop; imported ones (ts null) have no correction. */
 export function currentReferences(refs, heads) {
   const byId = new Map(heads.map((head) => [head.id, head]));
   return refs.filter((ref) => {
+    if (!isCurrentVersion(ref)) return false;
     if (ref.ts == null) return true;
     const head = byId.get(ref.id);
     return Boolean(head) && head.ts === ref.ts && head.pickedId === ref.cardId;
@@ -113,7 +121,7 @@ export function withEmbeddings(corrections, refs) {
   const byId = new Map(refs.map((ref) => [ref.id, ref]));
   return corrections.map((c) => {
     const ref = byId.get(c.id);
-    return isCurrent(ref, c) ? { ...c, embedding: encodeEmbedding(ref.embedding) } : { ...c };
+    return isCurrent(ref, c) ? { ...c, embedding: encodeEmbedding(ref.embedding), embeddingVersion: ref.v } : { ...c };
   });
 }
 

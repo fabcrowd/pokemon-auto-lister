@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { referencesForExport } from '../tools/extension-wasm/lib/references.js';
+import { EMBEDDING_VERSION } from '../tools/extension-wasm/lib/embed.js';
 
 const vec = (n) => Float32Array.from({ length: 512 }, (_, i) => (i === n ? 1 : 0));
 const head = (id, ts = 1, pickedId = 'sv1-1') => ({ id, ts, pickedId, hasCrop: true });
@@ -17,12 +18,21 @@ function setup(corrections) {
 }
 
 test('corrections without a current reference are embedded; current ones are reused', async () => {
-  const have = { id: 'a', cardId: 'sv1-1', ts: 1, embedding: vec(0) };
+  const have = { id: 'a', cardId: 'sv1-1', ts: 1, v: EMBEDDING_VERSION, embedding: vec(0) };
   const io = setup([{ ...head('b'), crop: 'crop-b' }]);
   const { rows, failed } = await referencesForExport({ heads: [head('a'), head('b')], refs: [have], ...io });
   assert.deepEqual(io.embedded, ['crop-b']);
   assert.deepEqual(rows.map((r) => r.id).sort(), ['a', 'b']);
   assert.equal(failed, 0);
+});
+
+test('a reference made with an older crop is embedded again from the saved picture', async () => {
+  const old = { id: 'a', cardId: 'sv1-1', ts: 1, embedding: vec(0) };
+  const io = setup([{ ...head('a'), crop: 'crop-a' }]);
+  const { rows } = await referencesForExport({ heads: [head('a')], refs: [old], ...io });
+  assert.deepEqual(io.embedded, ['crop-a']);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].v, EMBEDDING_VERSION);
 });
 
 test('a reference made from an older answer is replaced, not reused', async () => {
