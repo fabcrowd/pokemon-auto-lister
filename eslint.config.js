@@ -48,6 +48,7 @@ export default [
         Option: 'readonly',
         Image: 'readonly',
         ort: 'readonly',
+        AbortController: 'readonly',
         atob: 'readonly',
         btoa: 'readonly',
         Blob: 'readonly',

@@ -39,6 +39,15 @@ export function imageToViewportTransform(rect, imageWidth, imageHeight, render =
   };
 }
 
+/**
+ * The same placement for a picture of other pixel dimensions: pass natural/actual for each axis, so a box in
+ * the larger image's pixels still lands where the displayed image's pixels put it.
+ */
+export function rescaleTransform(transform, factorX, factorY) {
+  if (!transform || !(factorX > 0) || !(factorY > 0)) return null;
+  return { ...transform, scaleX: transform.scaleX * factorX, scaleY: transform.scaleY * factorY };
+}
+
 export function mapPhotoBoxToViewport(box, transform, clipRect = null) {
   if (!Array.isArray(box) || box.length !== 4 || !transform) return null;
   let [x1, y1, x2, y2] = box;

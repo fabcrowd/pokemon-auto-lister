@@ -13,7 +13,7 @@ try {
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
-import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, tileRects } from "./photo-detection.js";
+import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
@@ -28,6 +28,7 @@ import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, ref
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 // dev-only:end
 import { sendToTab } from "./lib/tab-messaging.js";
+import { fullSizeCandidates, loadFullSize } from "./lib/full-size.js";
 import { hasSiteAccess } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
@@ -464,13 +465,21 @@ async function handleScanPage(sendResponse, era) {
       let photoBitmap = null;
       let fromSource = false;
       let sourceTransform = null;
+      let upgrade = null;
       try {
         const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
         // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
-        photoBitmap = sourceCanMap && await canReadPhotoSource(ph.src) ? await loadPhotoSource(ph.src) : null;
+        const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
+        // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
+        upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url) : null;
+        photoBitmap = upgrade ? upgrade.bitmap : sourceReadable ? await loadPhotoSource(ph.src) : null;
         if (!photoBitmap && offscreenSlide) continue;
         if (photoBitmap) {
-          sourceTransform = imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
+          sourceTransform = upgrade
+            ? rescaleTransform(
+              imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}),
+              ph.naturalWidth / photoBitmap.width, ph.naturalHeight / photoBitmap.height)
+            : imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
           if (!sourceTransform) {
             photoBitmap.close();
             photoBitmap = null;
@@ -536,7 +545,8 @@ async function handleScanPage(sendResponse, era) {
             })()
             : undefined;
         console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
-                    imageW + "x" + imageH, fromSource ? "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
+                    imageW + "x" + imageH,
+                    fromSource ? upgrade ? "(source image, upgraded " + imageW + "x" + imageH + " from " + ph.naturalWidth + "x" + ph.naturalHeight + ")" : "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
                     "boxes;", boxes.length, "passed card-size validation",
                     boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
 
@@ -1560,13 +1570,30 @@ async function forcedScreenshotPath() {
 }
 // dev-only:end
 
-async function loadPhotoSource(rawUrl) {
+const UPGRADE_TIMEOUT_MS = 4000;
+const UPGRADE_MAX_SIDE = 1600;
+
+// The displayed picture's larger rendition, when the page names one the extension may read.
+async function loadUpgradedSource(ph, ogImages, pageUrl) {
+  if (!(ph.naturalWidth > 0 && ph.naturalHeight > 0)) return null;
+  const candidates = [];
+  for (const url of fullSizeCandidates({ src: ph.src, naturalWidth: ph.naturalWidth, ...ph.sources, ogImages, base: pageUrl })) {
+    if (await canReadPhotoSource(url)) candidates.push(url);
+  }
+  if (!candidates.length) return null;
+  return loadFullSize(candidates, { width: ph.naturalWidth, height: ph.naturalHeight },
+    (url) => loadPhotoSource(url, { timeoutMs: UPGRADE_TIMEOUT_MS, maxSide: UPGRADE_MAX_SIDE }));
+}
+
+async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0 } = {}) {
   let current = publicHttpsUrl(rawUrl);
   if (!current) return null;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     let response;
     for (let hop = 0; hop < 4; hop++) {
-      response = await fetch(current.href, { credentials: "omit", redirect: "manual", cache: "force-cache" });
+      response = await fetch(current.href, { credentials: "omit", redirect: "manual", cache: "force-cache", signal: controller?.signal });
       if (response.type === "opaqueredirect") return null;
       if (response.status < 300 || response.status >= 400) break;
       const next = publicHttpsUrl(response.headers.get("location") || "", current);
@@ -1584,9 +1611,21 @@ async function loadPhotoSource(rawUrl) {
       bitmap.close();
       return null;
     }
-    return bitmap;
+    const longSide = Math.max(bitmap.width, bitmap.height);
+    if (!(maxSide > 0 && longSide > maxSide)) return bitmap;
+    // Bounds the memory and detector time a very large original would cost.
+    const factor = maxSide / longSide;
+    try {
+      return await createImageBitmap(bitmap, {
+        resizeWidth: Math.round(bitmap.width * factor), resizeHeight: Math.round(bitmap.height * factor), resizeQuality: "high",
+      });
+    } finally {
+      bitmap.close();
+    }
   } catch {
     // Cross-origin sources without CORS access use the already captured viewport crop.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

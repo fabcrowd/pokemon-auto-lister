@@ -456,6 +456,25 @@
     return out;
   }
 
+  // Where the page keeps larger renditions of this image; the background decides which to try.
+  const FULL_SIZE_ATTR = /^data-.*(?:zoom|large|full|orig|hi-?res|big|master|lightbox|src)/i;
+
+  function sourceHints(img) {
+    const sets = [img.srcset || ''];
+    if (img.parentElement?.tagName === 'PICTURE') {
+      for (const source of img.parentElement.querySelectorAll('source[srcset]')) sets.push(source.srcset || '');
+    }
+    const attrs = [];
+    for (const attr of img.attributes || []) {
+      if (FULL_SIZE_ATTR.test(attr.name) && attr.value && attr.value.length <= 2000 && attrs.length < 6) attrs.push(attr.value);
+    }
+    return {
+      srcset: sets.filter(Boolean).join(', ').slice(0, 6000),
+      attrs,
+      link: img.closest('a[href]')?.href || '',
+    };
+  }
+
   function contextOf(node) {
     const landmarks = [];
     const headings = [];
@@ -587,6 +606,7 @@
               src: img.currentSrc || img.src || '',
               render: { fit: style.objectFit || 'fill', position: style.objectPosition || '50% 50%' },
               ctx: contextOf(img),
+              sources: sourceHints(img),
             });
           }
         }
@@ -617,6 +637,7 @@
             src: img.currentSrc || img.src || '',
             render: { fit: imageStyle.objectFit || 'fill', position: imageStyle.objectPosition || '50% 50%' },
             ctx: contextOf(img),
+            sources: sourceHints(img),
           });
         }
       }
@@ -730,6 +751,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints } };
   // dev-only:end
 }());

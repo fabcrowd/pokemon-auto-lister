@@ -100,3 +100,25 @@ test('an element chain lists its own id then its ancestors, nearest first, with 
   assert.deepEqual([...pure.chainOf(other)].slice(1), chain.slice(1));
   assert.notEqual(pure.idOf(img), pure.idOf(other));
 });
+
+test('sourceHints gathers srcset, zoom-like data attributes and an enclosing link', () => {
+  const attributes = [
+    { name: 'src', value: 'https://cdn.example/t.jpg' },
+    { name: 'data-zoom-src', value: 'https://cdn.example/z.jpg' },
+    { name: 'data-large', value: 'https://cdn.example/l.jpg' },
+    { name: 'data-index', value: '3' },
+    { name: 'class', value: 'large' },
+  ];
+  const img = {
+    attributes,
+    srcset: 'https://cdn.example/a.jpg 900w',
+    parentElement: { tagName: 'PICTURE', querySelectorAll: () => [{ srcset: 'https://cdn.example/b.webp 1200w' }] },
+    closest: (selector) => (selector === 'a[href]' ? { href: 'https://cdn.example/full.jpg' } : null),
+  };
+  const hints = pure.sourceHints(img);
+  assert.equal(hints.srcset, 'https://cdn.example/a.jpg 900w, https://cdn.example/b.webp 1200w');
+  assert.deepEqual([...hints.attrs], ['https://cdn.example/z.jpg', 'https://cdn.example/l.jpg']);
+  assert.equal(hints.link, 'https://cdn.example/full.jpg');
+  const empty = pure.sourceHints({ attributes: [], closest: () => null });
+  assert.deepEqual([empty.srcset, [...empty.attrs], empty.link], ['', [], '']);
+});
