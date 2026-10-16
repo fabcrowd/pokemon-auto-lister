@@ -1,8 +1,11 @@
 import { readConfig } from "./config.js";
+import { hashInstall, ipBucket } from "./ids.js";
 import { validateBatch } from "./validate.js";
 
 export const MAX_BODY_BYTES = 1_048_576;
 const PATH = "/v1/contributions";
+// A running count of items waiting in R2, kept in KV; the hourly cron decrements it and corrects any drift.
+export const PENDING_COUNT_KEY = "pending:count";
 
 const DAY_TTL = 60 * 60 * 26;
 const HOUR_TTL = 60 * 70;
@@ -95,7 +98,7 @@ export async function handleRequest(request, env, deps = {}) {
   if (request.method === "OPTIONS") return reply(204, null, headers);
   if (request.method !== "POST") return reply(405, { error: "method not allowed" }, { ...headers, allow: "POST, OPTIONS" });
 
-  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const ip = ipBucket(request.headers.get("cf-connecting-ip") || "unknown");
   const ipKey = `ip:${ip}:${now.toISOString().slice(0, 13)}`;
   const ipCount = await count(config.rate, ipKey);
   if (ipCount + 1 > config.requestsPerIpHour) {
@@ -112,26 +115,37 @@ export async function handleRequest(request, env, deps = {}) {
   } catch {
     return reply(400, { error: "body is not valid JSON" }, headers);
   }
-  const valid = validateBatch(body);
+  const valid = validateBatch(body, { now });
   if (!valid.ok) return reply(400, { error: valid.error }, headers);
 
   const day = now.toISOString().slice(0, 10);
+  const stamp = now.toISOString();
+  const items = [];
+  for (const item of body.contributions) items.push({ ...item, install: await hashInstall(config.idSecret, item.install), received: stamp });
+
+  const retry = (seconds) => ({ ...headers, "retry-after": String(seconds) });
+  const totalCards = items.reduce((n, item) => n + item.cards.length, 0);
+  const ipCardsKey = `ipc:${ip}:${day}`;
+  const ipCards = await count(config.rate, ipCardsKey);
+  if (ipCards + totalCards > config.ipCardsPerDay) return reply(429, { error: "daily card limit reached" }, retry(secondsUntilNextDay(now)));
+
   const perInstall = new Map();
-  for (const item of body.contributions) perInstall.set(item.install, (perInstall.get(item.install) || 0) + item.cards.length);
+  for (const item of items) perInstall.set(item.install, (perInstall.get(item.install) || 0) + item.cards.length);
   const used = new Map();
   for (const [install, cards] of perInstall) {
     const key = `inst:${install}:${day}`;
     const before = await count(config.rate, key);
-    if (before + cards > config.cardsPerInstallDay) {
-      return reply(429, { error: "daily card limit reached" }, { ...headers, "retry-after": String(secondsUntilNextDay(now)) });
-    }
+    if (before + cards > config.cardsPerInstallDay) return reply(429, { error: "daily card limit reached" }, retry(secondsUntilNextDay(now)));
     used.set(key, before + cards);
   }
 
-  for (const item of body.contributions) {
-    await config.pending.put(`pending/${item.day}/${randomUUID()}.json`, JSON.stringify(item));
-  }
-  for (const [key, total] of used) await config.rate.put(key, String(total), { expirationTtl: DAY_TTL });
+  const waiting = await count(config.rate, PENDING_COUNT_KEY);
+  if (waiting + items.length > config.maxPending) return reply(503, { error: "busy, try later" }, retry(3600));
 
-  return reply(200, { accepted: body.contributions.length }, headers);
+  for (const item of items) await config.pending.put(`pending/${stamp}-${randomUUID()}.json`, JSON.stringify(item));
+  for (const [key, total] of used) await config.rate.put(key, String(total), { expirationTtl: DAY_TTL });
+  await config.rate.put(ipCardsKey, String(ipCards + totalCards), { expirationTtl: DAY_TTL });
+  await config.rate.put(PENDING_COUNT_KEY, String(waiting + items.length));
+
+  return reply(200, { accepted: items.length }, headers);
 }

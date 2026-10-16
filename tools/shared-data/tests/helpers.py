@@ -13,7 +13,7 @@ CLIP = "0123456789abcdef"
 CATALOG = "fedcba9876543210"
 
 
-def jpeg_b64(seed=0, size=(60, 84)):
+def jpeg_b64(seed=0, size=(100, 140)):
     img = Image.new("RGB", size, (seed % 256, (seed * 7) % 256, (seed * 13) % 256))
     buf = io.BytesIO()
     img.save(buf, "JPEG")
@@ -27,7 +27,8 @@ def photo_id(n, split):
 
 
 def install_id(n):
-    return f"{n:08x}-e89b-42d3-a456-426614174000"
+    """The relay stores a 16-hex HMAC in place of the install uuid."""
+    return f"{n:016x}"
 
 
 def card(card_id="base1-4", box=(0.1, 0.2, 0.3, 0.4), answer=None, seed=0, scanner_id="base1-5", conf=0.8, stripe="high"):
@@ -40,7 +41,7 @@ def card(card_id="base1-4", box=(0.1, 0.2, 0.3, 0.4), answer=None, seed=0, scann
     }
 
 
-def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15"):
+def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15", received="2026-10-15T12:00:00.000Z"):
     photo = photo or photo_id(1, split)
     return {
         "v": 1,
@@ -48,6 +49,7 @@ def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15"):
         "split": split,
         "photoId": photo,
         "day": day,
+        "received": received,
         "model": {"clip": CLIP, "crop": 2},
         "catalog": CATALOG,
         "cards": cards if cards is not None else [card()],
@@ -55,7 +57,7 @@ def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15"):
 
 
 def write_item(root, it, name):
-    d = os.path.join(root, "contributions", it["day"])
+    d = os.path.join(root, "contributions", it["received"][:10])
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, name), "w", encoding="utf-8") as f:
         json.dump(it, f)

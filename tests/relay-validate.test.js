@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { splitFor, validateBatch, validateContribution } from "../tools/relay/src/validate.js";
-import { contribution, card } from "../tools/relay/test/builders.js";
+import { contribution, card, jpegB64 } from "../tools/relay/test/builders.js";
 
 const bad = (item, pattern) => {
   const r = validateContribution(item);
@@ -92,11 +92,51 @@ test("rejects bad enums, confidence and answers", () => {
   bad(contribution({ cards: [card({ answer: {} })] }), /answer/);
 });
 
+const NOW = new Date("2026-10-15T12:00:00Z");
+const badAt = (item, pattern) => {
+  const r = validateContribution(item, { now: NOW });
+  assert.equal(r.ok, false);
+  assert.match(r.error, pattern);
+};
+
+test("day more than 2 days from the server clock is rejected", () => {
+  for (const day of ["2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"]) {
+    assert.equal(validateContribution(contribution({ day }), { now: NOW }).ok, true, day);
+  }
+  badAt(contribution({ day: "2026-10-12" }), /day/);
+  badAt(contribution({ day: "2026-10-18" }), /day/);
+  badAt(contribution({ day: "2099-01-01" }), /day/);
+});
+
+test("crops must be small, plausible JPEGs that end properly", () => {
+  const withCrop = (crop) => contribution({ cards: [card({ crop })] });
+  assert.equal(validateContribution(withCrop(jpegB64({ width: 400, height: 400 }))).ok, true);
+  assert.equal(validateContribution(withCrop(jpegB64({ marker: 0xc2 }))).ok, true);
+  assert.equal(validateContribution(withCrop(jpegB64({ components: 1 }))).ok, true);
+  bad(withCrop(jpegB64({ width: 401, height: 100 })), /crop/);
+  bad(withCrop(jpegB64({ width: 100, height: 4000 })), /crop/);
+  bad(withCrop(jpegB64({ width: 63, height: 63 })), /crop/);
+  bad(withCrop(jpegB64({ components: 4 })), /crop/);
+  bad(withCrop(jpegB64({ end: [1, 2] })), /crop/);
+  bad(withCrop(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 1, 2, 0xff, 0xd9, 0, 0]).toString("base64")), /crop/);
+});
+
+test("stored form: hashed install and a server receipt time replace the raw install", () => {
+  const stored = contribution({ install: "0123456789abcdef", received: "2026-10-15T12:00:00.000Z" });
+  assert.equal(validateContribution(stored, { stored: true }).ok, true);
+  assert.equal(validateContribution(contribution(), { stored: true }).ok, false);
+  assert.equal(validateContribution({ ...stored, received: "yesterday" }, { stored: true }).ok, false);
+  const { received: _r, ...noReceipt } = stored;
+  assert.equal(validateContribution(noReceipt, { stored: true }).ok, false);
+  assert.equal(validateContribution(stored).ok, false); // client form refuses both
+});
+
 test("validateBatch enforces the shape and 1..20 items", () => {
   assert.equal(validateBatch({ v: 1, contributions: [contribution()] }).ok, true);
   assert.equal(validateBatch({ v: 1, contributions: [] }).ok, false);
   assert.equal(validateBatch({ v: 1, contributions: Array.from({ length: 21 }, () => contribution()) }).ok, false);
   assert.equal(validateBatch({ v: 1, contributions: [contribution()], other: 1 }).ok, false);
+  assert.equal(validateBatch({ v: 1, contributions: [contribution({ day: "2026-01-01" })] }, { now: NOW }).ok, false);
   assert.equal(validateBatch(null).ok, false);
   assert.equal(validateBatch({ items: [contribution()] }).ok, false); // old shape
   assert.equal(validateBatch({ v: 2, contributions: [contribution()] }).ok, false);

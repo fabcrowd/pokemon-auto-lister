@@ -7,6 +7,8 @@ export const MAX_CROP_CHARS = 40000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX16 = /^[0-9a-f]{16}$/;
+const RECEIVED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const MAX_DAY_SKEW_MS = 2 * 86400000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const CARD_ID = /^[A-Za-z0-9._-]{1,64}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -32,11 +34,46 @@ function validDay(day) {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === day;
 }
 
+export const MAX_CROP_SIDE = 400;
+export const MIN_CROP_LONG_SIDE = 64;
+
+/**
+ * Reads the frame header of a JPEG and applies the size limits. It walks the marker segments up to the
+ * first SOF0/SOF1/SOF2 (before any scan), so bytes hidden after the image data are never interpreted.
+ */
+function jpegAcceptable(b) {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return false;
+  if (b[b.length - 2] !== 0xff || b[b.length - 1] !== 0xd9) return false;
+  let i = 2;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xff) return false;
+    while (b[i] === 0xff && i < b.length) i++;
+    const marker = b[i++];
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    if (marker === 0xd9 || marker === 0xda) return false; // end or scan before any frame header
+    if (i + 2 > b.length) return false;
+    const length = (b[i] << 8) | b[i + 1];
+    if (length < 2) return false;
+    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+      if (length < 8 || i + length > b.length) return false;
+      const height = (b[i + 3] << 8) | b[i + 4];
+      const width = (b[i + 5] << 8) | b[i + 6];
+      const components = b[i + 7];
+      if (components < 1 || components > 3 || length !== 8 + 3 * components) return false;
+      return width >= 1 && height >= 1 && width <= MAX_CROP_SIDE && height <= MAX_CROP_SIDE && Math.max(width, height) >= MIN_CROP_LONG_SIDE;
+    }
+    i += length;
+  }
+  return false;
+}
+
 function validCrop(crop) {
   if (typeof crop !== "string" || crop.length < 8 || crop.length > MAX_CROP_CHARS) return false;
   if (crop.length % 4 !== 0 || !BASE64.test(crop)) return false;
-  const head = atob(crop.slice(0, 4));
-  return head.charCodeAt(0) === 0xff && head.charCodeAt(1) === 0xd8 && head.charCodeAt(2) === 0xff;
+  const binary = atob(crop);
+  const bytes = new Uint8Array(binary.length);
+  for (let k = 0; k < binary.length; k++) bytes[k] = binary.charCodeAt(k);
+  return jpegAcceptable(bytes);
 }
 
 function validAnswer(answer) {
@@ -74,17 +111,24 @@ function validateCard(c) {
   return null;
 }
 
-/** @returns {{ok: true} | {ok: false, error: string}} */
-export function validateContribution(item) {
+/**
+ * @param {object} [options]
+ *   now: server clock; when given, `day` must be within 2 days of it (the client only chooses a label, never an order).
+ *   stored: the form kept by the relay, where `install` is the 16-hex HMAC and `received` is the server time.
+ * @returns {{ok: true} | {ok: false, error: string}}
+ */
+export function validateContribution(item, { now, stored = false } = {}) {
   if (!isObject(item)) return fail("contribution must be an object");
-  const extra = unknownKey(item, ["v", "install", "split", "photoId", "day", "model", "catalog", "cards"]);
+  const extra = unknownKey(item, ["v", "install", "split", "photoId", "day", "model", "catalog", "cards", ...(stored ? ["received"] : [])]);
   if (extra) return fail(`unknown field ${extra}`);
+  if (stored && (typeof item.received !== "string" || !RECEIVED.test(item.received))) return fail("received must be a server timestamp");
   if (item.v !== 1) return fail("v must be 1");
-  if (typeof item.install !== "string" || !UUID.test(item.install)) return fail("install must be a lowercase uuid");
+  if (typeof item.install !== "string" || !(stored ? HEX16 : UUID).test(item.install)) return fail(stored ? "install must be 16 hex digits" : "install must be a lowercase uuid");
   if (typeof item.photoId !== "string" || !HEX16.test(item.photoId)) return fail("photoId must be 16 lowercase hex digits");
   if (item.split !== "teach" && item.split !== "exam") return fail("split must be teach or exam");
   if (item.split !== splitFor(item.photoId)) return fail("split does not match the photoId rule");
   if (!validDay(item.day)) return fail("day must be a real date as YYYY-MM-DD");
+  if (now && Math.abs(Date.parse(`${item.day}T00:00:00Z`) - Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`)) > MAX_DAY_SKEW_MS) return fail("day is too far from today");
   const m = item.model;
   if (!isObject(m) || unknownKey(m, ["clip", "crop"]) || typeof m.clip !== "string" || !HEX16.test(m.clip) || !Number.isSafeInteger(m.crop) || m.crop < 0) {
     return fail("model must be {clip: 16 hex, crop: non-negative integer}");
@@ -99,7 +143,7 @@ export function validateContribution(item) {
 }
 
 /** Validates a request body { v: 1, contributions: [...] }, the shape lib/contribution.js uploads. */
-export function validateBatch(body) {
+export function validateBatch(body, options = {}) {
   if (!isObject(body)) return fail("body must be an object");
   const extra = unknownKey(body, ["v", "contributions"]);
   if (extra) return fail(`unknown field ${extra}`);
@@ -107,7 +151,7 @@ export function validateBatch(body) {
   const list = body.contributions;
   if (!Array.isArray(list) || list.length < 1 || list.length > MAX_ITEMS) return fail(`contributions must hold 1..${MAX_ITEMS} entries`);
   for (let i = 0; i < list.length; i++) {
-    const r = validateContribution(list[i]);
+    const r = validateContribution(list[i], options);
     if (!r.ok) return fail(`contributions[${i}]: ${r.error}`);
   }
   return { ok: true };

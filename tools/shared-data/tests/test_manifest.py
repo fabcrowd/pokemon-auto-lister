@@ -11,12 +11,14 @@ from pipeline.signing import generate_keypair
 
 PINS = {"cropVersion": 2, "dim": 512}
 EXAM = {"before": 0.5, "after": 0.6, "n": 40, "wrongAtHigh": {"before": 0.1, "after": 0.05}}
+REGRESSION = {"before": 0.8, "after": 0.8, "n": 50}
 
 
 def manifest(**over):
     args = dict(
         pins=PINS, clip="77538aade655907f", catalog="2f3c50cec84937ff", entries=12,
         pack_bytes=b"pack", url="https://example.com/pack.bin", exam=EXAM,
+        regression=REGRESSION, seq=7, issued_at="2026-10-15T03:17:00Z",
     )
     args.update(over)
     return build_manifest(**args)
@@ -35,11 +37,20 @@ class Manifest(unittest.TestCase):
         self.assertEqual(len(m["sha256"]), 64)
         self.assertEqual(m["exam"]["n"], 40)
         self.assertIs(m["improved"], True)
+        self.assertEqual(m["seq"], 7)
+        self.assertEqual(m["issuedAt"], "2026-10-15T03:17:00Z")
+        self.assertEqual(m["regression"], REGRESSION)
 
     def test_improved_flag(self):
         self.assertIs(manifest(exam={**EXAM, "n": 29})["improved"], False)
         self.assertIs(manifest(exam={**EXAM, "after": 0.5})["improved"], False)
-        self.assertTrue(is_improved({"before": 0.0, "after": 0.1, "n": 30}))
+        self.assertTrue(is_improved({"before": 0.0, "after": 0.1, "n": 30}, REGRESSION))
+
+    def test_improved_also_needs_no_drop_on_the_fixed_regression_set(self):
+        self.assertIs(manifest(regression={"before": 0.8, "after": 0.79, "n": 50})["improved"], False)
+        self.assertIs(manifest(regression={"before": 0.8, "after": 0.81, "n": 50})["improved"], True)
+        self.assertIs(manifest(regression={"before": 0.0, "after": 0.0, "n": 0})["improved"], False)  # an empty set proves nothing
+        self.assertIs(manifest(regression=None)["improved"], False)  # no regression set: never improved
 
     def test_sha256_is_of_the_pack_bytes(self):
         import hashlib

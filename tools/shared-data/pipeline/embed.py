@@ -8,6 +8,10 @@ import io
 import numpy as np
 from PIL import Image
 
+# Contributions come from strangers: decoding is bounded before any pixels are read. These match the relay.
+Image.MAX_IMAGE_PIXELS = 1_000_000
+MAX_SIDE = 400
+MIN_LONG_SIDE = 64
 CLIP_SIZE = 224
 ART_CROP_FRAC = 0.45
 MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
@@ -21,10 +25,20 @@ def art_rect(width, height):
     return (width - side) // 2, (strip - side) // 2, side
 
 
-def preprocess(jpeg_bytes):
-    """(1, 3, 224, 224) float32 CLIP input for a card JPEG."""
+def preprocess(jpeg_bytes, trusted=False):
+    """(1, 3, 224, 224) float32 CLIP input for a card JPEG.
+
+    Untrusted crops are size-checked from the header before conversion, then decoded at reduced size (JPEG draft
+    mode). `trusted` is for our own full-size reference images and skips only the size limits.
+    """
     try:
-        card = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+        img = Image.open(io.BytesIO(jpeg_bytes))
+        width, height = img.size
+        if not trusted and (max(width, height) > MAX_SIDE or max(width, height) < MIN_LONG_SIDE or width * height > Image.MAX_IMAGE_PIXELS):
+            raise ValueError(f"crop is {width}x{height}")
+        if not trusted:
+            img.draft("RGB", (320, 320))
+        card = img.convert("RGB")
     except Exception as err:  # PIL raises several types for bad data
         raise ValueError(f"cannot decode crop: {err}") from err
     sx, sy, side = art_rect(*card.size)

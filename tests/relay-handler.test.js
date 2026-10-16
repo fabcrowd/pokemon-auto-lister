@@ -1,7 +1,9 @@
 /* global Request */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { handleRequest } from "../tools/relay/src/handler.js";
+import { ipBucket } from "../tools/relay/src/ids.js";
 import { readConfig } from "../tools/relay/src/config.js";
 import { fakeKV, fakeR2 } from "../tools/relay/test/fakes.js";
 import { contribution, card } from "../tools/relay/test/builders.js";
@@ -13,7 +15,7 @@ function setup(over = {}) {
   const env = {
     GITHUB_TOKEN: "t",
     DATA_REPO: "owner/data",
-    DATA_BRANCH: "main",
+    RELAY_ID_SECRET: "a-long-random-relay-secret",
     ALLOWED_EXTENSION_IDS: EXT,
     PENDING: fakeR2(),
     RATE: fakeKV(),
@@ -31,15 +33,65 @@ const post = (body, { origin = ORIGIN, ip = "1.2.3.4", headers = {} } = {}) =>
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 
-test("a valid batch is accepted and stored under pending/<day>/<uuid>.json", async () => {
+const hashed = (install) => createHmac("sha256", "a-long-random-relay-secret").update(install).digest("hex").slice(0, 16);
+const TS = "2026-10-15T12:34:00.000Z";
+
+test("a valid batch is accepted and stored under a server-time key with a hashed install id", async () => {
   const { env, deps } = setup();
   const items = [contribution(), contribution({ photoId: "00000000000000a2", day: "2026-10-14" })];
   const res = await handleRequest(post({ v: 1, contributions: items }), env, deps);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { accepted: 2 });
-  assert.deepEqual([...env.PENDING.map.keys()].sort(), ["pending/2026-10-14/uuid-2.json", "pending/2026-10-15/uuid-1.json"]);
-  assert.deepEqual(JSON.parse(env.PENDING.map.get("pending/2026-10-15/uuid-1.json")), items[0]);
+  assert.deepEqual([...env.PENDING.map.keys()].sort(), [`pending/${TS}-uuid-1.json`, `pending/${TS}-uuid-2.json`]);
+  const stored = JSON.parse(env.PENDING.map.get(`pending/${TS}-uuid-1.json`));
+  assert.deepEqual(stored, { ...items[0], install: hashed(items[0].install), received: TS });
+  assert.doesNotMatch(JSON.stringify([...env.PENDING.map.values()]), /123e4567-e89b/);
   assert.equal(res.headers.get("access-control-allow-origin"), ORIGIN);
+});
+
+test("a day far from the server clock is rejected", async () => {
+  const { env, deps } = setup();
+  const res = await handleRequest(post({ v: 1, contributions: [contribution({ day: "2026-09-01" })] }), env, deps);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /day/);
+});
+
+test("ipBucket keys IPv6 on its /64 and leaves IPv4 alone", () => {
+  assert.equal(ipBucket("1.2.3.4"), "1.2.3.4");
+  assert.equal(ipBucket("2001:db8:1:2:aaaa:bbbb:cccc:dddd"), ipBucket("2001:0DB8:0001:0002::1"));
+  assert.equal(ipBucket("2001:db8:1:2::1"), ipBucket("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+  assert.notEqual(ipBucket("2001:db8:1:2::1"), ipBucket("2001:db8:1:3::1"));
+  assert.equal(ipBucket("::ffff:9.8.7.6"), "9.8.7.6");
+  assert.equal(ipBucket("::1"), ipBucket("0:0:0:0:5::"));
+});
+
+test("requests from one IPv6 /64 share the hourly limit", async () => {
+  const { env, deps } = setup({ REQUESTS_PER_IP_HOUR: "2" });
+  const from = (suffix) => post({ v: 1, contributions: [contribution()] }, { ip: `2001:db8:1:2::${suffix}` });
+  assert.equal((await handleRequest(from(1), env, deps)).status, 200);
+  assert.equal((await handleRequest(from(2), env, deps)).status, 200);
+  assert.equal((await handleRequest(from(3), env, deps)).status, 429);
+});
+
+test("one IP can send only so many cards a day, across installs", async () => {
+  const { env, deps } = setup({ IP_CARDS_PER_DAY: "3" });
+  const three = contribution({ cards: Array.from({ length: 3 }, () => card()) });
+  assert.equal((await handleRequest(post({ v: 1, contributions: [three] }), env, deps)).status, 200);
+  const other = contribution({ install: "223e4567-e89b-42d3-a456-426614174000" });
+  const res = await handleRequest(post({ v: 1, contributions: [other] }), env, deps);
+  assert.equal(res.status, 429);
+  assert.equal((await handleRequest(post({ v: 1, contributions: [other] }, { ip: "9.9.9.9" }), env, deps)).status, 200);
+});
+
+test("when too many items are waiting the relay answers 503 until the cron drains them", async () => {
+  const { env, deps } = setup({ MAX_PENDING: "2" });
+  const send = (ip) => handleRequest(post({ v: 1, contributions: [contribution()] }, { ip }), env, deps);
+  assert.equal((await send("1.1.1.1")).status, 200);
+  assert.equal((await send("1.1.1.2")).status, 200);
+  const full = await send("1.1.1.3");
+  assert.equal(full.status, 503);
+  assert.ok(Number(full.headers.get("retry-after")) > 0);
+  assert.equal(env.PENDING.map.size, 2);
 });
 
 test("validation failures answer 400 and store nothing", async () => {
@@ -148,7 +200,7 @@ test("the 51st request from one IP in an hour gets 429, and another IP is unaffe
 });
 
 test("missing configuration fails fast with 500 and no detail", async () => {
-  for (const key of ["GITHUB_TOKEN", "DATA_REPO", "DATA_BRANCH", "ALLOWED_EXTENSION_IDS", "PENDING", "RATE"]) {
+  for (const key of ["GITHUB_TOKEN", "DATA_REPO", "RELAY_ID_SECRET", "ALLOWED_EXTENSION_IDS", "PENDING", "RATE"]) {
     const { env, deps } = setup({ [key]: undefined });
     const res = await handleRequest(post({ v: 1, contributions: [contribution()] }), env, deps);
     assert.equal(res.status, 500, key);
@@ -157,11 +209,19 @@ test("missing configuration fails fast with 500 and no detail", async () => {
 });
 
 test("readConfig names every missing or malformed setting", () => {
-  assert.throws(() => readConfig({}), /GITHUB_TOKEN.*DATA_REPO.*DATA_BRANCH.*ALLOWED_EXTENSION_IDS/s);
+  assert.throws(() => readConfig({}), /GITHUB_TOKEN.*DATA_REPO.*RELAY_ID_SECRET.*ALLOWED_EXTENSION_IDS/s);
   const { env } = setup({ DATA_REPO: "not a repo" });
   assert.throws(() => readConfig(env), /DATA_REPO/);
   const { env: env2 } = setup({ ALLOWED_EXTENSION_IDS: "short" });
   assert.throws(() => readConfig(env2), /ALLOWED_EXTENSION_IDS/);
   const { env: env3 } = setup();
   assert.deepEqual(readConfig(env3).allowedExtensionIds, [EXT]);
+  assert.throws(() => readConfig(setup({ RELAY_ID_SECRET: "short" }).env), /RELAY_ID_SECRET/);
+});
+
+test("the relay writes to the inbox branch by default and refuses the branch that holds code", () => {
+  assert.equal(readConfig(setup().env).branch, "inbox");
+  assert.equal(readConfig(setup({ DATA_BRANCH: "work" }).env).branch, "work");
+  for (const name of ["main", "master"]) assert.throws(() => readConfig(setup({ DATA_BRANCH: name }).env), /DATA_BRANCH/);
+  assert.throws(() => readConfig(setup({ DATA_BRANCH: "trunk", DATA_BASE_BRANCH: "trunk" }).env), /DATA_BRANCH/);
 });

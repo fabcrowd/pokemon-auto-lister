@@ -26,10 +26,15 @@ export function readConfig(env) {
 
   const token = need("GITHUB_TOKEN");
   const repo = need("DATA_REPO");
-  const branch = need("DATA_BRANCH");
+  const branch = (env.DATA_BRANCH ?? "").trim() || "inbox";
+  const baseBranch = (env.DATA_BASE_BRANCH ?? "").trim() || "main";
+  const idSecret = need("RELAY_ID_SECRET");
   const idsRaw = need("ALLOWED_EXTENSION_IDS");
   if (repo && !REPO.test(repo)) problems.push("DATA_REPO must look like owner/name");
-  if (branch && !BRANCH.test(branch)) problems.push("DATA_BRANCH has characters a branch name cannot have");
+  if (!BRANCH.test(branch)) problems.push("DATA_BRANCH has characters a branch name cannot have");
+  // The nightly job runs code from the base branch, so the relay's token must never move it.
+  if (branch === baseBranch || branch === "main" || branch === "master") problems.push("DATA_BRANCH must not be the branch that holds the pipeline code");
+  if (idSecret && idSecret.length < 16) problems.push("RELAY_ID_SECRET must be at least 16 characters");
   const ids = idsRaw ? idsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
   if (idsRaw && (ids.length === 0 || !ids.every((id) => EXTENSION_ID.test(id)))) {
     problems.push("ALLOWED_EXTENSION_IDS must be comma-separated 32-letter (a-p) extension ids");
@@ -39,6 +44,9 @@ export function readConfig(env) {
 
   const cardsPerInstallDay = positiveInt(env.CARDS_PER_INSTALL_DAY, 200, "CARDS_PER_INSTALL_DAY", problems);
   const requestsPerIpHour = positiveInt(env.REQUESTS_PER_IP_HOUR, 50, "REQUESTS_PER_IP_HOUR", problems);
+  const maxPending = positiveInt(env.MAX_PENDING, 5000, "MAX_PENDING", problems);
+  const ipCardsPerDay = positiveInt(env.IP_CARDS_PER_DAY, 500, "IP_CARDS_PER_DAY", problems);
+  const maxFlushBytes = positiveInt(env.MAX_FLUSH_BYTES, 20_000_000, "MAX_FLUSH_BYTES", problems);
   const maxItemsPerFlush = positiveInt(env.MAX_ITEMS_PER_FLUSH, 100, "MAX_ITEMS_PER_FLUSH", problems);
 
   if (problems.length) throw new Error(`relay misconfigured: ${problems.join("; ")}`);
@@ -46,11 +54,16 @@ export function readConfig(env) {
     token,
     repo,
     branch,
+    baseBranch,
+    idSecret,
     allowedExtensionIds: ids,
     pending: env.PENDING,
     rate: env.RATE,
     cardsPerInstallDay,
     requestsPerIpHour,
     maxItemsPerFlush,
+    maxPending,
+    ipCardsPerDay,
+    maxFlushBytes,
   };
 }

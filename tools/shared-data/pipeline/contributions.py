@@ -1,4 +1,8 @@
-"""Loading, validating and de-duplicating contributions (schema v1, see tools/relay/src/validate.js)."""
+"""Loading, validating and de-duplicating contributions (schema v1, see tools/relay/src/validate.js).
+
+These are the relay's stored files: `install` is the 16-hex HMAC of the real install id and `received` is the
+server's timestamp. The client-written `day` is only a label here: every ordering and every day count uses `received`.
+"""
 import base64
 import datetime
 import json
@@ -9,11 +13,11 @@ from dataclasses import dataclass, field
 MAX_CARDS = 30
 MAX_CROP_CHARS = 40000
 
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_HEX16 = re.compile(r"^[0-9a-f]{16}$")
-_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_CARD_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-_BASE64 = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+_HEX16 = re.compile(r"[0-9a-f]{16}")
+_RECEIVED = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+_CARD_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _STRIPES = {"high", "medium", "low", "none"}
 _SOURCES = {"pick", "wrong-card", "confirm"}
 
@@ -28,7 +32,7 @@ def _in_unit(x):
 
 
 def _valid_day(day):
-    if not isinstance(day, str) or not _DAY.match(day):
+    if not isinstance(day, str) or not _DAY.fullmatch(day):
         return False
     try:
         return datetime.date.fromisoformat(day).isoformat() == day
@@ -37,7 +41,7 @@ def _valid_day(day):
 
 
 def _valid_crop(crop):
-    if not isinstance(crop, str) or not 8 <= len(crop) <= MAX_CROP_CHARS or len(crop) % 4 or not _BASE64.match(crop):
+    if not isinstance(crop, str) or not 8 <= len(crop) <= MAX_CROP_CHARS or len(crop) % 4 or not _BASE64.fullmatch(crop):
         return False
     return base64.b64decode(crop[:4])[:3] == b"\xff\xd8\xff"
 
@@ -47,7 +51,7 @@ def _valid_answer(a):
         return False
     (key, value), = a.items()
     if key == "cardId":
-        return isinstance(value, str) and bool(_CARD_ID.match(value))
+        return isinstance(value, str) and bool(_CARD_ID.fullmatch(value))
     return key in ("notACard", "unknown") and value is True
 
 
@@ -64,7 +68,7 @@ def _card_error(c):
     s = c["scanner"]
     if not (isinstance(s, dict) and set(s) == {"cardId", "confidence", "stripe"}):
         return "scanner"
-    if s["cardId"] is not None and not (isinstance(s["cardId"], str) and _CARD_ID.match(s["cardId"])):
+    if s["cardId"] is not None and not (isinstance(s["cardId"], str) and _CARD_ID.fullmatch(s["cardId"])):
         return "scanner.cardId"
     if not _in_unit(s["confidence"]) or s["stripe"] not in _STRIPES:
         return "scanner values"
@@ -75,23 +79,25 @@ def _card_error(c):
 
 def validate_contribution(it):
     """None when the contribution is valid, else a short reason."""
-    if not isinstance(it, dict) or set(it) != {"v", "install", "split", "photoId", "day", "model", "catalog", "cards"}:
+    if not isinstance(it, dict) or set(it) != {"v", "install", "split", "photoId", "day", "received", "model", "catalog", "cards"}:
         return "fields"
     if it["v"] != 1 or isinstance(it["v"], bool):
         return "v"
-    if not (isinstance(it["install"], str) and _UUID.match(it["install"])):
+    if not (isinstance(it["install"], str) and _HEX16.fullmatch(it["install"])):
         return "install"
-    if not (isinstance(it["photoId"], str) and _HEX16.match(it["photoId"])):
+    if not (isinstance(it["photoId"], str) and _HEX16.fullmatch(it["photoId"])):
         return "photoId"
     if it["split"] != split_for(it["photoId"]):
         return "split"
     if not _valid_day(it["day"]):
         return "day"
+    if not (isinstance(it["received"], str) and _RECEIVED.fullmatch(it["received"])):
+        return "received"
     m = it["model"]
-    if not (isinstance(m, dict) and set(m) == {"clip", "crop"} and isinstance(m["clip"], str) and _HEX16.match(m["clip"])
+    if not (isinstance(m, dict) and set(m) == {"clip", "crop"} and isinstance(m["clip"], str) and _HEX16.fullmatch(m["clip"])
             and isinstance(m["crop"], int) and not isinstance(m["crop"], bool) and m["crop"] >= 0):
         return "model"
-    if not (isinstance(it["catalog"], str) and _HEX16.match(it["catalog"])):
+    if not (isinstance(it["catalog"], str) and _HEX16.fullmatch(it["catalog"])):
         return "catalog"
     cards = it["cards"]
     if not isinstance(cards, list) or not 1 <= len(cards) <= MAX_CARDS:
@@ -104,7 +110,10 @@ def validate_contribution(it):
 
 
 def load_contributions(root):
-    """Every valid contribution under <root>/contributions/, ordered by (day, file name), and the count dropped."""
+    """Every valid contribution under <root>/contributions/, ordered by (server receipt time, file name), and the count dropped.
+
+    The data is read, never executed: this only parses JSON files and ignores everything else in the folder.
+    """
     base = os.path.join(root, "contributions")
     found = []
     dropped = 0
@@ -121,7 +130,7 @@ def load_contributions(root):
             if validate_contribution(it):
                 dropped += 1
             else:
-                found.append((it["day"], name, it))
+                found.append((it["received"], name, it))
     found.sort(key=lambda t: (t[0], t[1]))
     return [t[2] for t in found], dropped
 
@@ -129,11 +138,12 @@ def load_contributions(root):
 @dataclass
 class Vote:
     install: str
-    day: str
+    day: str  # server receipt day of the latest vote
     kind: str  # "card" | "notACard" | "unknown"
     card_id: str = None
     scanner: dict = None
     source: str = None
+    days: set = field(default_factory=set)  # receipt days of all this install's votes on the sample
 
 
 @dataclass
@@ -156,20 +166,23 @@ def _box_key(box):
 
 
 def _vote(it, c):
+    day = it["received"][:10]
     a = c["answer"]
     if "cardId" in a:
-        return Vote(it["install"], it["day"], "card", a["cardId"], c["scanner"], c["source"])
-    return Vote(it["install"], it["day"], "notACard" if "notACard" in a else "unknown", None, c["scanner"], c["source"])
+        return Vote(it["install"], day, "card", a["cardId"], c["scanner"], c["source"], {day})
+    return Vote(it["install"], day, "notACard" if "notACard" in a else "unknown", None, c["scanner"], c["source"], {day})
 
 
 def build_samples(items, valid_ids=None, split=None):
     """Merge cards into samples keyed by (photoId, box rounded to 0.01).
 
     Duplicates collapse to one sample so one photo is never counted twice, but each install keeps its own vote
-    (its latest by day), so agreement between installs stays visible. Votes for a card id outside valid_ids are dropped.
+    (its latest by server time), so agreement between installs stays visible. A sample's crop is the one sent by
+    whoever voted first by server time, so a later contribution cannot swap the picture under an existing vote.
+    Votes for a card id outside valid_ids are dropped.
     """
     samples = {}
-    for it in sorted(items, key=lambda i: i["day"]):
+    for it in sorted(items, key=lambda i: i["received"]):
         if split and it["split"] != split:
             continue
         for c in it["cards"]:
@@ -180,5 +193,8 @@ def build_samples(items, valid_ids=None, split=None):
             s = samples.get(key)
             if s is None:
                 s = samples[key] = Sample(key, it["photoId"], c["box"], base64.b64decode(c["crop"]), it["split"])
+            earlier = s.votes.get(it["install"])
+            if earlier:
+                vote.days |= earlier.days
             s.votes[it["install"]] = vote
     return list(samples.values())

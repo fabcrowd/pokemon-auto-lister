@@ -9,10 +9,13 @@ blocks the cluster rather than being outvoted, which is the safe direction for a
 scanners will trust.
 
 A clean cluster's card id is promoted when
-  * at least two distinct installs voted for it, or
-  * one install did and the id is also among the catalog's top-20 neighbours of that crop.
+  * at least two distinct installs voted for it, on at least two different server days (so a burst of fake
+    installs on one day is not agreement), or
+  * the id is also among the catalog's top-20 neighbours of that crop.
+Days are the relay's receipt days, never the day a client wrote in its contribution.
 Rows promoted by the neighbour rule alone are capped: no install may own more than `max_share` of the promoted
-rows (see cap_install_share). Rows two installs agreed on are exempt; the exam gate is the real safety check.
+rows (see cap_install_share). Rows two installs agreed on are exempt from that cap. No card id may have more
+than `max_per_card` rows, whoever promoted them. The exam gate and the fixed regression set are the real checks.
 """
 import hashlib
 import math
@@ -22,6 +25,7 @@ import numpy as np
 
 CLUSTER_SIM = 0.95
 MAX_INSTALL_SHARE = 0.10
+MAX_ROWS_PER_CARD = 5
 
 
 @dataclass
@@ -30,7 +34,7 @@ class PackRow:
     embedding: np.ndarray
     owner: str
     sample_key: tuple
-    multi: bool = False  # two or more distinct installs voted for this card on this cluster
+    multi: bool = False  # two or more installs voted for this card on this cluster, over two or more server days
 
 
 @dataclass
@@ -95,7 +99,19 @@ def cap_install_share(rows, max_share=MAX_INSTALL_SHARE):
     return exempt + [row for o, owned in by_owner.items() for row in owned[: counts[o]]]
 
 
-def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=MAX_INSTALL_SHARE):
+def cap_per_card(rows, max_per_card=MAX_ROWS_PER_CARD):
+    """At most max_per_card rows for any one card id; rows two installs agreed on are kept before the rest."""
+    kept = []
+    by_card = {}
+    for row in rows:
+        by_card.setdefault(row.card_id, []).append(row)
+    for card_rows in by_card.values():
+        card_rows.sort(key=lambda r: (not r.multi, _order_key(r)))
+        kept.extend(card_rows[:max_per_card])
+    return kept
+
+
+def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=MAX_INSTALL_SHARE, max_per_card=MAX_ROWS_PER_CARD):
     """TEACH samples -> promoted pack rows.
 
     samples: Sample objects, all split "teach"; embeddings: matching (n, 512) unit vectors;
@@ -103,7 +119,7 @@ def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=
     """
     if any(s.split != "teach" for s in samples):
         raise ValueError("only teach samples may be promoted")
-    stats = {"samples": len(samples), "clusters": 0, "heldConflict": 0, "heldUnconfirmed": 0, "cappedOut": 0}
+    stats = {"samples": len(samples), "clusters": 0, "heldConflict": 0, "heldUnconfirmed": 0, "cappedOut": 0, "cappedCard": 0}
     groups = {}
     for i, c in enumerate(cluster(embeddings, cluster_sim) if len(samples) else []):
         groups.setdefault(c, []).append(i)
@@ -121,13 +137,18 @@ def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=
             continue
         card_id = next(iter(ids))
         installs = {v.install for v in votes}
+        days = set().union(*(v.days for v in votes if v.kind == "card"))
+        agreed = len(installs) >= 2 and len(days) >= 2
         for i in labelled:
-            if len(installs) >= 2 or card_id in neighbours[i]:
-                rows.append(PackRow(card_id, np.asarray(embeddings[i], dtype=np.float32), _owner(samples[i], card_id), samples[i].key, len(installs) >= 2))
+            if agreed or card_id in neighbours[i]:
+                rows.append(PackRow(card_id, np.asarray(embeddings[i], dtype=np.float32), _owner(samples[i], card_id), samples[i].key, agreed))
             else:
                 stats["heldUnconfirmed"] += 1
 
     kept = cap_install_share(rows, max_share)
     stats["cappedOut"] = len(rows) - len(kept)
+    per_card = cap_per_card(kept, max_per_card)
+    stats["cappedCard"] = len(kept) - len(per_card)
+    kept = per_card
     kept.sort(key=lambda r: (r.card_id, _order_key(r)))
     return Promotion(kept, stats)
