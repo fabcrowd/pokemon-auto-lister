@@ -2,7 +2,7 @@ import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirme
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
-import { hasAllSites, requestAllSites } from "./lib/site-access.js";
+import { hasAllSites, requestAllSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
@@ -34,6 +34,12 @@ const btnSetup     = document.getElementById("btn-setup");
 const setupStatus  = document.getElementById("setup-status");
 const setupBars    = document.getElementById("setup-bars");
 const eraSelect    = document.getElementById("era-select");
+const accessNotice  = document.getElementById("access-notice");
+const accessText    = document.getElementById("access-text");
+const accessOutcome = document.getElementById("access-outcome");
+const accessAllow   = document.getElementById("access-allow");
+const accessSkip    = document.getElementById("access-skip");
+const accessRescan  = document.getElementById("access-rescan");
 
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 const DEFAULT_FILTERS = {
@@ -268,6 +274,7 @@ async function scanPage() {
   btnScan.disabled = true;
   btnScan.setAttribute("aria-busy", "true");
   eraSelect.disabled = true;
+  accessNotice.hidden = true;
   showMessage("Capturing page and running detection…");
 
   const t0 = performance.now();
@@ -296,6 +303,7 @@ async function scanPage() {
   renderResults();
   refreshSourceIndicators(_lastResult.cards);
   finishScan();
+  maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
 
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
@@ -320,6 +328,45 @@ async function scanPage() {
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
 }
+
+/* ─── Site access offer ─── */
+
+async function maybeOfferSiteAccess(scan) {
+  const { siteAccessDismissedAt } = await chrome.storage.local.get("siteAccessDismissedAt");
+  const offer = shouldOfferSiteAccess({
+    scan, hasAll: await hasAllSites(chrome.permissions), dismissedAt: siteAccessDismissedAt, now: Date.now(),
+  });
+  accessText.hidden = false;
+  accessOutcome.textContent = "";
+  accessAllow.hidden = false;
+  accessSkip.hidden = false;
+  accessRescan.hidden = true;
+  accessNotice.hidden = !offer;
+}
+
+// Must run straight from the click: the browser refuses a permission request made later.
+accessAllow.addEventListener("click", async () => {
+  const granted = await requestAllSites(chrome.permissions);
+  if (!granted) {
+    accessNotice.hidden = true;
+    return;
+  }
+  accessText.hidden = true;
+  accessAllow.hidden = true;
+  accessSkip.hidden = true;
+  accessOutcome.textContent = "Done — scan again for full-size photos";
+  accessRescan.hidden = false;
+  accessRescan.focus();
+});
+accessSkip.addEventListener("click", () => {
+  chrome.storage.local.set({ siteAccessDismissedAt: Date.now() });
+  accessNotice.hidden = true;
+  btnScan.focus();
+});
+accessRescan.addEventListener("click", () => {
+  accessNotice.hidden = true;
+  scanPage();
+});
 
 function finishScan() {
   isScanning = false;

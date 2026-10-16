@@ -42,7 +42,7 @@ The extension does not send your browsing history anywhere.
 
 ## Optional site access
 
-The extension asks to read all sites only if you turn on "Read full-size photos on sites you scan". It uses this to fetch full-size photos from the page you scan, for better accuracy. Without it, the extension uses a screenshot of the visible tab. You can turn it off at any time in your browser's extension settings.
+The extension asks to read all sites only if you turn on "Read full-size photos on sites you scan", in the options or from the notice the popup can show after a scan that used a screenshot. The notice has an "Allow" button and a "Not now" link, and if you pick "Not now" it does not appear again for 14 days (the date is kept in the extension's local storage). It uses this to fetch full-size photos from the page you scan, for better accuracy. Without it, the extension uses a screenshot of the visible tab. You can turn it off at any time in your browser's extension settings.
 
 ## What we do not do
 

@@ -260,6 +260,36 @@
     }
     .era-select:disabled { opacity: 0.5; cursor: wait; }
 
+    /* SITE ACCESS NOTICE — offered after a screenshot scan that lacked site access */
+    .access-notice {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 10px;
+      padding: 8px 16px;
+      background: #0e1018;
+      border-top: 1px solid #1a1d2a;
+      font-size: 11px;
+      color: #8b92ab;
+    }
+    .access-notice[hidden] { display: none; }
+    .access-notice .access-text { flex: 1 1 100%; margin: 0; }
+    .access-notice .access-text:empty { display: none; }
+    .access-notice .access-btn {
+      background: #6366f1;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 4px 10px;
+    }
+    .access-notice .access-btn:hover { background: #7578f3; }
+    .access-notice .access-skip { color: #8b92ab; }
+    .access-notice button:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+    .access-notice .access-btn:focus-visible { outline-color: #c5cadc; }
+
     /* MESSAGE BAR */
     .msg-bar {
       padding: 8px 16px;
@@ -660,6 +690,14 @@
         <option value="">Any era</option>
       </select>
     </div>
+  </div>
+
+  <div class="access-notice" id="access-notice" hidden>
+    <p class="access-text" id="access-text">Allow reading full-size photos on sites you scan — finds more cards in lots and binders.</p>
+    <p class="access-text" id="access-outcome" role="status"></p>
+    <button type="button" class="access-btn" id="access-allow">Allow</button>
+    <button type="button" class="link-btn access-skip" id="access-skip">Not now</button>
+    <button type="button" class="access-btn" id="access-rescan" hidden>Scan again</button>
   </div>
 
   <div class="msg-bar hidden" id="msg-bar" role="status"></div>

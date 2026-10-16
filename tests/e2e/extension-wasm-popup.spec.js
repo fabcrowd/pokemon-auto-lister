@@ -135,4 +135,47 @@ test.describe('Consumer extension popup', () => {
     expect(loaded.pending).toBe(0);
     await listing.close();
   });
+
+  test('a screenshot scan offers site access; Allow offers a rescan, Not now is remembered', async () => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 640 });
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    // The dev build holds <all_urls> already, so pretend it is missing; the click handler is the real one.
+    await page.evaluate(() => {
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanPage'
+        ? { cards: [], scanId: 'x', srcWidth: 10, srcHeight: 10, pending: 0, usedScreenshotPath: true, reason: 'no-site-access' }
+        : real(msg));
+      window.__granted = false;
+      window.__asked = [];
+      chrome.permissions.contains = async () => window.__granted;
+      chrome.permissions.request = async (req) => { window.__asked.push(req); return window.__granted = true; };
+      chrome.storage.local.remove('siteAccessDismissedAt');
+    });
+    // The fresh profile has no models, so the setup overlay covers the button; click it directly.
+    const scan = () => page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    const notice = page.locator('#access-notice');
+
+    await scan();
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('finds more cards in lots and binders');
+    await expect(page.locator('button#access-allow')).toBeVisible();
+    await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
+    await page.screenshot({ path: path.join(__dirname, 'screenshots', 'ext-wasm-popup-site-access.png') });
+
+    await page.locator('#access-allow').evaluate((b) => b.click());
+    expect(await page.evaluate(() => window.__asked)).toEqual([{ origins: ['<all_urls>'] }]);
+    await expect(page.locator('#access-outcome')).toHaveText('Done — scan again for full-size photos');
+    await expect(page.locator('#access-rescan')).toBeVisible();
+
+    await page.evaluate(() => { window.__granted = false; });
+    await scan();
+    await expect(notice).toBeVisible();
+    await page.locator('#access-skip').evaluate((b) => b.click());
+    await expect(notice).toBeHidden();
+    await scan();
+    await expect(page.locator('#msg-bar')).toContainText('No Pok');
+    await expect(notice).toBeHidden();
+    await page.close();
+  });
 });

@@ -56,3 +56,13 @@ export function watchAllSites(permissions, onChange) {
   permissions.onAdded.addListener(refresh);
   permissions.onRemoved.addListener(refresh);
 }
+
+export const SITE_ACCESS_DISMISS_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Whether the popup should offer to turn on site access after this scan. */
+export function shouldOfferSiteAccess({ scan, hasAll, dismissedAt, now }) {
+  if (hasAll) return false;
+  if (!scan || scan.usedScreenshotPath !== true || scan.reason !== "no-site-access") return false;
+  if (typeof dismissedAt === "number" && now - dismissedAt < SITE_ACCESS_DISMISS_MS) return false;
+  return true;
+}

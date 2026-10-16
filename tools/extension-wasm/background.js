@@ -458,6 +458,7 @@ async function handleScanPage(sendResponse, era) {
       crops.push(encodeCrop(cardCanvas));
     };
     const preemptedPhotoKeys = new Set();
+    let lackedSiteAccess = false;
 
     // ── Multi-card photo split ────────────────────────────────────────────
     // Walk every DOM-flagged photo candidate (any sufficiently large image),
@@ -482,6 +483,7 @@ async function handleScanPage(sendResponse, era) {
         const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
         // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
         const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
+        if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
         // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
         upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url) : null;
         photoBitmap = upgrade ? upgrade.bitmap : sourceReadable ? await loadPhotoSource(ph.src) : null;
@@ -695,7 +697,8 @@ async function handleScanPage(sendResponse, era) {
       log: (message) => console.log("[BG]", message),
     });
 
-    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed });
+    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed,
+      ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendResponse({ error: String(err?.message || err) });

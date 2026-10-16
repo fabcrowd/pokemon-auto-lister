@@ -34,7 +34,7 @@ Privacy
 - The first run downloads about 140 MB of recognition models. After that, scanning works without a download.
 
 Optional site access
-By default the extension scans a screenshot of the visible page. If you turn on "Read full-size photos on sites you scan", it can read the full-size photo for better accuracy. It asks for this permission only when you turn it on.
+By default the extension scans a screenshot of the visible page. If you turn on "Read full-size photos on sites you scan", it can read the full-size photo for better accuracy. It asks for this permission only when you turn it on, either in the extension options or from the notice the popup can show after a scan that used a screenshot.
 
 Prices are estimates from public sources. They are not offers or guarantees.
 
@@ -60,7 +60,7 @@ Used to add the card markers and the "which card is this?" picker to the page yo
 Stores your settings, an optional PokemonPriceTracker API key, and a 24-hour cache of price lookups. Saved corrections and their crops use the browser's IndexedDB. Nothing is sent to us.
 
 **Optional host access: all sites (`<all_urls>`)**
-Read full-size photos on sites you scan, for better accuracy. It is requested only when you turn it on. Without it, the extension uses a screenshot of the visible tab. Photos are fetched without cookies and are analyzed on the device.
+Read full-size photos on sites you scan, for better accuracy. It is requested only when you turn it on, in the options or from the optional notice in the popup. Without it, the extension uses a screenshot of the visible tab. Photos are fetched without cookies and are analyzed on the device.
 
 **api.pokemontcg.io**
 Look up card prices by card identifier.
