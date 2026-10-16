@@ -96,6 +96,67 @@ export function isSetConfirmed(card) {
   return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true;
 }
 
+/** The scanner is guessing: it abstained, the set is open, or confidence is low. */
+export function isUnsure(card) {
+  if (!card || card.cardBack || card.setConfirmed === true) return false;
+  return card.unsure === true
+    || Boolean(card.abstain)
+    || (card.setChoices?.length || 0) > 1
+    || confTier(card.confidence) === 'low';
+}
+
+/** A card the scanner named, is not guessing about, and whose set is settled. */
+export function isIdentified(card) {
+  if (!card || card.cardBack) return false;
+  return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && isSetConfirmed(card);
+}
+
+/**
+ * identified: named and settled. pick: shown with a "Which card is this?" menu.
+ * unrecognised: nothing to name and nothing to offer, so there is nothing to pick from.
+ */
+export function classifyCard(card) {
+  if (isIdentified(card)) return 'identified';
+  if (card?.cardBack) return 'unrecognised';
+  const named = Boolean(card?.identity?.name || card?.identity?.id);
+  if (!named && !(card?.candidates?.length > 0)) return 'unrecognised';
+  return 'pick';
+}
+
+/** Indexes of the cards for the main list and of those folded into "not recognised". */
+export function splitByRecognition(cards) {
+  const shown = [];
+  const hidden = [];
+  (cards || []).forEach((card, index) => {
+    (classifyCard(card) === 'unrecognised' ? hidden : shown).push(index);
+  });
+  return { shown, hidden };
+}
+
+const plural = (n, one, many) => (n === 1 ? one : many);
+
+/** "Found 15 cards: 2 identified, 13 need your pick". Empty when nothing was found. */
+export function scanStatus(cards) {
+  const list = cards || [];
+  if (list.length === 0) return '';
+  const counts = { identified: 0, pick: 0, unrecognised: 0 };
+  for (const card of list) counts[classifyCard(card)] += 1;
+  const parts = [
+    counts.identified ? `${counts.identified} identified` : '',
+    counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
+    counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
+  ].filter(Boolean);
+  return `Found ${list.length} ${plural(list.length, 'card', 'cards')}: ${parts.join(', ')}`;
+}
+
+// A guess is not part of the total until the user confirms it.
+function isOnlyAGuess(card) {
+  if (card?.setConfirmed === true) return false;
+  return card?.abstain === true
+    || card?.unsure === true
+    || (Number.isFinite(card?.confidence) && confTier(card.confidence) === 'low');
+}
+
 export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   if (!isSetConfirmed(card)) return null;
   const grid = card?.price_grid;
@@ -120,6 +181,7 @@ export function lotTotal(cards, choiceFor, enabledConditions = ['NM']) {
   let total = 0;
   let unconfirmed = 0;
   for (const card of cards || []) {
+    if (isOnlyAGuess(card)) continue;
     const choice = choiceFor(card);
     if (!isSetConfirmed(card) || !isPrintingConfirmed(card?.price_grid, choice)) {
       unconfirmed += 1;

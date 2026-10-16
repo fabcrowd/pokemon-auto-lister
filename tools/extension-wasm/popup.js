@@ -1,6 +1,6 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, sourceFooter, sourceName, splitByRecognition } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
-import { escHtml, guessOf, isUnsure, matchesLabel, renderPickList } from "./lib/card-picker.js";
+import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { hasAllSites, requestAllSites } from "./lib/site-access.js";
 
@@ -47,6 +47,7 @@ let _scanSeq = 0;
 let _filters   = JSON.parse(JSON.stringify(DEFAULT_FILTERS));
 let _variantChoice = new Map(); // card index -> printing chosen this scan
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
+let _showUnrecognised = false;  // the "not recognised" group is open
 let _searchTimer = null;
 let _pickSeq = 0;
 const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
@@ -254,6 +255,7 @@ btnClear.addEventListener("click", () => {
   _lastResult = null;
   _variantChoice = new Map();
   _picker = new Map();
+  _showUnrecognised = false;
   resetResults();
   showMessage("");
 });
@@ -288,6 +290,7 @@ async function scanPage() {
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight };
   _variantChoice = new Map();
   _picker = new Map();
+  _showUnrecognised = false;
   _lastResult.cards.forEach(seedVariant);
   updateStats(_lastResult.cards, Math.round(performance.now() - t0));
   renderResults();
@@ -297,11 +300,10 @@ async function scanPage() {
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
   } else {
-    const identified = cards.filter((c) => !c.abstain).length;
     const unconfirmed = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions()).unconfirmed;
     const needSet = cards.filter((c) => !isSetConfirmed(c)).length;
     const needPrinting = unconfirmed - needSet;
-    const found = `Found ${cards.length} card${cards.length === 1 ? "" : "s"} (${identified} identified).`;
+    const found = `${scanStatus(cards)}.`;
     const asks = [
       needSet ? `a set on ${needSet}` : "",
       needPrinting ? `a variant on ${needPrinting}` : "",
@@ -405,7 +407,9 @@ function renderResults() {
   if (cards.length === 0) { resetResults(); return; }
   emptyHint.remove();
 
-  resultsEl.innerHTML = cards.map((card, idx) => renderCardRow(card, idx)).join("");
+  const { shown, hidden } = splitByRecognition(cards);
+  resultsEl.innerHTML = shown.map((idx) => renderCardRow(cards[idx], idx)).join("")
+    + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
 
   document.querySelectorAll(".set-select-row select").forEach((sel) => {
     sel.addEventListener("change", (e) => pickSet(Number(e.target.dataset.idx), e.target.value));
@@ -472,6 +476,23 @@ function renderCardRow(card, idx) {
   </div>`;
 }
 
+// Nothing is known about this card, so no name, price or picker: just a way to look it up.
+function renderUnrecognisedRow(card, idx) {
+  const thumb = cropThumb(card);
+  const label = card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`;
+  const search = card.cardBack || _picker.get(idx)
+    ? ""
+    : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="Search for card ${idx + 1}">Search for this card</button>`;
+  return `<div class="card-row unrec-row" data-idx="${idx}">
+    <div class="unrec-line">
+      ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
+      <span class="unrec-name">${escHtml(label)}</span>
+      ${search}
+    </div>
+    ${renderSearchPanel(idx)}
+  </div>`;
+}
+
 function searchResultsHtml(state, idx) {
   if (!state.results) return "";
   if (state.results.length === 0) return `<div class="no-price">No matches. Try the name, the number, or both.</div>`;
@@ -487,7 +508,12 @@ function renderAskRow(card, idx) {
         ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
       </div>`
     : "";
-  const search = state
+  return ask + renderSearchPanel(idx);
+}
+
+function renderSearchPanel(idx) {
+  const state = _picker.get(idx);
+  return state
     ? `<div class="picker">
         <div class="picker-bar">
           <input class="picker-input" type="search" data-idx="${idx}" value="${escHtml(state.query)}" placeholder="Name or number, e.g. charizard 4/102" aria-label="Search cards by name or number" autocomplete="off">
@@ -497,7 +523,6 @@ function renderAskRow(card, idx) {
         <div class="pick-row picker-results" data-idx="${idx}">${searchResultsHtml(state, idx)}</div>
       </div>`
     : "";
-  return ask + search;
 }
 
 function openSearch(idx, via) {
@@ -571,6 +596,14 @@ function pickCard(idx, id, via, row) {
 resultsEl.addEventListener("click", (e) => {
   const button = e.target.closest("button");
   if (!button || !resultsEl.contains(button)) return;
+  if ("unrecToggle" in button.dataset) {
+    // Changed in place, not re-rendered, so keyboard focus stays on the button.
+    _showUnrecognised = !_showUnrecognised;
+    button.setAttribute("aria-expanded", String(_showUnrecognised));
+    button.textContent = unrecognisedLabel(resultsEl.querySelectorAll(".unrec-row").length, _showUnrecognised);
+    resultsEl.querySelector("#unrec-list").hidden = !_showUnrecognised;
+    return;
+  }
   const idx = Number(button.dataset.idx);
   if (button.dataset.pick) {
     const fromSearch = Boolean(button.closest(".picker-results"));

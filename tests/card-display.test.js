@@ -180,3 +180,63 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
   assert.equal(detectedVariant(card), null);
   assert.equal(editionNote(card), 'Shadowless border');
 });
+
+import { classifyCard, isIdentified, lotTotal as lotTotalForUnsure, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
+
+const named = (extra = {}) => ({ identity: { id: 'a-1', name: 'Pikachu' }, confidence: 0.9, abstain: false, ...extra });
+const blank = (extra = {}) => ({ identity: {}, confidence: 0, abstain: true, candidates: [], ...extra });
+const unsure = (extra = {}) => ({ identity: { name: 'Mew' }, confidence: 0.3, abstain: true, candidates: [{ id: 'm-1' }], ...extra });
+
+test('isIdentified needs an identity, no doubt about it, and a confirmed set', () => {
+  assert.equal(isIdentified(named()), true);
+  assert.equal(isIdentified(named({ unsure: true })), false);
+  assert.equal(isIdentified(named({ confidence: 0.2 })), false);
+  assert.equal(isIdentified(named({ setChoices: [{ id: 'a' }, { id: 'b' }] })), false);
+  assert.equal(isIdentified(named({ setChoices: [{ id: 'a' }, { id: 'b' }], setConfirmed: true })), true);
+  assert.equal(isIdentified(blank()), false);
+  assert.equal(isIdentified({ identity: { id: 'x-1' }, confidence: 0.9 }), true);
+  assert.equal(isIdentified(null), false);
+});
+
+test('classifyCard sorts into identified, pick and unrecognised', () => {
+  assert.equal(classifyCard(named()), 'identified');
+  assert.equal(classifyCard(unsure()), 'pick');
+  assert.equal(classifyCard(blank()), 'unrecognised');
+  assert.equal(classifyCard(blank({ candidates: undefined })), 'unrecognised');
+  assert.equal(classifyCard(blank({ candidates: [{ id: 'z' }] })), 'pick');
+  assert.equal(classifyCard({ cardBack: true, abstain: true }), 'unrecognised');
+  assert.equal(classifyCard(named({ confidence: 0.1, abstain: false })), 'pick');
+});
+
+test('splitByRecognition keeps page order and original indexes', () => {
+  const cards = [blank(), named(), unsure(), blank()];
+  const { shown, hidden } = splitByRecognition(cards);
+  assert.deepEqual(shown, [1, 2]);
+  assert.deepEqual(hidden, [0, 3]);
+});
+
+test('scanStatus words every count and drops empty parts', () => {
+  assert.equal(scanStatus([]), '');
+  assert.equal(scanStatus([named()]), 'Found 1 card: 1 identified');
+  assert.equal(scanStatus([named(), named()]), 'Found 2 cards: 2 identified');
+  assert.equal(
+    scanStatus([named(), named(), ...Array.from({ length: 13 }, () => unsure())]),
+    'Found 15 cards: 2 identified, 13 need your pick',
+  );
+  assert.equal(
+    scanStatus([named(), unsure(), ...Array.from({ length: 12 }, () => blank())]),
+    'Found 14 cards: 1 identified, 1 needs your pick, 12 not recognised',
+  );
+  assert.equal(scanStatus([blank()]), 'Found 1 card: 1 not recognised');
+  assert.equal(scanStatus([blank(), blank()]), 'Found 2 cards: 2 not recognised');
+});
+
+test('lotTotal leaves out cards that are only a guess', () => {
+  const priced = (extra) => ({ ...named(extra), market_price: 5, price_grid: { variants: { normal: { market: 5, conditions: { NM: 5 } } } } });
+  const choose = () => null;
+  assert.equal(lotTotalForUnsure([priced()], choose).total, 5);
+  assert.equal(lotTotalForUnsure([priced({ confidence: 0.2 })], choose).total, 0);
+  assert.equal(lotTotalForUnsure([priced({ abstain: true })], choose).total, 0);
+  assert.equal(lotTotalForUnsure([priced({ unsure: true })], choose).total, 0);
+  assert.equal(lotTotalForUnsure([priced({ abstain: true, setConfirmed: true })], choose).total, 5);
+});

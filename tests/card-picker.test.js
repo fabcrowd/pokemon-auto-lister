@@ -323,3 +323,28 @@ test('candidatesFor ignores a referenced card the catalog does not have', () => 
   const ids = candidatesFor({ identity: { id: 'base1-4', name: 'Charizard' }, referencedId: 'nope' }, META).map((c) => c.id);
   assert.equal(ids[0], 'base1-4');
 });
+
+import { cropThumb, unrecognisedLabel, renderUnrecognisedGroup } from '../tools/extension-wasm/lib/card-picker.js';
+
+test('unrecognisedLabel counts and says what the button does', () => {
+  assert.equal(unrecognisedLabel(1, false), '1 card not recognised — Show');
+  assert.equal(unrecognisedLabel(12, false), '12 cards not recognised — Show');
+  assert.equal(unrecognisedLabel(12, true), '12 cards not recognised — Hide');
+});
+
+test('renderUnrecognisedGroup is a collapsed disclosure button that controls the list', () => {
+  const html = renderUnrecognisedGroup('<p>rows</p>', 12, false);
+  assert.match(html, /<button type="button"[^>]*data-unrec-toggle[^>]*aria-expanded="false"[^>]*aria-controls="unrec-list"/);
+  assert.match(html, /12 cards not recognised — Show/);
+  assert.match(html, /<div id="unrec-list"[^>]* hidden>/);
+  assert.match(renderUnrecognisedGroup('<p>rows</p>', 12, true), /aria-expanded="true"[\s\S]*<div id="unrec-list"(?![^>]* hidden)/);
+  assert.equal(renderUnrecognisedGroup('', 0, false), '');
+});
+
+test('cropThumb accepts only JPEG data URLs', () => {
+  assert.equal(cropThumb({ crop: 'data:image/jpeg;base64,AAAA' }), 'data:image/jpeg;base64,AAAA');
+  assert.equal(cropThumb({ crop: 'https://evil.example/x.png' }), null);
+  assert.equal(cropThumb({ crop: 'data:image/jpeg;base64,"><script>' }), null);
+  assert.equal(cropThumb({}), null);
+  assert.equal(cropThumb(null), null);
+});

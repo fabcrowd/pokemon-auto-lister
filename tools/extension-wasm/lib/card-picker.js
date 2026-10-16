@@ -1,7 +1,7 @@
 // Ask-the-user logic: when a scanned card is a guess, which cards to offer,
 // how to search the catalog by hand, and what a saved answer looks like.
 
-import { confTier } from "./card-display.js";
+import { isUnsure } from "./card-display.js";
 import { inEra } from "./era.js";
 import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
@@ -9,11 +9,7 @@ import { choiceName } from "./set-choice.js";
 const VIAS = ["candidates", "search", "wrong-card"];
 const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
 
-/** The scanner is guessing: it abstained, the set is open, or confidence is low. */
-export function isUnsure(card) {
-  if (!card || card.cardBack || card.setConfirmed === true) return false;
-  return Boolean(card.abstain) || (card.setChoices?.length || 0) > 1 || confTier(card.confidence) === "low";
-}
+export { isUnsure };
 
 /** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
 export function candidatesFor(card, meta, limit = 5) {
@@ -202,4 +198,23 @@ export function renderPickList(cards, idx) {
     const sub = [card.set || card.setCode, card.number ? `#${card.number}` : ""].filter(Boolean).join(" ");
     return `<button type="button" class="pick-card" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${label}" title="${label}">${image}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
   }).join("");
+}
+
+export function unrecognisedLabel(count, expanded) {
+  return `${count} ${count === 1 ? "card" : "cards"} not recognised — ${expanded ? "Hide" : "Show"}`;
+}
+
+/** The crop picture a scan may carry for a card; anything but a JPEG data URL is ignored. */
+export function cropThumb(card) {
+  const crop = card?.crop;
+  return typeof crop === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(crop) ? crop : null;
+}
+
+/** One disclosure button over the compact rows (already-escaped HTML) of cards nothing could be said about. */
+export function renderUnrecognisedGroup(rowsHtml, count, expanded) {
+  if (!count) return "";
+  return `<div class="unrec">
+    <button type="button" class="unrec-toggle" data-unrec-toggle aria-expanded="${expanded}" aria-controls="unrec-list">${escHtml(unrecognisedLabel(count, expanded))}</button>
+    <div id="unrec-list" class="unrec-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
+  </div>`;
 }
