@@ -348,6 +348,7 @@ async function maybeOfferSiteAccess(scan) {
 accessAllow.addEventListener("click", async () => {
   const granted = await requestAllSites(chrome.permissions);
   if (!granted) {
+    chrome.storage.local.set({ siteAccessDismissedAt: Date.now() });
     accessNotice.hidden = true;
     return;
   }
@@ -507,7 +508,7 @@ function renderCardRow(card, idx) {
     : lone && card.priceError ? `<div class="spread-warn">${escHtml(card.priceError)}</div>` : "";
   // The candidates already include the set choices; a second menu would ask the same question twice.
   const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
-  const rangeNote  = !setKnown ? setRangeNote(card.setRange) : null;
+  const rangeNote  = !setKnown ? setRangeNote(card.setRange, enabledConditions()) : null;
   const rangeRow   = rangeNote ? `<div class="spread-warn set-range">${escHtml(rangeNote)} · best guess, pick the set for one price</div>` : "";
   const repeatRow  = card.repeatedName ? `<div class="spread-warn repeat-note">Same name found several times in this photo. Check it.</div>` : "";
   const versionRow = renderVersionRow(card, idx);
@@ -718,7 +719,7 @@ function renderSetRow(card, idx) {
 function renderVersionRow(card, idx) {
   const versions = card.versionChoices || [];
   if (!versions.length) return "";
-  const options = versions.map((v) => `<option value="${escHtml(v.id)}">${escHtml(versionLabel(v))}</option>`).join("");
+  const options = versions.map((v) => `<option value="${escHtml(v.id)}">${escHtml(versionLabel(v, enabledConditions()))}</option>`).join("");
   return `<div class="variant-select-row version-select-row">
     <span class="lbl">Other version?</span>
     <select data-idx="${idx}" aria-label="Other version"><option value="" selected>Keep ${escHtml(card.identity?.name || "this card")}</option>${options}</select>
@@ -896,7 +897,7 @@ function computeDisplayForOverlay(card, idx) {
   if (card.abstain) return null;
   const id = card.identity || {};
   if (!isSetConfirmed(card)) {
-    const range = setRangeNote(card.setRange);
+    const range = setRangeNote(card.setRange, enabledConditions());
     return { name: id.name || null, price: null, printingNote: range ? `set not sure · ${range}` : "set not sure — pick it in the popup", footer: null };
   }
   const printing = chosenPrinting(card, idx);

@@ -22,7 +22,7 @@ import { capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informati
 import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
-import { setRangeOf } from "./lib/card-display.js";
+import { setRangeSummary } from "./lib/card-display.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
@@ -38,6 +38,7 @@ import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
+import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from "./lib/photo-fetch.js";
 import { FIRST_EDITION_MIN_SCORE, editionAfterEreader, editionAfterPromo, editionForSets, grayFromRgba, hasFirstEdition, pricedEdition, stampAfterFirst, stampBelowText, stampScore } from "./lib/edition-stamp.js";
 import { SHADOW_MIN_DEPTH, borderEdition, shadowDepth } from "./lib/frame-shadow.js";
 import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-model.js";
@@ -457,6 +458,8 @@ async function handleScanPage(sendResponse, era) {
       cards.push(card);
       crops.push(encodeCrop(cardCanvas));
     };
+    // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
+    const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
     const preemptedPhotoKeys = new Set();
     let lackedSiteAccess = false;
 
@@ -485,8 +488,10 @@ async function handleScanPage(sendResponse, era) {
         const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
         if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
         // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
-        upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url) : null;
-        photoBitmap = upgrade ? upgrade.bitmap : sourceReadable ? await loadPhotoSource(ph.src) : null;
+        const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+        upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
+        photoBitmap = upgrade ? upgrade.bitmap
+          : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
         if (!photoBitmap && offscreenSlide) continue;
         if (photoBitmap) {
           sourceTransform = upgrade
@@ -604,7 +609,7 @@ async function handleScanPage(sendResponse, era) {
           if (hero) preemptedPhotoKeys.add(_photoKey(ph));
           // The framing was a guess, so the name is a suggestion for the picker, not an answer.
           if (heroStrict && !read.abstain) read = { ...read, unsure: true };
-          pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo" }, cardCanvas);
+          pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas);
         }
         const photoReads = cards.slice(photoFirst);
         const checked = markRepeatedNames(photoReads);
@@ -671,7 +676,7 @@ async function handleScanPage(sendResponse, era) {
       }
     }
 
-    if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product: no cards reported");
+    if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
 
@@ -1064,18 +1069,24 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
 async function withSetRange(read) {
   const choices = read.setChoices || [];
   if (read.abstain || choices.length < 2 || read.setRange) return read;
+  const setRange = await rangeOfChoices(choices);
+  return setRange ? { ...read, setRange } : read;
+}
+
+// Every candidate counts toward "N of M sets priced", including one whose price could not be fetched.
+async function rangeOfChoices(choices) {
   const priced = [];
   for (const choice of choices) {
     const card = catalogCard(choice.id);
-    if (!card) continue;
+    let price = {};
     try {
-      priced.push(await priceIdentity(card));
+      if (card) price = await priceIdentity(card);
     } catch (err) {
       console.log("[BG] no price for", choice.id, err?.message || err);
     }
+    priced.push(price);
   }
-  const setRange = setRangeOf(priced);
-  return setRange ? { ...read, setRange } : read;
+  return setRangeSummary(priced);
 }
 
 async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
@@ -1390,14 +1401,27 @@ async function versionsAlongside(identity, hits, abstain) {
   const entries = [];
   for (const card of versionChoices(identity, hits, _meta)) {
     let priced = { market_price: null, price_variant: null, price_grid: null };
+    let priceError = null;
     try {
       priced = await priceIdentity(card);
     } catch (err) {
       console.log("[BG] no price for", card.id, err?.message || err);
+      priceError = "Couldn't get a price. Try again.";
     }
-    entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced });
+    entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced, ...(priceError ? { priceError } : {}), ...(await ownSetState(card, hits)) });
   }
   return entries.length ? { versionChoices: entries } : {};
+}
+
+// A version printed in several sets stays set-unconfirmed when the popup swaps to it, so it brings its own choices and range.
+async function ownSetState(card, hits) {
+  const own = setChoices(card, hits, _meta);
+  if (own.length < 2) return {};
+  const setRange = await rangeOfChoices(own);
+  return {
+    setChoices: own.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
+    ...(setRange ? { setRange } : {}),
+  };
 }
 
 let _catalogNames = null;
@@ -1657,50 +1681,55 @@ async function forcedScreenshotPath() {
 }
 // dev-only:end
 
-const UPGRADE_TIMEOUT_MS = 4000;
-const UPGRADE_MAX_SIDE = 1600;
+const PHOTO_TIMEOUT_MS = 4000;
+const PHOTO_MAX_SIDE = 1600;
+// Everything one photo may spend fetching: its larger renditions and its own source together.
+const PHOTO_BUDGET_MS = 8000;
 
 // The displayed picture's larger rendition, when the page names one the extension may read.
-async function loadUpgradedSource(ph, ogImages, pageUrl) {
+async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget } = {}) {
   if (!(ph.naturalWidth > 0 && ph.naturalHeight > 0)) return null;
   const candidates = [];
-  for (const url of fullSizeCandidates({ src: ph.src, naturalWidth: ph.naturalWidth, ...ph.sources, ogImages, base: pageUrl })) {
+  for (const url of fullSizeCandidates({ src: ph.src, naturalWidth: ph.naturalWidth, ...ph.sources, ogImages, base: pageUrl, allowedHosts })) {
     if (await canReadPhotoSource(url)) candidates.push(url);
   }
   if (!candidates.length) return null;
   return loadFullSize(candidates, { width: ph.naturalWidth, height: ph.naturalHeight },
-    (url) => loadPhotoSource(url, { timeoutMs: UPGRADE_TIMEOUT_MS, maxSide: UPGRADE_MAX_SIDE }));
+    (url) => loadPhotoSource(url, { timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE, allowedHosts, budget }));
 }
 
-async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0 } = {}) {
-  let current = publicHttpsUrl(rawUrl);
-  if (!current) return null;
-  const controller = timeoutMs > 0 ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+function photoRejected(reason, url) {
+  console.log("[BG] photo fetch rejected:", reason, url?.hostname || "");
+  return null;
+}
+
+async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0, allowedHosts = null, budget = null } = {}) {
+  const start = publicHttpsUrl(rawUrl);
+  if (!start) return photoRejected("not a public https address");
+  const allowedMs = Math.min(timeoutMs > 0 ? timeoutMs : Infinity, budget ? budget.remaining() : Infinity);
+  if (allowedMs <= 0) return photoRejected("out of time", start);
+  const controller = new AbortController();
+  const timer = Number.isFinite(allowedMs) ? setTimeout(() => controller.abort(), allowedMs) : null;
   try {
-    let response;
-    for (let hop = 0; hop < 4; hop++) {
-      response = await fetch(current.href, { credentials: "omit", redirect: "manual", cache: "force-cache", signal: controller?.signal });
-      if (response.type === "opaqueredirect") return null;
-      if (response.status < 300 || response.status >= 400) break;
-      const next = publicHttpsUrl(response.headers.get("location") || "", current);
-      if (!next) return null;
-      current = next;
-      response = null;
-    }
-    if (!response?.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return null;
-    const declaredSize = Number(response.headers.get("content-length")) || 0;
-    if (declaredSize > 20 * 1024 * 1024) return null;
-    const blob = await response.blob();
-    if (blob.size > 20 * 1024 * 1024 || !blob.type.toLowerCase().startsWith("image/")) return null;
-    const bitmap = await createImageBitmap(blob);
+    // Redirects are followed by the browser, so the host they ended on is checked afterwards.
+    const response = await fetch(start.href, { credentials: "omit", redirect: "follow", cache: "force-cache", signal: controller.signal });
+    const landed = finalUrlAllowed(response.url || start.href, allowedHosts);
+    if (!landed) return photoRejected("ended on a disallowed host", publicHttpsUrl(response.url) || start);
+    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return photoRejected("not an image", landed);
+    if ((Number(response.headers.get("content-length")) || 0) > MAX_PHOTO_BYTES) return photoRejected("too large", landed);
+    const read = await readCapped(response, MAX_PHOTO_BYTES);
+    if (!read) return photoRejected("too large", landed);
+    // The header gives the size before any pixels are decoded.
+    const plan = decodePlan(imageSize(read.head), maxSide);
+    if (plan.reject) return photoRejected("dimensions too large", landed);
+    const bitmap = plan.resize ? await createImageBitmap(read.blob, plan.resize) : await createImageBitmap(read.blob);
     if (bitmap.width > 10000 || bitmap.height > 10000) {
       bitmap.close();
-      return null;
+      return photoRejected("dimensions too large", landed);
     }
     const longSide = Math.max(bitmap.width, bitmap.height);
     if (!(maxSide > 0 && longSide > maxSide)) return bitmap;
-    // Bounds the memory and detector time a very large original would cost.
+    // Header unreadable, or a rotated picture: bounds the memory and detector time a very large original would cost.
     const factor = maxSide / longSide;
     try {
       return await createImageBitmap(bitmap, {
@@ -1709,9 +1738,9 @@ async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0 } = {}) {
     } finally {
       bitmap.close();
     }
-  } catch {
+  } catch (err) {
     // Cross-origin sources without CORS access use the already captured viewport crop.
-    return null;
+    return photoRejected(controller.signal.aborted ? "timed out" : `failed (${err?.name || "error"})`, start);
   } finally {
     clearTimeout(timer);
   }

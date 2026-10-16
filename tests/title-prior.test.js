@@ -216,3 +216,42 @@ test('a plain title picks the plain card over its Dark version', () => {
   assert.equal(apply(card, 'Jolteon 4/64 Jungle', ['Jolteon', 'Dark Jolteon']).identity.id, 'n-2');
   assert.equal(apply(card, 'Dark Jolteon 38/82', ['Jolteon', 'Dark Jolteon']), card);
 });
+
+const pikaVmax = { id: 'swsh4-44', name: 'Pikachu VMAX', set: 'Vivid Voltage', setCode: 'swsh4', number: '44' };
+const page = (h1) => ({ kind: 'listing', page: { h1 }, knownNames: ['Pikachu', 'Pikachu V', 'Pikachu ex', 'Pikachu VMAX'], log: () => {} });
+
+test('a multi-card photo titled Pikachu V is not re-read as Pikachu V', () => {
+  const exRead = (extra = {}) => ({
+    identity: pikaEx, market_price: 30, price_grid: null, confidence: 0.79, abstain: false,
+    versionChoices: [{ ...pikaVmax, market_price: 9, price_grid: null }, { ...pikaV, market_price: 2.1, price_grid: null }], ...extra,
+  });
+  const lot = [exRead({ photoBoxes: 3 }), exRead({ photoBoxes: 3 })];
+  const out = applyTitlePrior(lot, page('Pikachu V holo'));
+  for (const card of out) {
+    assert.equal(card.identity.id, 'sv8-57', 'identity stays');
+    assert.equal(card.market_price, 30, 'price stays');
+    assert.equal(card.confidence, 0.79);
+    assert.deepEqual(card.versionChoices.map((c) => c.id), ['swsh4-43', 'swsh4-44'], 'the named version moves to the top of the menu');
+  }
+});
+
+test('one card in a photo that held several boxes is not swapped either', () => {
+  const card = versionCard({ photoBoxes: 4 });
+  const [out] = applyTitlePrior([card], page('Pokemon Pikachu ex Surging Sparks Holo'));
+  assert.equal(out.identity.id, 'swsh4-43');
+  assert.deepEqual(out.versionChoices.map((c) => c.id), ['sv8-57']);
+});
+
+test('the only card of a single-box photo is swapped; the same title on a non-listing page is ignored', () => {
+  const card = versionCard({ photoBoxes: 1 });
+  const [out] = applyTitlePrior([card], page('Pokemon Pikachu ex Surging Sparks Holo'));
+  assert.equal(out.identity.id, 'sv8-57');
+  assert.equal(out.confidence, 0.79);
+  const [other] = applyTitlePrior([card], { ...page('Pokemon Pikachu ex Surging Sparks Holo'), kind: 'gallery' });
+  assert.equal(other, card);
+});
+
+test('two cards from separate photos are both left alone by a one-card title', () => {
+  const out = applyTitlePrior([versionCard({ photoBoxes: 1 }), versionCard({ photoBoxes: 1 })], page('Pokemon Pikachu ex Surging Sparks Holo'));
+  assert.deepEqual(out.map((c) => c.identity.id), ['swsh4-43', 'swsh4-43']);
+});

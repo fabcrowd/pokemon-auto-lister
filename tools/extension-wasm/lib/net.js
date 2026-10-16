@@ -24,11 +24,16 @@ function isMappedIPv4(mapped) {
 function isPrivateIPv4(n) {
   const a = n >>> 24;
   const b = (n >>> 16) & 255;
+  const c = (n >>> 8) & 255;
   if (a === 0 || a === 10 || a === 127) return true;
   if (a === 169 && b === 254) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
-  return a === 100 && b >= 64 && b <= 127;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 192 && b === 0 && c === 0) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  // 224.0.0.0/4 is multicast; 240.0.0.0/4 is reserved and holds the broadcast address.
+  return a >= 224;
 }
 
 /** An https URL with no credentials and a public host, or null. */

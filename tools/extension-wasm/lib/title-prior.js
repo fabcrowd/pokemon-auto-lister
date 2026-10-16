@@ -1,8 +1,12 @@
 // A listing's own title ("Charizard 4/102 Base Set Holo PSA 9") is a weak hint about which card the
-// photo shows. It only reorders what the matcher already proposed and prefills the search box; it never
-// adds a candidate, and never makes an unsure row sure. The one thing it can raise is a printing that was held
-// below "high" only because nothing but the picture chose it: a title naming the card, its number and its set
-// is an independent signal for that printing.
+// photo shows. On any listing it reorders what the matcher already proposed (set choices, candidates, the
+// "Other version?" menu) and prefills the search box; it never adds a candidate and never makes an unsure
+// row sure. Two things go further, each on a narrow condition:
+//  - a title naming only the other look-alike version (Pikachu ex, not Pikachu V) swaps the row to that
+//    version with its price, but only when the listing photo holds exactly one card, so a multi-card lot
+//    is never re-read from a single title. Confidence does not change.
+//  - a title naming the card, its number and its set confirms a printing that was held below "high" only
+//    because nothing but the picture chose it, and lifts it back to the confidence it had.
 
 import { isUnsure } from "./card-display.js";
 import { choiceName } from "./set-choice.js";
@@ -170,9 +174,15 @@ function queryFor(parsed, name) {
   return [name, number].filter(Boolean).join(" ");
 }
 
+/** One card in the whole scan and, when the scan says how many boxes its photo held, exactly one. */
+function isSoleCardInPhoto(card, cards) {
+  return cards.length === 1 && (card.photoBoxes === undefined || card.photoBoxes === 1);
+}
+
 /**
- * Cards with the title prior applied. Only on a listing page; only set choices and candidates are reordered,
- * and an unsure row gets titleQuery for its search box. Confidence, identity and sureness are never touched.
+ * Cards with the title prior applied. Only on a listing page. Set choices, candidates and the version menu are
+ * reordered, an unsure row gets titleQuery for its search box, and a sole card in a single-card photo may be
+ * shown as the other version the title names. Confidence is never raised except as described in the header.
  */
 export function applyTitlePrior(cards, { kind, page, knownNames = [], log = () => {} } = {}) {
   if (kind !== "listing" || !Array.isArray(cards)) return cards;
@@ -189,13 +199,21 @@ export function applyTitlePrior(cards, { kind, page, knownNames = [], log = () =
       log(`title prior: moved ${(candidates !== card.candidates ? candidates : setChoices)[0].name} to front`);
       break;
     }
-    // Pikachu ex or Pikachu V: a title that names only the other version decides, with that card's price.
+    // Pikachu ex or Pikachu V: a title that names only the other version decides, with that card's price, but
+    // only for the one card of a single-card photo. Elsewhere the title just moves that version up the menu.
     // Confidence stays where it was, so the row is not made surer by a listing's say-so.
+    const soleCard = isSoleCardInPhoto(card, cards);
     for (const parsed of parsedTitles) {
       const version = versionNamedByTitle(next, parsed, knownNames);
       if (!version) continue;
-      next = swapVersion(next, version.id);
-      log(`title prior: showing ${version.name}`);
+      if (soleCard) {
+        next = swapVersion(next, version.id);
+        log(`title prior: showing ${version.name}`);
+      } else {
+        const reordered = [version, ...next.versionChoices.filter((c) => c !== version)];
+        next = { ...next, versionChoices: reordered };
+        log(`title prior: moved ${version.name} to front of the version menu`);
+      }
       break;
     }
     const heldBack = card.setUnconfirmed === true && card.identity?.id && card.confidenceBeforeSetCap > card.confidence

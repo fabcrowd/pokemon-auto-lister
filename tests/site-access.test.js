@@ -92,3 +92,14 @@ test('a dismissal hides the offer for 14 days, then it returns', () => {
   assert.equal(shouldOfferSiteAccess({ scan: NO_ACCESS_SCAN, hasAll: false, dismissedAt: t0, now: t0 + 14 * DAY }), true);
   assert.equal(shouldOfferSiteAccess({ scan: NO_ACCESS_SCAN, hasAll: false, dismissedAt: 'junk', now: t0 }), true);
 });
+
+test('a refused permission request counts as a dismissal for the next scan', () => {
+  const refusedAt = 9 * DAY;
+  assert.equal(shouldOfferSiteAccess({ scan: NO_ACCESS_SCAN, hasAll: false, dismissedAt: refusedAt, now: refusedAt + 1000 }), false);
+});
+
+test('after a grant the notice is not shown on the next popup open, whatever was stored before', () => {
+  for (const dismissedAt of [null, undefined, 5 * DAY]) {
+    assert.equal(shouldOfferSiteAccess({ scan: NO_ACCESS_SCAN, hasAll: true, dismissedAt, now: 40 * DAY }), false);
+  }
+});

@@ -388,14 +388,29 @@
   // and the short heading ("Similar items") that sits just before a block of images. Raw
   // strings only; the judging lives in lib/page-focus.js.
   const HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
-  const _headingBefore = new WeakMap();
+  let _headingBefore = new WeakMap();
+
+  // Only the start of an element's text is ever judged (headings are short), so a huge subtree is never joined into one string.
+  const TEXT_LIMIT = 200;
+  const TEXT_NODE_LIMIT = 200;
+  const MAX_TEXT_CHILDREN = 20;
+  function boundedText(el) {
+    if (!el || el.childElementCount > MAX_TEXT_CHILDREN) return '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let text = '';
+    let nodes = 0;
+    for (let node = walker.nextNode(); node && text.length < TEXT_LIMIT && nodes < TEXT_NODE_LIMIT; node = walker.nextNode(), nodes++) {
+      text += node.nodeValue || '';
+    }
+    return text.slice(0, TEXT_LIMIT);
+  }
 
   function headingBefore(el) {
     if (_headingBefore.has(el)) return _headingBefore.get(el);
     let found = '';
     let sibling = el.previousElementSibling;
     for (let step = 0; sibling && step < 2 && !found; step++, sibling = sibling.previousElementSibling) {
-      const text = tidyText(sibling.textContent);
+      const text = tidyText(boundedText(sibling));
       const isHeading = sibling.matches(HEADING_SELECTOR) || sibling.querySelector(HEADING_SELECTOR);
       if (isHeading && text && text.length <= 100 && !sibling.querySelector('img,picture,video')) found = text;
     }
@@ -422,7 +437,13 @@
   }
 
   // Inside a horizontally scrolling or clipped strip that is wider than what it shows: a carousel.
-  const _scrollsX = new WeakMap();
+  let _scrollsX = new WeakMap();
+
+  // Layout and sibling headings are cached while one scan walks the page; the next scan sees the page as it is then.
+  function resetScanCaches() {
+    _headingBefore = new WeakMap();
+    _scrollsX = new WeakMap();
+  }
   function scrollsHorizontally(el) {
     let depth = 0;
     for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement && depth < MAX_ANCESTORS; p = p.parentElement, depth++) {
@@ -449,7 +470,7 @@
       const heading = /^H[1-6]$/.test(el.tagName) || el.getAttribute('role') === 'heading';
       if (!heading && !(label && LABELLED_CONTAINERS.has(el.tagName))) continue;
       if (heading && !label && el.querySelector('img,picture,video')) continue;
-      const text = tidyText(label || el.textContent);
+      const text = tidyText(label || boundedText(el));
       if (!text || text.length > 100) continue;
       out.push({ text, chain: chainOf(el) });
     }
@@ -493,6 +514,42 @@
     return { landmarks, headings, labels, sealedLabel: hasSealedProductContext(node), chain: chainOf(node), hscroll: scrollsHorizontally(node) };
   }
 
+  // Hostnames the page itself loaded pictures from. The background only fetches full-size renditions from these.
+  const MAX_IMAGE_HOSTS = 200;
+  const MAX_IMAGE_ELEMENTS = 1000;
+  const MAX_RESOURCE_ENTRIES = 3000;
+
+  function srcsetUrls(text) {
+    const out = [];
+    for (const match of String(text || '').matchAll(/(\S+)(?:\s+[\d.]+[wx])?\s*(?:,|$)/g)) out.push(match[1].replace(/,+$/, ''));
+    return out;
+  }
+
+  function collectImageHosts() {
+    const hosts = new Set();
+    const add = (raw) => {
+      if (!raw || hosts.size >= MAX_IMAGE_HOSTS) return;
+      try {
+        const host = new URL(raw, document.baseURI).hostname.toLowerCase();
+        if (host) hosts.add(host);
+      } catch { /* not a URL */ }
+    };
+    let seen = 0;
+    for (const img of document.querySelectorAll('img')) {
+      if (seen++ >= MAX_IMAGE_ELEMENTS) break;
+      add(img.currentSrc);
+      add(img.src);
+      srcsetUrls(img.srcset).forEach(add);
+    }
+    for (const source of document.querySelectorAll('picture source[srcset]')) srcsetUrls(source.srcset).forEach(add);
+    if (typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function') {
+      for (const entry of performance.getEntriesByType('resource').slice(0, MAX_RESOURCE_ENTRIES)) {
+        if (entry.initiatorType === 'img' || entry.initiatorType === 'css') add(entry.name);
+      }
+    }
+    return [...hosts];
+  }
+
   function metaContent(selector) {
     return document.querySelector(selector)?.getAttribute('content') || '';
   }
@@ -513,6 +570,7 @@
       h1: (document.querySelector('h1')?.textContent || '').trim().slice(0, 200),
       ogImages,
       headings: collectHeadings(),
+      imageHosts: collectImageHosts(),
     };
   }
 
@@ -546,6 +604,7 @@
   }
 
   function findCardImages(opts = {}) {
+    resetScanCaches();
     const found = [];
     const photos = [];  // large non-card-aspect images for YOLO-inside-image treatment
     const rejected = []; // only populated when opts.diag === true
@@ -751,6 +810,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

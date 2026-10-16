@@ -158,3 +158,23 @@ test('rescaling keeps object-fit none, which is sized by the displayed image, co
   assert.ok(Math.abs(x1) < 1e-9 && Math.abs(x2 - 234) < 1e-9, `${x1} ${x2}`);
   assert.equal(rescaleTransform(null, 1, 1), null);
 });
+
+test('candidates on a host the page never loaded images from are dropped', () => {
+  const hints = {
+    src: 'https://cdn.example/p/a-300.jpg',
+    naturalWidth: 300,
+    srcset: 'https://cdn.example/p/a-900.jpg 900w, https://evil.example/a-1200.jpg 1200w',
+    attrs: ['https://other.example/zoom.jpg'],
+    base: BASE,
+  };
+  assert.deepEqual(fullSizeCandidates({ ...hints, allowedHosts: new Set(['cdn.example']) }), ['https://cdn.example/p/a-900.jpg']);
+  assert.deepEqual(fullSizeCandidates({ ...hints, allowedHosts: ['CDN.example', 'other.example'] }),
+    ['https://other.example/zoom.jpg', 'https://cdn.example/p/a-900.jpg']);
+  assert.deepEqual(fullSizeCandidates({ ...hints, allowedHosts: new Set() }), []);
+});
+
+test('a rewritten thumbnail stays on its own host, so it passes when that host is allowed', () => {
+  const src = 'https://i.ebayimg.com/images/g/AbC/s-l300.jpg';
+  assert.equal(fullSizeCandidates({ src, naturalWidth: 234, base: BASE, allowedHosts: new Set(['i.ebayimg.com']) })[0], 'https://i.ebayimg.com/images/g/AbC/s-l1600.jpg');
+  assert.deepEqual(fullSizeCandidates({ src, naturalWidth: 234, base: BASE, allowedHosts: new Set(['cdn.example']) }), []);
+});

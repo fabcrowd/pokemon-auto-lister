@@ -93,67 +93,107 @@ export function confTier(confidence) {
 
 const RANGE_CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'];
 
-function pricesOf(item) {
-  const prices = [];
-  for (const variant of Object.values(item?.price_grid?.variants || {})) {
-    const at = RANGE_CONDITIONS.map((c) => variant?.conditions?.[c]).find((v) => typeof v === 'number' && v > 0);
-    if (at != null) prices.push(at);
-  }
-  if (!prices.length && typeof item?.market_price === 'number' && item.market_price > 0) prices.push(item.market_price);
-  return prices;
+// One condition for every candidate, so a range never mixes an NM price with another printing's played copy.
+// A printing with no grid at all falls back to its legacy market price, which is a near-mint figure.
+function pricesAt(item, condition) {
+  const variants = Object.values(item?.price_grid?.variants || {});
+  if (variants.length) return variants.map((v) => v?.conditions?.[condition]).filter((v) => typeof v === 'number' && v > 0);
+  return condition === 'NM' && typeof item?.market_price === 'number' && item.market_price > 0 ? [item.market_price] : [];
 }
 
 /**
- * Lowest to highest price over the printings a name could be, one entry per printing, using each
- * printing's best available condition (NM first). null when no printing has a price.
+ * Lowest to highest price over the printings a name could be at the first enabled condition (NM by default).
+ * `count` printings had that price out of `total` considered; null when none did.
  */
-export function setRangeOf(items) {
-  const all = (items || []).map(pricesOf).filter((prices) => prices.length);
-  if (!all.length) return null;
-  const flat = all.flat();
-  return { low: Math.min(...flat), high: Math.max(...flat), count: all.length };
+export function setRangeOf(items, enabledConditions = ['NM']) {
+  const list = items || [];
+  const condition = enabledConditions?.[0] || 'NM';
+  const priced = list.map((item) => pricesAt(item, condition)).filter((prices) => prices.length);
+  if (!priced.length) return null;
+  const flat = priced.flat();
+  return { low: Math.min(...flat), high: Math.max(...flat), count: priced.length, total: list.length };
 }
 
-export function setRangeNote(range) {
-  if (!range) return null;
-  const sets = `${range.count} sets`;
-  return range.low === range.high ? `${sets} · ${formatUsd(range.high)}` : `${sets} · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
+/** setRangeOf at every condition, so the popup can word it for whichever conditions are switched on. */
+export function setRangeSummary(items) {
+  const byCondition = {};
+  for (const condition of RANGE_CONDITIONS) {
+    const range = setRangeOf(items, [condition]);
+    if (range) byCondition[condition] = range;
+  }
+  const lead = byCondition.NM ?? Object.values(byCondition)[0];
+  return lead ? { ...lead, byCondition } : null;
+}
+
+const priceSpan = (range) => (range.low === range.high ? formatUsd(range.high) : `${formatUsd(range.low)}–${formatUsd(range.high)}`);
+
+export function setRangeNote(range, enabledConditions = null) {
+  const shown = enabledConditions && range?.byCondition ? range.byCondition[enabledConditions[0] || 'NM'] : range;
+  if (!shown) return null;
+  const total = shown.total ?? shown.count;
+  const sets = total > shown.count
+    ? `${shown.count} of ${total} ${plural(total, 'set', 'sets')} priced`
+    : `${shown.count} ${plural(shown.count, 'set', 'sets')}`;
+  return `${sets} · ${priceSpan(shown)}`;
 }
 
 /** "Pikachu ex · Surging Sparks #57 · $30.00": another version of the card, with its own price when it has one. */
-export function versionLabel(entry) {
-  const where = [entry?.set || entry?.setCode, entry?.number ? '#' + entry.number : ''].filter(Boolean).join(' ');
-  const range = setRangeOf([entry]);
-  const price = range ? (range.low === range.high ? formatUsd(range.high) : `${formatUsd(range.low)}–${formatUsd(range.high)}`) : '';
-  return [entry?.name, where, price].filter(Boolean).join(' · ');
+export function versionLabel(entry, enabledConditions = ['NM']) {
+  const open = (entry?.setChoices?.length || 0) > 1;
+  const where = open ? '' : [entry?.set || entry?.setCode, entry?.number ? '#' + entry.number : ''].filter(Boolean).join(' ');
+  const range = open ? setRangeNote(entry.setRange, enabledConditions) : (() => {
+    const own = setRangeOf([entry], enabledConditions);
+    return own ? priceSpan(own) : '';
+  })();
+  return [entry?.name, where, range].filter(Boolean).join(' · ');
 }
 
-const PRICE_FIELDS = ['market_price', 'price_variant', 'price_grid'];
+const OWN_STATE = ['market_price', 'price_variant', 'price_grid', 'setChoices', 'setRange', 'setConfirmed', 'priceError'];
+
+/** A version offered for the row, carrying everything needed to show it again: its identity, price and set state. */
+function snapshotOf(card) {
+  const identity = card.identity || {};
+  return {
+    ...identity,
+    id: identity.id || card.openVersionId || `keep:${identity.name || ''}`,
+    market_price: card.market_price ?? null,
+    price_variant: card.price_variant ?? null,
+    price_grid: card.price_grid ?? null,
+    setChoices: card.setChoices,
+    ...(card.setRange ? { setRange: card.setRange } : {}),
+    ...(card.setConfirmed !== undefined ? { setConfirmed: card.setConfirmed } : {}),
+    ...(card.priceError ? { priceError: card.priceError } : {}),
+  };
+}
 
 /**
- * The row re-read as another version it offered, with that version's price. The card it was before becomes one
- * of the choices when it was a single printing, so the user can go back. Confidence is untouched. Returns the same
- * object when the id is not on offer.
+ * The row re-read as another version it offered. A version knows its own set state: one printed in several
+ * sets stays set-unconfirmed, with its range and Set? menu, and one printed once is priced. The row it was
+ * becomes one of the choices exactly as it stood, so swapping back restores it. Confidence is untouched.
+ * Returns the same object when the id is not on offer.
  */
 export function swapVersion(card, id) {
   const choices = card?.versionChoices || [];
   const entry = choices.find((c) => c?.id === id);
   if (!entry) return card;
-  const { market_price, price_variant, price_grid, ...identity } = entry;
-  const back = card.identity?.id
-    ? [{ ...card.identity, market_price: card.market_price ?? null, price_variant: card.price_variant ?? null, price_grid: card.price_grid ?? null }]
-    : [];
-  const { setRange, ...rest } = card;
+  const identity = { ...entry };
+  for (const key of OWN_STATE) delete identity[key];
+  const open = (entry.setChoices?.length || 0) > 1 && entry.setConfirmed !== true;
+  const rest = { ...card };
+  for (const key of ['setRange', 'setConfirmed', 'setChoices', 'openVersionId']) delete rest[key];
   return {
     ...rest,
-    identity,
-    market_price: market_price ?? null,
-    price_variant: price_variant ?? null,
-    price_grid: price_grid ?? null,
-    setChoices: card.setChoices ? [] : card.setChoices,
-    versionChoices: [...back, ...choices.filter((c) => c !== entry)],
+    identity: open ? { name: entry.name } : identity,
+    market_price: open ? null : entry.market_price ?? null,
+    price_variant: open ? null : entry.price_variant ?? null,
+    price_grid: open ? null : entry.price_grid ?? null,
+    setChoices: 'setChoices' in entry ? entry.setChoices : (card.setChoices ? [] : card.setChoices),
+    ...(open ? { openVersionId: entry.id } : {}),
+    ...(entry.setRange ? { setRange: entry.setRange } : {}),
+    ...(entry.setConfirmed !== undefined ? { setConfirmed: entry.setConfirmed } : {}),
+    versionChoices: [snapshotOf(card), ...choices.filter((c) => c !== entry)],
     pricing: false,
-    priceError: null,
+    priceError: open ? null : entry.priceError ?? null,
   };
 }
 

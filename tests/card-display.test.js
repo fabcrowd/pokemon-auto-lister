@@ -18,6 +18,7 @@ import {
   isSetConfirmed,
   isUnsure,
   setRangeOf,
+  setRangeSummary,
   setRangeNote,
 } from '../tools/extension-wasm/lib/card-display.js';
 
@@ -256,15 +257,15 @@ test('a price range across the candidate printings: lowest to highest, one entry
     { price_grid: null, market_price: 12.5 },
     { price_grid: null, market_price: null },
   ]);
-  assert.deepEqual(range, { low: 12.5, high: 55, count: 3 });
+  assert.deepEqual(range, { low: 12.5, high: 55, count: 3, total: 4 });
   assert.equal(setRangeOf([{ price_grid: null, market_price: null }]), null);
   assert.equal(setRangeOf([]), null);
-  assert.deepEqual(setRangeOf([{ price_grid: grid(9), market_price: 9 }, { price_grid: grid(9), market_price: 9 }]), { low: 9, high: 9, count: 2 });
+  assert.deepEqual(setRangeOf([{ price_grid: grid(9), market_price: 9 }, { price_grid: grid(9), market_price: 9 }]), { low: 9, high: 9, count: 2, total: 2 });
 });
 
 test('the range is worded for the row and the overlay', () => {
-  assert.equal(setRangeNote({ low: 1.65, high: 4.7, count: 3 }), '3 sets · $1.65–$4.70');
-  assert.equal(setRangeNote({ low: 9, high: 9, count: 2 }), '2 sets · $9.00');
+  assert.equal(setRangeNote({ low: 1.65, high: 4.7, count: 3, total: 3 }), '3 sets · $1.65–$4.70');
+  assert.equal(setRangeNote({ low: 9, high: 9, count: 2, total: 2 }), '2 sets · $9.00');
   assert.equal(setRangeNote(null), null);
 });
 
@@ -326,10 +327,118 @@ test('swapping on a row whose set was open settles it on the chosen card', () =>
   const out = swapVersion(open, 'sv8-57');
   assert.deepEqual(out.setChoices, []);
   assert.equal(out.setRange, undefined);
-  assert.deepEqual(out.versionChoices.map((c) => c.id), ['swsh4-44']);
+  assert.deepEqual(out.versionChoices.map((c) => c.id), ['keep:Pikachu V', 'swsh4-44']);
 });
 
 test('swapping to an id that is not offered changes nothing', () => {
   const read = versionRead();
   assert.equal(swapVersion(read, 'nope'), read);
+});
+
+const sunPikachu = { id: 'sm1-1', name: 'Pikachu GX', set: 'Sun & Moon', setCode: 'sm1', number: '1' };
+const promoPikachu = { ...sunPikachu, id: 'smp-9', set: 'Promos', setCode: 'smp', number: '9' };
+const openGx = () => ({
+  ...sunPikachu, market_price: 3, price_variant: 'holofoil', price_grid: grid(3),
+  setChoices: [sunPikachu, promoPikachu],
+  setRange: { low: 3, high: 8, count: 2, total: 2, byCondition: { NM: { low: 3, high: 8, count: 2, total: 2 } } },
+});
+
+test('a version printed in several sets stays set-unconfirmed with its own range and Set? menu', () => {
+  const read = versionRead({ versionChoices: [openGx(), { ...pikaVmax, market_price: null, price_grid: null }] });
+  const out = swapVersion(read, 'sm1-1');
+  assert.deepEqual(out.identity, { name: 'Pikachu GX' });
+  assert.deepEqual(out.setChoices.map((c) => c.id), ['sm1-1', 'smp-9']);
+  assert.equal(out.setRange.high, 8);
+  assert.equal(out.market_price, null);
+  assert.equal(out.price_grid, null);
+  assert.equal(isSetConfirmed(out), false);
+  assert.equal(quotedPrice(out, null), null);
+  assert.deepEqual(lotTotal([out], () => null), { total: 0, unconfirmed: 1 });
+  assert.equal(isUnsure(out), false, 'a range is on offer');
+  assert.equal(out.confidence, 0.79);
+});
+
+test('swapping to a version and back restores the original row exactly', () => {
+  const read = versionRead({ versionChoices: [openGx(), { ...pikaVmax, market_price: null, price_grid: null }] });
+  const there = swapVersion(read, 'sm1-1');
+  const back = swapVersion(there, 'swsh4-43');
+  for (const key of ['identity', 'market_price', 'price_variant', 'price_grid', 'confidence']) assert.deepEqual(back[key], read[key], key);
+  assert.equal(back.setChoices, read.setChoices);
+  assert.equal(back.setRange, undefined);
+  assert.deepEqual(back.versionChoices.map((c) => c.id).sort(), ['sm1-1', 'swsh4-44']);
+  const again = back.versionChoices.find((c) => c.id === 'sm1-1');
+  assert.deepEqual(again.setChoices.map((c) => c.id), ['sm1-1', 'smp-9']);
+  assert.equal(again.setRange.high, 8);
+});
+
+test('an open-set row swaps away and back with its range, choices and menu intact', () => {
+  const open = versionRead({
+    identity: { name: 'Pikachu V' }, setChoices: [pikaV, { ...pikaV, id: 'cel-5' }], setRange: { low: 1, high: 2, count: 2, total: 2 },
+    market_price: null, price_variant: null, price_grid: null,
+  });
+  const there = swapVersion(open, 'sv8-57');
+  assert.equal(isSetConfirmed(there), true);
+  assert.equal(there.market_price, 30);
+  const back = swapVersion(there, 'keep:Pikachu V');
+  assert.deepEqual(back.identity, { name: 'Pikachu V' });
+  assert.deepEqual(back.setChoices, open.setChoices);
+  assert.deepEqual(back.setRange, open.setRange);
+  assert.equal(back.market_price, null);
+  assert.equal(isSetConfirmed(back), false);
+});
+
+test('a confirmed set pick survives a swap away and back', () => {
+  const picked = versionRead({ setChoices: [pikaV, { ...pikaV, id: 'cel-5' }], setConfirmed: true });
+  const back = swapVersion(swapVersion(picked, 'sv8-57'), 'swsh4-43');
+  assert.equal(back.setConfirmed, true);
+  assert.equal(back.identity.id, 'swsh4-43');
+  assert.equal(back.market_price, 2.1);
+  assert.equal(isSetConfirmed(back), true);
+});
+
+test('a version whose price lookup failed brings its error to the swapped row', () => {
+  const read = versionRead({ versionChoices: [{ ...pikaEx, market_price: null, price_grid: null, priceError: "Couldn't get a price. Try again." }] });
+  const out = swapVersion(read, 'sv8-57');
+  assert.equal(out.priceError, "Couldn't get a price. Try again.");
+  assert.equal(swapVersion(out, 'swsh4-43').priceError, null);
+});
+
+test('a version in several sets is listed with its set range, not one printing price', () => {
+  assert.equal(versionLabel(openGx()), 'Pikachu GX · 2 sets · $3.00–$8.00');
+});
+
+const gridAt = (conditions) => ({ variants: { normal: { conditions } } });
+
+test('one condition is used for every candidate and printings without it are left out', () => {
+  const items = [
+    { price_grid: gridAt({ NM: 40, LP: 30 }) },
+    { price_grid: gridAt({ NM: null, LP: 10 }) },
+    { price_grid: gridAt({ NM: 55, LP: 45 }) },
+  ];
+  assert.deepEqual(setRangeOf(items), { low: 40, high: 55, count: 2, total: 3 });
+  assert.deepEqual(setRangeOf(items, ['LP', 'NM']), { low: 10, high: 45, count: 3, total: 3 });
+  assert.deepEqual(setRangeOf(items, []), { low: 40, high: 55, count: 2, total: 3 });
+  assert.equal(setRangeOf(items, ['DMG']), null);
+});
+
+test('a printing with no grid counts at near mint only', () => {
+  const items = [{ price_grid: null, market_price: 12 }, { price_grid: gridAt({ NM: 20, LP: 15 }) }];
+  assert.equal(setRangeOf(items, ['NM']).count, 2);
+  assert.deepEqual(setRangeOf(items, ['LP']), { low: 15, high: 15, count: 1, total: 2 });
+});
+
+test('the range note follows the conditions the popup has switched on', () => {
+  const summary = setRangeSummary([{ price_grid: gridAt({ NM: 40, LP: 30 }) }, { price_grid: gridAt({ NM: 55, LP: 20 }) }]);
+  assert.equal(setRangeNote(summary), '2 sets · $40.00–$55.00');
+  assert.equal(setRangeNote(summary, ['NM']), '2 sets · $40.00–$55.00');
+  assert.equal(setRangeNote(summary, ['LP']), '2 sets · $20.00–$30.00');
+  assert.equal(setRangeNote(summary, ['HP']), null);
+  assert.equal(setRangeSummary([{ price_grid: null, market_price: null }]), null);
+});
+
+test('range wording: singular, a single price, and how many printings were priced', () => {
+  assert.equal(setRangeNote({ low: 9, high: 9, count: 1, total: 1 }), '1 set · $9.00');
+  assert.equal(setRangeNote({ low: 9, high: 9, count: 1, total: 4 }), '1 of 4 sets priced · $9.00');
+  assert.equal(setRangeNote({ low: 3, high: 8, count: 3, total: 5 }), '3 of 5 sets priced · $3.00–$8.00');
+  assert.equal(setRangeNote({ low: 3, high: 8, count: 2 }), '2 sets · $3.00–$8.00');
 });

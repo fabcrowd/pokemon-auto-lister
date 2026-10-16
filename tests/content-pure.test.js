@@ -122,3 +122,105 @@ test('sourceHints gathers srcset, zoom-like data attributes and an enclosing lin
   const empty = pure.sourceHints({ attributes: [], closest: () => null });
   assert.deepEqual([empty.srcset, [...empty.attrs], empty.link], ['', [], '']);
 });
+
+// A page stub rich enough for the scan itself: text nodes come from an element's `texts`.
+function loadPage({ images = [], sources = [], headings = [], performance, computed = () => ({}) } = {}) {
+  const source = fs.readFileSync(new URL('../tools/extension-wasm/content.js', import.meta.url), 'utf8');
+  const window = { addEventListener() {}, innerWidth: 1100, innerHeight: 1200 };
+  const document = {
+    baseURI: 'https://shop.example/item/1',
+    getElementById: () => null,
+    documentElement: {},
+    querySelectorAll: (selector) => {
+      if (selector === 'img') return images;
+      if (selector === 'picture source[srcset]') return sources;
+      if (selector.startsWith('h1,h2')) return headings;
+      return [];
+    },
+    createTreeWalker: (root) => {
+      const texts = root?.texts || [];
+      let at = 0;
+      return { currentNode: null, nextNode: () => (at < texts.length ? { nodeValue: texts[at++], nodeType: 3 } : null) };
+    },
+  };
+  const chrome = { runtime: { onMessage: { addListener() {} }, sendMessage: () => Promise.resolve() } };
+  vm.runInNewContext(source, { window, document, chrome, URL, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 }, performance, MutationObserver: class {}, getComputedStyle: computed });
+  return window.__cardScanner;
+}
+
+test('the carousel and heading caches are rebuilt at the start of every scan', () => {
+  const style = { overflowX: 'auto' };
+  const strip = { parentElement: null, scrollWidth: 900, clientWidth: 300 };
+  const slide = { parentElement: strip };
+  const heading = { matches: () => true, querySelector: () => null, childElementCount: 0, texts: ['Similar items'], previousElementSibling: null };
+  const item = { previousElementSibling: heading };
+  const scanner = loadPage({ computed: () => style });
+  assert.equal(scanner.pure.scrollsHorizontally(slide), true);
+  assert.equal(scanner.pure.headingBefore(item), 'Similar items');
+
+  style.overflowX = 'visible';
+  heading.texts = ['Other items'];
+  assert.equal(scanner.pure.scrollsHorizontally(slide), true, 'cached within one scan');
+  assert.equal(scanner.pure.headingBefore(item), 'Similar items', 'cached within one scan');
+
+  scanner.find();
+  assert.equal(scanner.pure.scrollsHorizontally(slide), false);
+  assert.equal(scanner.pure.headingBefore(item), 'Other items');
+});
+
+const fakeHeading = (texts, extra = {}) => ({
+  tagName: 'H2', childElementCount: 0, parentElement: null, texts,
+  getAttribute: () => null,
+  querySelector: () => null,
+  get textContent() { throw new Error('textContent must not be read'); },
+  ...extra,
+});
+
+test('heading text is read from a bounded prefix, never the whole subtree', () => {
+  const visited = [];
+  const huge = fakeHeading(new Proxy([], {
+    get(target, key) {
+      if (key === 'length') return 5000;
+      if (typeof key === 'string' && /^\d+$/.test(key)) { visited.push(Number(key)); return 'word '; }
+      return target[key];
+    },
+  }));
+  const small = fakeHeading(['Similar ', 'items']);
+  const crowded = fakeHeading(['Looks fine'], { childElementCount: 50 });
+  const scanner = loadPage({ headings: [huge, crowded, small] });
+  const found = scanner.pure.collectHeadings();
+  assert.deepEqual([...found].map((h) => h.text), ['Similar items']);
+  assert.ok(visited.length <= 60, `walked ${visited.length} text nodes`);
+  assert.equal(scanner.pure.boundedText(crowded), '', 'an element with many children is skipped outright');
+  assert.ok(scanner.pure.boundedText(huge).length <= 200);
+});
+
+test('a labelled container keeps its aria-label without touching its text', () => {
+  const region = fakeHeading(['x'.repeat(5000)], { tagName: 'SECTION', getAttribute: (name) => (name === 'aria-label' ? 'Similar items' : null) });
+  const found = loadPage({ headings: [region] }).pure.collectHeadings();
+  assert.deepEqual([...found].map((h) => h.text), ['Similar items']);
+});
+
+test('image hosts come from the page images, their srcsets and the image and css resources it loaded', () => {
+  const images = [
+    { currentSrc: 'https://i.cdn.example/a-300.jpg', src: 'https://lazy.example/a.jpg', srcset: 'https://i.cdn.example/a-900.jpg 900w, https://big.cdn.example/a,w_1200/x.jpg 1200w' },
+    { currentSrc: '', src: 'data:image/gif;base64,AAAA', srcset: '' },
+    { currentSrc: '/local/b.jpg', src: '', srcset: '' },
+  ];
+  const sources = [{ srcset: 'https://pic.example/c.webp 800w' }];
+  const entries = [
+    { initiatorType: 'img', name: 'https://tracker.example/pixel.gif' },
+    { initiatorType: 'css', name: 'https://fonts.example/bg.jpg' },
+    { initiatorType: 'script', name: 'https://scripts.example/app.js' },
+    { initiatorType: 'fetch', name: 'https://api.example/data.json' },
+  ];
+  const hosts = loadPage({ images, sources, performance: { getEntriesByType: () => entries } }).pure.collectImageHosts();
+  assert.deepEqual([...hosts].sort(), ['big.cdn.example', 'fonts.example', 'i.cdn.example', 'lazy.example', 'pic.example', 'shop.example', 'tracker.example']);
+});
+
+test('image hosts work without the performance API and stop at a bound', () => {
+  const many = Array.from({ length: 400 }, (_, i) => ({ currentSrc: `https://h${i}.example/a.jpg`, src: '', srcset: '' }));
+  const hosts = loadPage({ images: many }).pure.collectImageHosts();
+  assert.equal(hosts.length, 200);
+  assert.deepEqual([...loadPage({}).pure.collectImageHosts()], []);
+});

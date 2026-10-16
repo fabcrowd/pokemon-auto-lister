@@ -67,17 +67,20 @@ function resolve(raw, base) {
 
 /**
  * Larger renditions of a displayed image, largest first, best guess first among equals.
- * Never contains the displayed URL, a non-https URL, or a host the page did not itself name.
+ * Never contains the displayed URL or a non-https URL. When allowedHosts is given (the hostnames the page
+ * itself loaded images from), a candidate on any other host is dropped.
  *
  * @param {{src?: string, currentSrc?: string, naturalWidth?: number, srcset?: string, attrs?: string[],
- *          link?: string, ogImages?: string[], base?: string}} hints
+ *          link?: string, ogImages?: string[], base?: string, allowedHosts?: Set<string>|string[]}} hints
  * @returns {string[]}
  */
-export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0, srcset = "", attrs = [], link = "", ogImages = [], base } = {}) {
+export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0, srcset = "", attrs = [], link = "", ogImages = [], base, allowedHosts = null } = {}) {
+  const hostSet = allowedHosts ? new Set([...allowedHosts].map((host) => String(host).toLowerCase())) : null;
   const shown = new Set([src, currentSrc].map((raw) => resolve(raw, base)?.href).filter(Boolean));
   const found = new Map();
   const add = (href, size) => {
     if (!href || shown.has(href) || (found.get(href) ?? -1) >= size) return;
+    if (hostSet && !hostSet.has(new URL(href).hostname.toLowerCase())) return;
     found.set(href, size);
   };
   const addUrl = (url, size) => { if (url) add(url.href, size); };

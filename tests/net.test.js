@@ -34,3 +34,19 @@ test('the shipped URL check never accepts a local http source', () => {
     assert.equal(publicHttpsUrl(url), null, url);
   }
 });
+
+test('reserved IPv4 ranges beyond the private blocks are blocked', () => {
+  for (const host of [
+    '192.0.0.1', '192.0.0.255', '198.18.0.1', '198.19.255.254',
+    '224.0.0.1', '239.255.255.250', '240.0.0.1', '255.255.255.255', '[::ffff:224.0.0.1]',
+  ]) {
+    assert.equal(isPrivateHost(host), true, host);
+    assert.equal(publicHttpsUrl(`https://${host}/a.jpg`), null, host);
+  }
+});
+
+test('addresses next to the reserved ranges stay public', () => {
+  for (const host of ['192.0.1.1', '192.0.2.1', '198.17.255.255', '198.20.0.1', '223.255.255.255']) {
+    assert.equal(isPrivateHost(host), false, host);
+  }
+});
