@@ -1,0 +1,33 @@
+# Cloudflare Worker for the card-correction relay. Deploy from this folder: `npx wrangler deploy`.
+# Values marked OWNER are yours to fill in; the Worker refuses requests (HTTP 500) until they are valid.
+
+name = "card-scanner-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# OWNER: the data repo that receives contributions, as owner/name.
+DATA_REPO = "fabcrowd/card-scanner-data"
+DATA_BRANCH = "main"
+# OWNER: your extension's id (chrome://extensions, 32 letters a-p). Comma-separate several (dev + store).
+ALLOWED_EXTENSION_IDS = "abcdefghijklmnopabcdefghijklmnop"
+# Optional limits (defaults shown).
+# CARDS_PER_INSTALL_DAY = "200"
+# REQUESTS_PER_IP_HOUR = "50"
+# MAX_ITEMS_PER_FLUSH = "100"
+
+# Secret, not a var: `npx wrangler secret put GITHUB_TOKEN`
+# A fine-grained token limited to the data repo with "Contents: Read and write".
+
+# OWNER: bucket for items waiting for the hourly commit. `npx wrangler r2 bucket create card-scanner-pending`
+[[r2_buckets]]
+binding = "PENDING"
+bucket_name = "card-scanner-pending"
+
+# OWNER: paste the id printed by `npx wrangler kv namespace create RATE`.
+[[kv_namespaces]]
+binding = "RATE"
+id = "paste-the-kv-namespace-id-here"
+
+[triggers]
+crons = ["7 * * * *"]

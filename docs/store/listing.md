@@ -28,8 +28,9 @@ What you get
 - Export or clear your saved corrections at any time.
 
 Privacy
-- Card recognition runs on your device. Your photos are not uploaded.
+- Card recognition runs on your device. Your full photos are never uploaded.
 - No account. No analytics. No ads.
+- Optional and off by default: "Help improve recognition for everyone" sends small pictures of cards you correct or confirm, and the card you chose. No page address, no full photo, no account.
 - Only card identifiers are sent to the price sources.
 - The first run downloads about 140 MB of recognition models. After that, scanning works without a download.
 
@@ -57,7 +58,7 @@ Lets the extension read the tab you are on when you click the toolbar icon and p
 Used to add the card markers and the "which card is this?" picker to the page you chose to scan. The script is injected only after you press Scan. All scripts are packaged with the extension.
 
 **storage**
-Stores your settings, an optional PokemonPriceTracker API key, and a 24-hour cache of price lookups. Saved corrections and their crops use the browser's IndexedDB. Nothing is sent to us.
+Stores your settings, an optional PokemonPriceTracker API key, and a 24-hour cache of price lookups. Saved corrections and their crops use the browser's IndexedDB. Nothing is sent to us unless you turn on "Help improve recognition for everyone".
 
 **Optional host access: all sites (`<all_urls>`)**
 Read full-size photos on sites you scan, for better accuracy. It is requested only when you turn it on, in the options or from the optional notice in the popup. Without it, the extension uses a screenshot of the visible tab. Photos are fetched without cookies and are analyzed on the device.
@@ -71,6 +72,9 @@ Look up card prices by card identifier.
 **www.pokemonpricetracker.com**
 Look up condition-based prices by card identifier, using the API key you entered. Used only if you add a key.
 
+**The developer's relay address (added to the store build only when the owner sets it)**
+Receives the opt-in contributions of "Help improve recognition for everyone" and serves the signed update of combined card fingerprints. It is requested only in a build where the owner set the address, and nothing is sent to it unless the user turned the setting on.
+
 **github.com/fabcrowd/pokemon-auto-lister/releases/download/*, objects.githubusercontent.com, release-assets.githubusercontent.com**
 Download the recognition models and lookup data on first run (about 140 MB). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
 
@@ -80,9 +84,11 @@ Collected, in the store's wording:
 
 - **Website content.** Yes. Card photos and page images from the page you scan. Processed on the device and not transmitted off the device. Crops of cards you correct are stored locally.
 - **Web history.** Yes, locally only. For each saved correction the extension stores the page address without the query string or fragment (site and path). It is not transmitted.
+- **Website content, only if the user turns on "Help improve recognition for everyone" (off by default, explicit click, explained next to the toggle).** Small cropped pictures of cards the user corrected or confirmed (card only, about 320 px), where the card sits in the photo, the card chosen, the scanner's guess, a date, a random install id, a hash of the photo, and model version codes. Transmitted to the developer's relay, which saves it in a public GitHub repository (fabcrowd/card-scanner-data), where it is publicly visible and kept until deletion is requested by install id. No page address, no full photo, no account. Not sold, not used for anything else. Turning the setting off deletes the install id and the unsent queue.
+- **User activity (corrections and confirmations).** The same opt-in contributions: which card the user picked or confirmed for a crop. Tick the matching boxes in the store form for the opt-in data above.
 - **Authentication information.** Yes. The PokemonPriceTracker API key that the user enters. It is stored in the browser and sent only to www.pokemonpricetracker.com.
 
-Not collected: personally identifiable information, health, financial or payment information, location, user activity such as keystrokes or clicks, personal communications.
+Not collected: personally identifiable information, health, financial or payment information, location, keystrokes or clicks, personal communications. The install id is random and not linked to a person.
 
 Certifications to tick:
 - I do not sell or transfer user data to third parties, outside of the approved use cases.

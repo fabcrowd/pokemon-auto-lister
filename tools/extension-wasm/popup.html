@@ -148,6 +148,32 @@
     }
     .hint-dismiss:hover { color: #c5cadc; }
 
+    /* EXAM PROMPT: one light question after a scan of a photo the user is helping to check */
+    .exam-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: #0e1018;
+      border-bottom: 1px solid #1a1d2a;
+      font-size: 12px;
+      color: #c5cadc;
+    }
+    .exam-strip[hidden] { display: none; }
+    .exam-strip .exam-text { flex: 1; min-width: 0; }
+    .exam-yes {
+      background: transparent;
+      border: 1px solid #6366f1;
+      border-radius: 6px;
+      color: #c7c9ff;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+    }
+    .exam-yes:hover { background: #6366f122; }
+    .exam-yes:focus-visible, .exam-strip .hint-dismiss:focus-visible { outline: 2px solid #8b8ff7; outline-offset: 2px; }
+
     /* ACTION BAR */
     .action-bar {
       display: flex;
@@ -701,6 +727,12 @@
   </div>
 
   <div class="msg-bar hidden" id="msg-bar" role="status"></div>
+
+  <div class="exam-strip" id="exam-strip" role="group" aria-label="Help check the results" hidden>
+    <span class="exam-text">Help check: is every card here right?</span>
+    <button type="button" class="exam-yes" id="exam-yes">All right</button>
+    <button type="button" class="hint-dismiss" id="exam-dismiss" aria-label="Dismiss" title="Dismiss">&#10005;</button>
+  </div>
 
   <div class="results" id="results">
     <div class="empty-hint" id="empty-hint">

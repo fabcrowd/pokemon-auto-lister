@@ -1,0 +1,68 @@
+name: nightly-pack
+
+# Builds the signed community pack from contributions/ and publishes it as a release.
+# Secrets: PACK_SIGNING_KEY (PKCS8 PEM, ECDSA P-256).
+# Optional, only when this repo is private and the pack should be published to a separate public repo:
+#   variable PACK_RELEASE_REPO (owner/name) and secret PACK_RELEASE_TOKEN (contents: write on that repo).
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-pack
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_REPO: ${{ vars.PACK_RELEASE_REPO || github.repository }}
+      GH_TOKEN: ${{ secrets.PACK_RELEASE_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests
+
+      - name: Cache pinned model and catalog
+        uses: actions/cache@v4
+        with:
+          path: assets
+          key: assets-${{ hashFiles('pins.json') }}
+
+      - name: Fetch model and catalog (sha256 pinned in pins.json)
+        run: python scripts/fetch_assets.py --pins pins.json --out assets
+
+      - name: Build pack
+        id: build
+        env:
+          PACK_SIGNING_KEY: ${{ secrets.PACK_SIGNING_KEY }}
+        run: |
+          tag="pack-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          python -m pipeline.run \
+            --data . --assets assets --out out --pins pins.json \
+            --pack-url "https://github.com/${RELEASE_REPO}/releases/download/${tag}/community-pack.bin"
+
+      - name: Publish release
+        env:
+          TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          gh release create "${TAG}" out/community-pack.bin out/manifest.json out/manifest.sig \
+            --repo "${RELEASE_REPO}" \
+            --title "Community pack ${TAG}" \
+            --notes "$(python -c "import json;s=json.load(open('out/summary.json'));print('entries: %d, exam: %s, improved: %s' % (s['entries'], s['exam'], s['improved']))")"

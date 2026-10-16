@@ -250,6 +250,62 @@ referencesToggle.addEventListener("change", async () => {
   showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
 });
 
+/* ─── Shared learning (opt-in) ─── */
+
+const shareToggle = document.getElementById("share-optin");
+const shareStatus = document.getElementById("share-status");
+
+const shareIdRow = document.getElementById("share-id-row");
+const shareIdCopy = document.getElementById("share-id-copy");
+
+function showShareId(installId) {
+  shareIdRow.hidden = !installId;
+  document.getElementById("share-id").textContent = installId || "";
+}
+
+shareIdCopy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(document.getElementById("share-id").textContent);
+    shareIdCopy.textContent = "Copied";
+  } catch {
+    shareIdCopy.textContent = "Copy failed";
+  }
+  setTimeout(() => { shareIdCopy.textContent = "Copy"; }, 2000);
+});
+
+function showShareStatus(text, kind = "info") {
+  shareStatus.textContent = text;
+  shareStatus.className = `test-result ${kind}`;
+}
+
+async function loadShareToggle() {
+  const status = await chrome.runtime.sendMessage({ action: "shareStatus" }).catch(() => null);
+  if (!status || status.error) {
+    shareToggle.disabled = true;
+    showShareStatus("Couldn't read this setting. Reload the page.", "err");
+    return;
+  }
+  shareToggle.checked = status.enabled === true;
+  showShareId(status.installId);
+  if (!status.available) {
+    shareToggle.disabled = true;
+    showShareStatus("Not available in this build");
+  }
+}
+
+shareToggle.addEventListener("change", async () => {
+  const wanted = shareToggle.checked;
+  const status = await chrome.runtime.sendMessage({ action: "setSharing", enabled: wanted }).catch(() => null);
+  if (!status || status.error) {
+    shareToggle.checked = !wanted;
+    showShareStatus("Couldn't change this setting. Try again.", "err");
+    return;
+  }
+  shareToggle.checked = status.enabled === true;
+  showShareId(status.installId);
+  showShareStatus(status.enabled ? "On. Thank you." : "Off. Your install id and anything waiting to be sent were deleted.", "ok");
+});
+
 /* ─── Look-alike matches ─── */
 
 const lookalikeToggle = document.getElementById("reduce-lookalikes");
@@ -349,6 +405,7 @@ refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
 loadLookalikeToggle();
+loadShareToggle();
 // dev-only:start
 refreshPhotoCount();
 loadCollectionToggle();

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyStorePackage, STORE_HOSTS, STRIP_FILES, storeManifest, stripDevBlocks } from '../scripts/lib/store-package.mjs';
+import { applyStorePackage, configuredOrigins, STORE_HOSTS, STRIP_FILES, storeManifest, stripDevBlocks } from '../scripts/lib/store-package.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const devManifest = JSON.parse(readFileSync(path.join(repoRoot, 'tools', 'extension-wasm', 'manifest.json'), 'utf8'));
@@ -90,5 +90,63 @@ test('applyStorePackage strips, drops excluded files, and rejects imports of wha
     assert.throws(() => applyStorePackage(dir), /test-photos\.js/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const configWith = (relay, manifest) => `export const RELAY_URL = "${relay}";
+export const PACK_MANIFEST_URL = "${manifest}";
+export const PACK_PUBLIC_KEY = "";
+`;
+
+test('the shipped shared-config is empty, so the store build adds no host', () => {
+  const text = readFileSync(path.join(repoRoot, 'tools', 'extension-wasm', 'lib', 'shared-config.js'), 'utf8');
+  assert.deepEqual(configuredOrigins(text), []);
+});
+
+test('a configured relay and pack address add their origins once, and only those', () => {
+  assert.deepEqual(configuredOrigins(configWith('https://relay.example.org/contribute', '')), ['https://relay.example.org/*']);
+  assert.deepEqual(
+    configuredOrigins(configWith('https://relay.example.org/a', 'https://relay.example.org/pack/manifest.json')),
+    ['https://relay.example.org/*'],
+  );
+  assert.deepEqual(
+    configuredOrigins(configWith('https://relay.example.org', 'https://packs.example.net/manifest.json')),
+    ['https://relay.example.org/*', 'https://packs.example.net/*'],
+  );
+});
+
+test('a github.com pack address is scoped to that repository release downloads, never all of github.com', () => {
+  const url = 'https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json';
+  assert.deepEqual(configuredOrigins(configWith('', url)), ['https://github.com/fabcrowd/card-scanner-data/releases/*']);
+  assert.throws(() => configuredOrigins(configWith('', 'https://github.com/fabcrowd/card-scanner-data/raw/main/manifest.json')), /releases/);
+  assert.throws(() => configuredOrigins(configWith('', 'https://github.com/manifest.json')), /releases/);
+});
+
+test('a configured address that is not https, or is not an address, stops the build', () => {
+  assert.throws(() => configuredOrigins(configWith('http://relay.example.org', '')), /https/);
+  assert.throws(() => configuredOrigins(configWith('relay', '')), /RELAY_URL/);
+  assert.throws(() => configuredOrigins('export const nothing = 1;'), /RELAY_URL/);
+});
+
+test('storeManifest appends configured origins after the fixed hosts', () => {
+  const store = storeManifest(devManifest, ['https://relay.example.org/*']);
+  assert.deepEqual(store.host_permissions, [...STORE_HOSTS, 'https://relay.example.org/*']);
+  assert.deepEqual(storeManifest(devManifest).host_permissions, STORE_HOSTS);
+});
+
+test('applyStorePackage puts the relay origin in the store manifest only when RELAY_URL is set', () => {
+  for (const [relay, expected] of [['', STORE_HOSTS], ['https://relay.example.org/in', [...STORE_HOSTS, 'https://relay.example.org/*']]]) {
+    const dir = mkdtempSync(path.join(tmpdir(), 'store-cfg-'));
+    try {
+      mkdirSync(path.join(dir, 'lib'));
+      writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(devManifest));
+      writeFileSync(path.join(dir, 'lib', 'shared-config.js'), configWith(relay, ''));
+      for (const name of STRIP_FILES.filter((file) => file.endsWith('.js'))) writeFileSync(path.join(dir, name), 'export const keep = 1;\n');
+      writeFileSync(path.join(dir, 'options.html'), '<p>keep</p>\n');
+      applyStorePackage(dir);
+      assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')).host_permissions, expected);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });

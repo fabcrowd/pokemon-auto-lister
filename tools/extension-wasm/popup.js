@@ -16,6 +16,9 @@ const sourceText   = document.getElementById("source-text");
 const hintStrip    = document.getElementById("hint-strip");
 const hintLink     = document.getElementById("hint-link");
 const hintDismiss  = document.getElementById("hint-dismiss");
+const examStrip    = document.getElementById("exam-strip");
+const examYes      = document.getElementById("exam-yes");
+const examDismiss  = document.getElementById("exam-dismiss");
 const wizStep1     = document.getElementById("wiz-step-1");
 const wizStep2     = document.getElementById("wiz-step-2");
 const wizStepAccess = document.getElementById("wiz-step-access");
@@ -262,6 +265,7 @@ btnClear.addEventListener("click", () => {
   _variantChoice = new Map();
   _picker = new Map();
   _showUnrecognised = false;
+  examStrip.hidden = true;
   resetResults();
   showMessage("");
 });
@@ -299,6 +303,8 @@ async function scanPage() {
   _picker = new Map();
   _showUnrecognised = false;
   _lastResult.cards.forEach(seedVariant);
+  // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
+  examStrip.hidden = data.shareExam !== true;
   updateStats(_lastResult.cards, Math.round(performance.now() - t0));
   renderResults();
   refreshSourceIndicators(_lastResult.cards);
@@ -645,6 +651,32 @@ function showSearchResults(idx) {
   const status = resultsEl.querySelector(`[data-search-status="${idx}"]`);
   if (state && status) status.textContent = matchesLabel(state.results?.length);
 }
+
+// What each row shows now, after any fixes: the answers "All right" confirms.
+function shownAnswers(cards) {
+  return cards.map((card, index) => {
+    if (card.cardBack) return { index, notACard: true };
+    return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };
+  });
+}
+
+examDismiss.addEventListener("click", () => { examStrip.hidden = true; });
+
+examYes.addEventListener("click", async () => {
+  const scan = _lastResult;
+  if (!scan) return;
+  examYes.disabled = true;
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: "confirmExam", scanId: scan.bgScanId, answers: shownAnswers(scan.cards) });
+    if (resp?.error || !resp?.ok) throw new Error(resp?.error || "not sent");
+    examStrip.hidden = true;
+    showMessage("Thanks. Those results were sent to help check the scanner.");
+  } catch {
+    showMessage("Couldn't send that. Try again later.", true);
+  } finally {
+    examYes.disabled = false;
+  }
+});
 
 function pickCard(idx, id, via, row) {
   const scan = _lastResult;

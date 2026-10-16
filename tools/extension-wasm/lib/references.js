@@ -20,7 +20,8 @@ const isCurrentVersion = (ref) => (ref?.v ?? 1) === EMBEDDING_VERSION;
  * The best reference for a query embedding, or null. It counts only if its cosine
  * similarity reaches `min` and beats the top catalog score by `margin`. The caller may use it
  * only to reorder cards the catalog already returned, never as a score of its own.
- * @param refs [{ cardId, embedding }] with L2-normalised 512-float embeddings
+ * @param refs [{ cardId, embedding, scale? }] with L2-normalised 512-float embeddings; community-pack rows are int8
+ *   with scale 1/127
  */
 export function referenceHit(query, refs, catalogTopScore, { min = REFERENCE_MIN, margin = REFERENCE_MARGIN } = {}) {
   let best = null;
@@ -30,6 +31,7 @@ export function referenceHit(query, refs, catalogTopScore, { min = REFERENCE_MIN
     if (!vec || vec.length !== EMBEDDING_DIM) continue;
     let dot = 0;
     for (let d = 0; d < EMBEDDING_DIM; d++) dot += query[d] * vec[d];
+    dot *= ref.scale ?? 1;
     if (!Number.isFinite(dot)) continue;
     if (!best || dot > best.score) best = { cardId: ref.cardId, score: dot };
   }

@@ -58,7 +58,41 @@ export function stripDevBlocks(text, name) {
   return result === text ? text : result.replace(/(\r?\n)+$/, (tail) => (text.endsWith('\n') ? tail : ''));
 }
 
-export function storeManifest(dev) {
+const CONFIG_FILE = 'lib/shared-config.js';
+const ORIGIN_SETTINGS = ['RELAY_URL', 'PACK_MANIFEST_URL'];
+
+// github.com hosts everyone's files, so its pattern is cut down to one repository's release downloads.
+function hostPattern(name, url) {
+  if (url.hostname !== 'github.com') return `${url.origin}/*`;
+  const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/releases\//);
+  if (!match) throw new Error(`${name} on github.com must be a release address (https://github.com/<owner>/<repo>/releases/...)`);
+  return `https://github.com/${match[1]}/${match[2]}/releases/*`;
+}
+
+/**
+ * Host permissions for the addresses the owner set in lib/shared-config.js. An empty address adds nothing: the
+ * feature is off in that build and the package asks for no more hosts.
+ */
+export function configuredOrigins(configText) {
+  const origins = [];
+  for (const name of ORIGIN_SETTINGS) {
+    const match = configText.match(new RegExp(`export const ${name} = "([^"]*)"`));
+    if (!match) throw new Error(`${CONFIG_FILE} must define ${name} as a string`);
+    if (!match[1]) continue;
+    let url;
+    try {
+      url = new URL(match[1]);
+    } catch {
+      throw new Error(`${name} is not an address: ${match[1]}`);
+    }
+    if (url.protocol !== 'https:') throw new Error(`${name} must be an https address`);
+    const host = hostPattern(name, url);
+    if (!origins.includes(host)) origins.push(host);
+  }
+  return origins;
+}
+
+export function storeManifest(dev, extraHosts = []) {
   for (const key of ['content_scripts', 'web_accessible_resources']) {
     if (dev[key] !== undefined) throw new Error(`manifest.json still declares ${key}; the extension injects on demand`);
   }
@@ -66,7 +100,7 @@ export function storeManifest(dev) {
     ...dev,
     name: STORE_NAME,
     description: STORE_DESCRIPTION,
-    host_permissions: [...STORE_HOSTS],
+    host_permissions: [...STORE_HOSTS, ...extraHosts],
     optional_host_permissions: ['<all_urls>'],
   };
 }
@@ -121,7 +155,9 @@ export function assertPackageClean(dir) {
 
 export function applyStorePackage(dir) {
   const manifestPath = path.join(dir, 'manifest.json');
-  writeFileSync(manifestPath, JSON.stringify(storeManifest(JSON.parse(readFileSync(manifestPath, 'utf8'))), null, 2) + '\n');
+  const configPath = path.join(dir, CONFIG_FILE);
+  const extraHosts = existsSync(configPath) ? configuredOrigins(readFileSync(configPath, 'utf8')) : [];
+  writeFileSync(manifestPath, JSON.stringify(storeManifest(JSON.parse(readFileSync(manifestPath, 'utf8')), extraHosts), null, 2) + '\n');
   for (const file of STRIP_FILES) {
     const full = path.join(dir, file);
     writeFileSync(full, stripDevBlocks(readFileSync(full, 'utf8'), file));

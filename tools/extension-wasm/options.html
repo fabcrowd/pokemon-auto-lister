@@ -345,6 +345,22 @@
   </details>
   <!-- dev-only:end -->
 
+  <div class="section-title">Shared learning</div>
+  <div class="source-card" id="sharing-card">
+    <div class="source-head">
+      <div class="source-name">Help improve recognition for everyone</div>
+    </div>
+    <div class="source-desc" id="sharing-desc">
+      If you turn this on, small pictures of the cards you correct or confirm, and the card you chose, are sent to help improve recognition for everyone.
+      No page address, no full photo and no account is sent. It is off until you turn it on, and turning it off deletes your random install id and anything still waiting to be sent.
+    </div>
+    <div class="source-body">
+      <label class="toggle" for="share-optin"><input type="checkbox" id="share-optin" aria-describedby="sharing-desc"> Help improve recognition for everyone</label>
+      <div class="test-result info" id="share-status" role="status" tabindex="-1"></div>
+      <div id="share-id-row" hidden>Your sharing id: <code id="share-id"></code> <button class="btn secondary" id="share-id-copy" type="button">Copy</button></div>
+    </div>
+  </div>
+
   <div class="section-title">Corrections</div>
   <div class="source-card" id="corrections-card">
     <div class="source-head">
@@ -352,7 +368,7 @@
     </div>
     <div class="source-desc">
       Cards you picked when the scanner was unsure or wrong, with the picture it saw.
-      They stay in this browser. Nothing is uploaded.
+      They stay in this browser unless you turn on shared learning above.
     </div>
     <div class="source-body">
       <label class="toggle" for="use-references"><input type="checkbox" id="use-references"> Recognize cards I corrected before</label>

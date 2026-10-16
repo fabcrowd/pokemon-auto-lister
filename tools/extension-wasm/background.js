@@ -26,6 +26,14 @@ import { setRangeSummary } from "./lib/card-display.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
+import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
+import { checkCommunityPack, loadStoredPack } from "./lib/community-pack.js";
+import { photoIdFromRgba } from "./lib/photo-id.js";
+import { createShareStore } from "./lib/share-store.js";
+import { createSharing } from "./lib/sharing.js";
+import { PACK_MANIFEST_URL, PACK_PUBLIC_KEY, RELAY_URL } from "./lib/shared-config.js";
+import { examGroups, examRows, shareFor, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
+import { createUploader } from "./lib/upload-queue.js";
 // dev-only:start
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 // dev-only:end
@@ -62,6 +70,25 @@ let _autoScanInFlight = false;
 // Rectified card pictures are kept in IndexedDB per scan: the service worker sleeps
 // between a scan and the user's pick, and memory does not survive that.
 const _corrections = createCorrectionsStore();
+
+// Opt-in shared learning (docs/plans/shared-learning.md). Inert while RELAY_URL is empty.
+const local = {
+  get: async (key) => (await chrome.storage.local.get(key))[key],
+  set: (key, value) => chrome.storage.local.set({ [key]: value }),
+  remove: (key) => chrome.storage.local.remove(key),
+};
+const _shareStore = createShareStore();
+const _uploader = createUploader({
+  store: _shareStore,
+  relayUrl: RELAY_URL,
+  backoff: {
+    get: async () => (await local.get("shareBackoff")) ?? null,
+    set: (state) => local.set("shareBackoff", state),
+    clear: () => local.remove("shareBackoff"),
+  },
+});
+const _sharing = createSharing({ storage: local, store: _shareStore, uploader: _uploader, relayUrl: RELAY_URL });
+_sharing.enabled().then((on) => on && _uploader.flush()).catch((err) => console.error("[share] startup upload failed:", err?.message || err));
 
 // The key moves out of sync storage the first time the worker starts after the update.
 getPptKey().catch(() => {});
@@ -454,9 +481,12 @@ async function handleScanPage(sendResponse, era) {
     const cards = [];
     const scanId = crypto.randomUUID().slice(0, 8);
     const crops = [];
-    const pushCard = (card, cardCanvas) => {
+    // One entry per card: which photo it is in and where, for the opt-in sharing; null when that is unknown.
+    const shares = [];
+    const pushCard = (card, cardCanvas, share = null) => {
       cards.push(card);
       crops.push(encodeCrop(cardCanvas));
+      shares.push(share);
     };
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
@@ -573,6 +603,7 @@ async function handleScanPage(sendResponse, era) {
         console.log("[BG]   splitting", boxes.length, "cards");
         if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
         const photoPixels = readBitmap(photoBitmap);
+        const photoId = photoIdOf(photoPixels);
         const photoFirst = cards.length;
         for (const { box, score } of boxes) {
           const [bx1, by1, bx2, by2] = box;
@@ -609,7 +640,8 @@ async function handleScanPage(sendResponse, era) {
           if (hero) preemptedPhotoKeys.add(_photoKey(ph));
           // The framing was a guess, so the name is a suggestion for the picker, not an answer.
           if (heroStrict && !read.abstain) read = { ...read, unsure: true };
-          pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas);
+          pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
+            shareOf(photoId, box, imageW, imageH, read));
         }
         const photoReads = cards.slice(photoFirst);
         const checked = markRepeatedNames(photoReads);
@@ -644,11 +676,12 @@ async function handleScanPage(sendResponse, era) {
       // Build the 750x1050 rectified canvas the embedder expects.
       const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
       const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
+      const read = await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed));
       pushCard({
         box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
         score: 1.0,
-        ...(await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed))),
-      }, cardCanvas);
+        ...read,
+      }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read));
     }
 
     // ── Fallback: YOLO viewport scan ───────────────────────────────────────
@@ -660,16 +693,19 @@ async function handleScanPage(sendResponse, era) {
         console.log("[BG] still nothing — running YOLO over whole viewport");
         const yoloBoxes = await detectCards(bitmap);
         console.log("[BG] YOLO found", yoloBoxes.length, "boxes in viewport");
+        let viewportId;
         for (const { box, score } of yoloBoxes) {
           const [x1, y1, x2, y2] = box;
           if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
           const cardCanvas = rectifyCard(bitmap, box);
+          const read = await identifyCard(cardCanvas, era, y2 - y1, null, capFor(y2 - y1));
+          viewportId ??= photoIdOf(readBitmap(bitmap));
           pushCard({
             box: [x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr],
             score,
-            ...(await identifyCard(cardCanvas, era, y2 - y1, null, capFor(y2 - y1))),
+            ...read,
             via: "yolo-viewport",
-          }, cardCanvas);
+          }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, read));
         }
       } catch (err) {
         console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
@@ -692,7 +728,7 @@ async function handleScanPage(sendResponse, era) {
     sendToTab(chrome, targetTab.id, { action: "startObserving" }).catch(() => {});
 
     const encoded = await Promise.all(crops);
-    await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded })
+    await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta) } : card));
     const asked = applyTitlePrior(withCandidates, {
@@ -702,7 +738,9 @@ async function handleScanPage(sendResponse, era) {
       log: (message) => console.log("[BG]", message),
     });
 
-    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed,
+    // Offered only to someone who opted in; the exam photos themselves are held out of local learning either way.
+    const shareExam = wantsExamPrompt(shares) && await _sharing.enabled().catch(() => false);
+    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed, shareExam,
       ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
@@ -711,6 +749,71 @@ async function handleScanPage(sendResponse, era) {
 }
 
 // ─── corrections ─────────────────────────────────────────────────────────────
+
+function photoIdOf(pixels) {
+  try {
+    return photoIdFromRgba(pixels);
+  } catch (err) {
+    console.error("[BG] photo id failed:", err?.message || err);
+    return null;
+  }
+}
+
+const shareOf = (photoId, box, width, height, card) => (photoId ? shareFor({ photoId, box, width, height, card }) : null);
+
+// A scan keeps its pictures at 375x525; the relay gets them smaller (docs/plans/shared-learning.md). Null when none fits.
+async function shareCrop(cropDataUrl) {
+  if (typeof cropDataUrl !== "string") return null;
+  const bitmap = await b64ToBitmap(cropDataUrl.replace(/^data:image\/jpeg;base64,/, ""));
+  try {
+    const { width, height } = cropSize(bitmap.width, bitmap.height);
+    for (const quality of [CROP_QUALITY, 0.6, 0.45]) {
+      const text = (await jpegDataUrl(bitmap, width, height, quality)).replace(/^data:image\/jpeg;base64,/, "");
+      if (text.length <= MAX_CROP_CHARS) return text;
+    }
+    return null;
+  } finally {
+    bitmap.close();
+  }
+}
+
+// Never lets sharing break the pick the user made.
+async function contributeTeachPick(scan, msg) {
+  try {
+    const share = scan?.shares?.[msg.index];
+    if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
+    const crop = await shareCrop(scan.crops?.[msg.index]);
+    if (!crop) return;
+    await _sharing.contribute({ photoId: share.photoId, cards: [teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via })] });
+  } catch (err) {
+    console.error("[BG] sharing a pick failed:", err?.message || err);
+  }
+}
+
+async function confirmExam(msg) {
+  if (!(await _sharing.enabled())) return { ok: false };
+  await _ensureCatalog();
+  const scan = typeof msg.scanId === "string" ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+  if (!scan?.shares || scan.examSent) return { ok: Boolean(scan?.examSent) };
+  const displayed = {};
+  for (const answer of Array.isArray(msg.answers) ? msg.answers : []) {
+    if (Number.isInteger(answer?.index)) displayed[answer.index] = answer;
+  }
+  const crops = await Promise.all(scan.crops.map((crop) => shareCrop(crop).catch(() => null)));
+  const known = (id) => Boolean(catalogCard(id));
+  let sent = 0;
+  for (const [photoId, indices] of examGroups(scan.shares)) {
+    const cards = examRows({ shares: scan.shares, indices, crops, picks: scan.examPicks || {}, displayed, known });
+    if (!cards) continue;
+    try {
+      if (await _sharing.contribute({ photoId, cards })) sent += 1;
+    } catch (err) {
+      console.error("[BG] sharing an exam photo failed:", err?.message || err);
+    }
+  }
+  await _corrections.saveScan({ ...scan, examSent: true }).catch(() => {});
+  return { ok: true, sent };
+}
 
 async function jpegDataUrl(source, width, height, quality) {
   const small = new OffscreenCanvas(width, height);
@@ -777,6 +880,12 @@ const _ownPageActions = {
     if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    // An exam photo's answers are held out: nothing learns from them here, and they leave only as a whole when the user confirms the photo.
+    if (scan?.shares?.[msg.index]?.split === "exam") {
+      const source = msg.via === "wrong-card" ? "wrong-card" : "pick";
+      await _corrections.saveScan({ ...scan, examPicks: { ...scan.examPicks, [msg.index]: { cardId: msg.pickedId, source } } });
+      return { ok: true };
+    }
     const record = correctionRecord({
       ts: Date.now(),
       scanId: msg.scanId,
@@ -795,7 +904,15 @@ const _ownPageActions = {
     }
     await _corrections.save(record);
     if (_ready) embedPendingReferences();
+    contributeTeachPick(scan, msg);
     return { ok: true };
+  },
+  confirmExam: (msg) => confirmExam(msg),
+  shareStatus: async () => ({ available: _sharing.available(), enabled: await _sharing.enabled(), installId: await _sharing.installId() }),
+  setSharing: async (msg) => {
+    if (msg.enabled === true) await _sharing.enable();
+    else await _sharing.disable();
+    return { available: _sharing.available(), enabled: await _sharing.enabled(), installId: await _sharing.installId() };
   },
   countCorrections: async () => ({ count: await _corrections.count() }),
   exportCorrections: async () => exportCorrections(),
@@ -878,6 +995,35 @@ async function loadedReferences() {
   return rows;
 }
 
+let _packRows = null;
+
+const packBuild = () => {
+  const { clip, catalog, crop } = modelTags();
+  return { model: clip, catalog, crop };
+};
+
+async function communityRows() {
+  try {
+    _packRows ??= await loadStoredPack(_shareStore, packBuild());
+    return _packRows;
+  } catch (err) {
+    console.error("[BG] community pack unreadable:", err?.message || err);
+    return [];
+  }
+}
+
+// At most one check a day (lib/community-pack.js); nothing about the user is sent.
+checkCommunityPack({
+  manifestUrl: PACK_MANIFEST_URL,
+  publicKey: PACK_PUBLIC_KEY,
+  expected: packBuild(),
+  store: _shareStore,
+  state: { get: () => local.get("packCheck"), set: (value) => local.set("packCheck", value) },
+}).then((result) => {
+  if (result.status === "ok") _packRows = null;
+  else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] community pack not used:", result.status);
+}).catch((err) => console.error("[BG] community pack check failed:", err?.message || err));
+
 const HUB_PENALTY_PATH = "data/hub-penalty.bin";
 
 // "Experimental: reduce look-alike matches" in the options page. Off until a sealed-set score shows a gain.
@@ -908,8 +1054,11 @@ function embedSerial(canvas) {
 // reprint of a corrected card is not made certain. Any failure leaves the catalog hits as they were.
 async function withReferenceHit(embedding, hits) {
   try {
-    if (!(await referencesInUse())) return { hits, referencedId: null };
-    const hit = referenceHit(embedding, await loadedReferences(), hits[0]?.score ?? 0);
+    // The community pack is in use only after it passed the exam gate (lib/community-pack.js); the user's own rows need their setting.
+    const own = (await referencesInUse()) ? await loadedReferences() : [];
+    const pack = await communityRows();
+    if (!own.length && !pack.length) return { hits, referencedId: null };
+    const hit = referenceHit(embedding, pack.length ? own.concat(pack) : own, hits[0]?.score ?? 0);
     const at = hit ? hits.findIndex((h) => _meta[h.index]?.id === hit.cardId) : -1;
     return at < 0 ? { hits, referencedId: null } : { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId };
   } catch (err) {

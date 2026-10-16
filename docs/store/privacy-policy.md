@@ -6,10 +6,11 @@ This extension finds Pokémon TCG cards in photos on web pages and shows their p
 
 ## The short version
 
-- Card recognition runs on your device. Your photos are not uploaded to us or to anyone else.
-- We run no servers. We have no analytics, no ads, and no tracking.
-- We do not collect, sell, or share your data.
-- Everything the extension stores stays in your browser. You can delete it at any time.
+- Card recognition runs on your device. Your full photos are never uploaded to us or to anyone else.
+- We have no analytics, no ads, and no tracking.
+- One optional setting, "Help improve recognition for everyone", is off until you turn it on. If you turn it on, small pictures of cards you correct or confirm, and the card you chose, are sent to a server we run. See "Shared learning" below.
+- With that setting off, nothing you scan leaves your device, and everything the extension stores stays in your browser. You can delete it at any time.
+- We do not sell your data.
 
 ## What stays on your device
 
@@ -25,7 +26,7 @@ Developer builds of the extension include an optional test-photo collection feat
 
 ## What leaves your device
 
-Only the following requests are made. None of them include your photos, screenshots, or crops.
+With "Help improve recognition for everyone" off, only the following requests are made. None of them include your photos, screenshots, or crops. Shared learning, when you turn it on, adds the requests described in the next section.
 
 | To | What is sent | Why |
 |---|---|---|
@@ -40,19 +41,32 @@ Like any web request, these reach servers run by others. They can see your IP ad
 
 The extension does not send your browsing history anywhere.
 
+## Shared learning (optional, off by default)
+
+The options page has a setting called "Help improve recognition for everyone". It is off. You turn it on by clicking it, next to a one-line explanation of what it sends. When it is on:
+
+- **What is sent.** For cards you correct with "Wrong card?" or pick from the list, and for results you confirm with "All right", the extension sends: a small cropped picture of that card only (a JPEG, about 320 pixels on its long side), where the card sits in the photo as four fractions, the card you chose, what the scanner guessed and how sure it was, the day (a date, no time), a random install id, a short code for the photo (a 64-bit hash of its pixels, which cannot be turned back into the photo), and the version codes of the recognition models and catalog.
+- **What is not sent.** No page address, no site name, no full photo or screenshot, no account, no name or email, no browsing history, and no prices or API keys.
+- **The install id.** A random identifier made when you turn the setting on. It is not linked to you. It lets us limit abuse and lets you ask for your contributions to be deleted. It is shown on the options page as "Your sharing id". Turning the setting off deletes it from your browser and everything still waiting to be sent.
+- **Which photos.** About one photo in five is picked by its hash to be an exam photo: the scanner is checked against your confirmed answers and never learns from them. The rest teach. This split is the same for every user.
+- **Where it goes.** To a small relay run by the developer (its address is the one listed in the extension's permissions), which saves each contribution in a public GitHub repository, fabcrowd/card-scanner-data. **Contributions are publicly visible there**: anyone can see the card pictures, your answers and your install id. The developer also publishes a combined, signed set of card fingerprints that the extension may download.
+- **What comes back.** The extension checks once a day for a signed update of those combined fingerprints and downloads it from the developer's GitHub releases. That request carries no data about you. The extension uses it only if the signature is valid, it was made for the same models, and it scored better than the previous one on the exam photos.
+- **Retention.** Contributions stay in the public repository, and in its history, indefinitely unless you ask for them to be deleted. Turning the setting off stops new ones and deletes the ones not yet sent, but does not remove ones already received.
+- **IP addresses.** The relay uses your IP address only to limit how many requests one address can make per hour. It is held in a counter that expires after about an hour and is not saved with contributions.
+
 ## Optional site access
 
 The extension asks to read all sites only if you turn on "Read full-size photos on sites you scan", in the options or from the notice the popup can show after a scan that used a screenshot. The notice has an "Allow" button and a "Not now" link, and if you pick "Not now" it does not appear again for 14 days (the date is kept in the extension's local storage). It uses this to fetch full-size photos from the page you scan, for better accuracy. Without it, the extension uses a screenshot of the visible tab. You can turn it off at any time in your browser's extension settings.
 
 ## What we do not do
 
-- We do not run servers that receive your data.
+- We run a server that receives data only if you turn on shared learning, and then only what that section lists.
 - We do not use analytics, advertising, or tracking.
 - We do not sell your data.
-- We do not share your data with third parties, except for the requests listed above that you trigger by using the extension.
+- We do not share your data with third parties, except for the requests listed above that you trigger by using the extension, and the shared-learning contributions you chose to send to our own server.
 - We do not use your data for anything other than the single purpose of recognizing cards and showing prices.
 - We do not use or transfer data to determine creditworthiness or for lending.
-- Humans do not read your data. We have no access to it.
+- Humans do not read your data. With shared learning off we have no access to it. With it on, the developer can see the contributions on the server; they hold the crops and answers listed above and nothing that names you.
 
 ## Chrome Web Store User Data Policy
 
@@ -61,6 +75,7 @@ The use of information received from Chrome APIs will adhere to the [Chrome Web 
 ## Deleting your data
 
 - **Corrections, saved crops, and card memory:** Open the extension's options page and press Clear in the corrections section. You can press Export first to keep a copy. The pictures of your last two scans are replaced by newer scans, and removed when you uninstall.
+- **Shared learning:** Turn the setting off in the options page. That deletes your install id and anything not yet sent. Contributions already received stay public until you ask for their deletion: send your sharing id (shown on the options page, with a Copy button, while the setting is on) in a GitHub issue on fabcrowd/card-scanner-data or to the contact email below. Copy the id before you turn the setting off, because turning it off deletes it from your browser. We then remove the matching files from the repository and its history.
 - **API key:** Open the options page and press Disconnect.
 - **Everything:** Remove the extension in `chrome://extensions`. Chrome deletes its storage, including IndexedDB and the cached models.
 

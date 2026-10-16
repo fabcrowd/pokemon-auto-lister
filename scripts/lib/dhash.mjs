@@ -3,20 +3,12 @@ import sharp from 'sharp';
 // Refuses decompression bombs: a small file can claim a huge picture.
 export const MAX_PIXELS = 50e6;
 
+// The hash itself lives in the extension, so the scripts and the shipped code cannot drift apart.
+export { dhashFromGray } from '../../tools/extension-wasm/lib/photo-id.js';
+import { dhashFromGray } from '../../tools/extension-wasm/lib/photo-id.js';
+
 const COLS = 9;
 const ROWS = 8;
-
-/** 64-bit difference hash as 16 hex digits: one bit per pixel brighter than its right neighbour. */
-export function dhashFromGray(gray) {
-  if (gray.length !== COLS * ROWS) throw new Error(`dHash needs ${COLS * ROWS} gray pixels`);
-  let bits = 0n;
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS - 1; col++) {
-      bits = (bits << 1n) | (gray[row * COLS + col] > gray[row * COLS + col + 1] ? 1n : 0n);
-    }
-  }
-  return bits.toString(16).padStart(16, '0');
-}
 
 export function hamming(a, b) {
   if (a.length !== b.length) throw new Error('hash length differs');
