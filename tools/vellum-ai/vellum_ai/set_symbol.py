@@ -18,7 +18,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from vellum_ai.variant_photos import CROP_DIR, MANIFEST
-from vellum_ai.variant_train import MIN_SUPPORT, class_entry, cluster_map, is_holdout
+from vellum_ai.variant_train import MIN_SUPPORT, class_entry, cluster_map, listing_splits
 
 # Fractions of a rectified card. Tall enough for the Jungle flower, which sits
 # lower than the Fossil claw, and still on the right of the species line.
@@ -165,13 +165,12 @@ class SymbolNet(nn.Module):
 
 
 def split_symbol_rows(rows: list[dict], clusters: dict[str, str] | None = None) -> tuple[list[dict], list[dict]]:
-    """Train and holdout rows, split by near-duplicate cluster of listings."""
+    """Train and holdout rows. A cluster is holdout if any listing in it is."""
     if clusters is None:
         clusters = cluster_map(rows)
-    train_rows, holdout_rows = [], []
-    for row in rows:
-        unit = clusters.get(row["listing"], row["listing"])
-        (holdout_rows if is_holdout(unit) else train_rows).append(row)
+    splits = listing_splits({row["listing"] for row in rows}, clusters)
+    train_rows = [row for row in rows if splits[row["listing"]] != "holdout"]
+    holdout_rows = [row for row in rows if splits[row["listing"]] == "holdout"]
     return train_rows, holdout_rows
 
 
@@ -220,4 +219,7 @@ def train(epochs: int = 25) -> dict:
     WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), WEIGHTS)
     REPORT.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    small = [name for name, cls in report["classes"].items() if cls.get("tooFew")]
+    if small:
+        print(f"support under {MIN_SUPPORT}, rates withheld: {', '.join(small)}")
     return report

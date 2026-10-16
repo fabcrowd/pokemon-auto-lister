@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -39,8 +41,9 @@ def _card(seed: int) -> Image.Image:
     return Image.fromarray(small).resize((180, 240), Image.NEAREST)
 
 
-class DhashParityTests(unittest.TestCase):
-    """Expected strings come from scripts/lib/dhash.mjs on the same pixels."""
+class DhashTests(unittest.TestCase):
+    """Bit layout. These strings also match scripts/lib/dhash.mjs on these synthetic
+    pixels, but sharp and PIL resize photos differently, so only Python compares them."""
 
     def test_horizontal_ramp(self) -> None:
         array = np.tile(np.linspace(255, 0, 90), (80, 1))
@@ -134,12 +137,12 @@ class ClusterTests(unittest.TestCase):
         dhash.listing_clusters(rows, self.crops, self.cache)
         stored = json.loads(self.cache.read_text(encoding="utf-8"))
         self.assertIn("1_00.jpg", stored)
-        with mock.patch.object(dhash, "dhash_image", side_effect=AssertionError("rehashed")):
+        with mock.patch.object(dhash, "image_signature", side_effect=AssertionError("rehashed")):
             dhash.listing_clusters(rows, self.crops, self.cache)
         path = self.crops / "1_00.jpg"
         stat = path.stat()
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
-        with mock.patch.object(dhash, "dhash_image", wraps=dhash.dhash_image) as spy:
+        with mock.patch.object(dhash, "image_signature", wraps=dhash.image_signature) as spy:
             dhash.listing_clusters(rows, self.crops, self.cache)
         self.assertEqual(spy.call_count, 1)
 
@@ -150,6 +153,123 @@ class ClusterTests(unittest.TestCase):
         train, holdout = set_symbol.split_symbol_rows(rows, together)
         self.assertEqual(len(train) + len(holdout), 2)
         self.assertIn(len(train), (0, 2))
+
+    def test_cluster_is_holdout_when_any_member_is(self) -> None:
+        ids = [str(310000000 + n) for n in range(300)]
+        held = [i for i in ids if variant_train.is_holdout(i)][:1]
+        plain = [i for i in ids if not variant_train.is_holdout(i)][:2]
+        members = held + plain
+        rows = [{"listing": i, "file": "f"} for i in members]
+        clusters = {i: min(members) for i in members}
+        _, _, holdout = variant_train.split_rows(rows, clusters)
+        self.assertEqual(len(holdout), 3)
+        _, symbol_holdout = set_symbol.split_symbol_rows(rows, clusters)
+        self.assertEqual(len(symbol_holdout), 3)
+
+    def test_cluster_is_validation_when_no_holdout_but_some_validation(self) -> None:
+        ids = [str(320000000 + n) for n in range(300)]
+        val = next(i for i in ids if not variant_train.is_holdout(i) and variant_train._is_validation(i))
+        train = next(i for i in ids if not variant_train.is_holdout(i) and not variant_train._is_validation(i))
+        rows = [{"listing": val, "file": "f"}, {"listing": train, "file": "f"}]
+        _, got_val, _ = variant_train.split_rows(rows, {val: val, train: val})
+        self.assertEqual(len(got_val), 2)
+
+    def test_joining_listing_never_moves_existing_ones_out_of_holdout(self) -> None:
+        ids = [str(330000000 + n) for n in range(400)]
+        held = next(i for i in ids if variant_train.is_holdout(i))
+        others = [i for i in ids if i != held]
+        before_rows = [{"listing": i, "file": "f"} for i in others[:150] + [held]]
+        before = variant_train.split_rows(before_rows, {})
+        newcomer = next(i for i in others[150:] if not variant_train.is_holdout(i))
+        after_rows = before_rows + [{"listing": newcomer, "file": "f"}]
+        root = min(newcomer, held)
+        after = variant_train.split_rows(after_rows, {newcomer: root, held: root})
+        names = [{r["listing"] for r in part} for part in after]
+        self.assertTrue({r["listing"] for r in before[2]} <= names[2])
+        self.assertIn(newcomer, names[2])
+        for old, now in zip(before[:2], names[:2]):
+            moved = {r["listing"] for r in old} - now
+            self.assertEqual(moved, set())
+
+    def test_degenerate_crops_do_not_link(self) -> None:
+        rows = [
+            self._save("1_00.png", Image.new("RGB", (90, 80), (128, 128, 128))),
+            self._save("2_00.png", Image.new("RGB", (90, 80), (128, 128, 128))),
+        ]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            clusters = dhash.listing_clusters(rows, self.crops, self.cache)
+        self.assertEqual(clusters, {"1": "1", "2": "2"})
+        self.assertIn("degenerate 2", out.getvalue())
+
+    def test_extreme_popcount_hash_does_not_link(self) -> None:
+        array = np.tile(np.linspace(255, 0, 90), (80, 1))
+        rows = [self._save("1_00.png", _gray(array)), self._save("2_00.png", _gray(array))]
+        with contextlib.redirect_stdout(io.StringIO()):
+            clusters = dhash.listing_clusters(rows, self.crops, self.cache)
+        self.assertNotEqual(clusters["1"], clusters["2"])
+
+    def test_summary_reports_missing_and_largest_cluster_and_warns(self) -> None:
+        rows = [self._save(f"{n}_00.jpg", _card(1)) for n in range(1, 4)]
+        rows.append({"listing": "9", "file": "gone.jpg"})
+        (self.crops / "bad.jpg").write_bytes(b"not an image")
+        rows.append({"listing": "10", "file": "bad.jpg"})
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            dhash.listing_clusters(rows, self.crops, self.cache)
+        self.assertIn("missing 1", out.getvalue())
+        self.assertIn("undecodable 1", out.getvalue())
+        self.assertIn("largest cluster 3", out.getvalue())
+        self.assertIn("warning", err.getvalue())
+
+    def test_oversized_image_is_skipped_without_global_limit(self) -> None:
+        self._save("1_00.jpg", _card(1))
+        limit = Image.MAX_IMAGE_PIXELS
+        with mock.patch.object(dhash, "MAX_PIXELS", 10):
+            hashes, skipped = dhash.file_hashes(["1_00.jpg"], self.crops, self.cache)
+        self.assertEqual(hashes, {})
+        self.assertEqual(skipped["oversized"], 1)
+        self.assertEqual(Image.MAX_IMAGE_PIXELS, limit)
+        self.assertNotEqual(Image.MAX_IMAGE_PIXELS, 50_000_000)
+
+    def test_corrupt_cache_entries_are_rehashed(self) -> None:
+        self._save("1_00.jpg", _card(1))
+        dhash.file_hashes(["1_00.jpg"], self.crops, self.cache)
+        stored = json.loads(self.cache.read_text(encoding="utf-8"))
+        stored["1_00.jpg"]["hash"] = "zz-not-hex"
+        self.cache.write_text(json.dumps(stored), encoding="utf-8")
+        hashes, _ = dhash.file_hashes(["1_00.jpg"], self.crops, self.cache)
+        self.assertIn("1_00.jpg", hashes)
+        fixed = json.loads(self.cache.read_text(encoding="utf-8"))["1_00.jpg"]["hash"]
+        self.assertRegex(fixed, "^[0-9a-f]{16}$")
+
+    def test_replace_failure_leaves_old_cache_and_no_temp_file(self) -> None:
+        self.cache.write_text("{}", encoding="utf-8")
+        self._save("1_00.jpg", _card(1))
+        with mock.patch.object(dhash.os, "replace", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                dhash.file_hashes(["1_00.jpg"], self.crops, self.cache)
+        self.assertEqual(self.cache.read_text(encoding="utf-8"), "{}")
+        self.assertEqual([p.name for p in self.cache.parent.iterdir() if p.is_file()], ["cache.json"])
+
+
+class NearPairTests(unittest.TestCase):
+    def test_banded_search_matches_brute_force(self) -> None:
+        rng = np.random.default_rng(3)
+        base = [int(x) for x in rng.integers(0, 2**62, 40, dtype=np.int64)]
+        values = list(base)
+        for v in base[:20]:
+            for bit in rng.choice(64, size=int(rng.integers(0, 9)), replace=False):
+                v ^= 1 << int(bit)
+            values.append(v)
+        brute = {
+            (i, j)
+            for i in range(len(values))
+            for j in range(i + 1, len(values))
+            if dhash.hamming(values[i], values[j]) <= 6
+        }
+        self.assertEqual(dhash.near_pairs(values, 6), brute)
+        self.assertTrue(brute)
 
 
 class _Stub(nn.Module):

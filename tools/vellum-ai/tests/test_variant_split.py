@@ -20,7 +20,7 @@ class SplitTests(unittest.TestCase):
         ]
 
     def test_a_listing_is_in_exactly_one_split(self) -> None:
-        train, val, holdout = split_rows(self.rows)
+        train, val, holdout = split_rows(self.rows, {})
         listings = [{row["listing"] for row in part} for part in (train, val, holdout)]
         self.assertFalse(listings[0] & listings[1])
         self.assertFalse(listings[0] & listings[2])
@@ -28,14 +28,14 @@ class SplitTests(unittest.TestCase):
         self.assertEqual(len(train) + len(val) + len(holdout), len(self.rows))
 
     def test_validation_comes_from_training_listings(self) -> None:
-        _, val, holdout = split_rows(self.rows)
+        _, val, holdout = split_rows(self.rows, {})
         self.assertTrue(val)
         self.assertTrue(all(not is_holdout(row["listing"]) for row in val))
         self.assertTrue(all(is_holdout(row["listing"]) for row in holdout))
 
     def test_split_does_not_depend_on_row_order(self) -> None:
-        forward = [{row["listing"] for row in part} for part in split_rows(self.rows)]
-        backward = [{row["listing"] for row in part} for part in split_rows(self.rows[::-1])]
+        forward = [{row["listing"] for row in part} for part in split_rows(self.rows, {})]
+        backward = [{row["listing"] for row in part} for part in split_rows(self.rows[::-1], {})]
         self.assertEqual(forward, backward)
 
 

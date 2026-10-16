@@ -56,26 +56,41 @@ def cluster_map(rows: list[dict]) -> dict[str, str]:
     return listing_clusters(rows, CROP_DIR, DHASH_CACHE)
 
 
+def listing_splits(listings: set[str], clusters: dict[str, str]) -> dict[str, str]:
+    """Split of each listing: its own hash, then lifted to its cluster's strongest.
+
+    A cluster is holdout if any member is, else validation if any member is.
+    Only listings that join a cluster move, and only toward holdout, so adding
+    a listing never pulls an existing holdout listing out of the holdout.
+    """
+    own = {}
+    for listing in listings:
+        if is_holdout(listing):
+            own[listing] = "holdout"
+        elif _is_validation(listing):
+            own[listing] = "val"
+        else:
+            own[listing] = "train"
+    rank = {"train": 0, "val": 1, "holdout": 2}
+    strongest: dict[str, str] = {}
+    for listing, split in own.items():
+        root = clusters.get(listing, listing)
+        if rank[split] > rank.get(strongest.get(root, "train"), 0) or root not in strongest:
+            strongest[root] = split
+    return {listing: strongest[clusters.get(listing, listing)] for listing in listings}
+
+
 def split_rows(
     rows: list[dict], clusters: dict[str, str] | None = None
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Train, validation, and holdout rows, split by near-duplicate cluster.
-
-    The cluster id is hashed in place of the listing id, so relistings of one
-    card with a new photo stay together.
-    """
+    """Train, validation, and holdout rows, split by near-duplicate cluster."""
     if clusters is None:
         clusters = cluster_map(rows)
-    train_rows, val_rows, holdout_rows = [], [], []
+    splits = listing_splits({row["listing"] for row in rows}, clusters)
+    parts: dict[str, list[dict]] = {"train": [], "val": [], "holdout": []}
     for row in rows:
-        unit = clusters.get(row["listing"], row["listing"])
-        if is_holdout(unit):
-            holdout_rows.append(row)
-        elif _is_validation(unit):
-            val_rows.append(row)
-        else:
-            train_rows.append(row)
-    return train_rows, val_rows, holdout_rows
+        parts[splits[row["listing"]]].append(row)
+    return parts["train"], parts["val"], parts["holdout"]
 
 
 def load_rows() -> list[dict]:
