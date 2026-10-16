@@ -406,6 +406,7 @@ async function handleScanPage(sendResponse, era) {
       photos: domResp?.photos || [],
       cards: domResp?.cards || [],
       ogImages: domResp?.page?.ogImages || [],
+      headings: domResp?.page?.headings || [],
     });
     const sealed = focus.kind === "listing" && isSealedListing({
       titles: [domResp?.page?.title, domResp?.page?.ogTitle, domResp?.page?.h1],

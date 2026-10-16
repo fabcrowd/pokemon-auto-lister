@@ -87,3 +87,16 @@ test('the card-sold-with-a-pack wording rule is shared with the page-level verdi
   assert.equal(isSealedListing({ sealedLabel: true, titles: ['Charizard ex Booster Pack Fresh Pull'] }), false);
 });
 
+
+test('an element chain lists its own id then its ancestors, nearest first, with stable ids', () => {
+  const page = { parentElement: null };
+  const section = { parentElement: page };
+  const img = { parentElement: section };
+  const other = { parentElement: section };
+  const chain = [...pure.chainOf(img)];
+  assert.equal(chain.length, 3);
+  assert.equal(chain[0], pure.idOf(img));
+  assert.equal(chain[1], pure.idOf(section));
+  assert.deepEqual([...pure.chainOf(other)].slice(1), chain.slice(1));
+  assert.notEqual(pure.idOf(img), pure.idOf(other));
+});

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   choosePageFocus,
+  findRelatedEntries,
   imageKey,
   isRelatedHeading,
   isSealedListing,
@@ -233,4 +234,95 @@ test('a listing keeps the other gallery photos as a fallback, but never related-
   assert.equal(focus.main, hero);
   assert.deepEqual(focus.fallback, [slide]);
   assert.equal(choosePageFocus({ viewport: VIEWPORT, photos: [], cards: [] }).fallback, undefined);
+});
+
+// --- related sections found from the heading down (P1c) ---
+
+function chained(e, chain, extra = {}) {
+  e.ctx = { ...e.ctx, chain, ...extra };
+  return e;
+}
+
+function ancestors(prefix, count) {
+  return Array.from({ length: count }, (_, i) => `${prefix}${i}`);
+}
+
+test('a related heading 20 levels above its carousel still marks every image in that carousel', () => {
+  const hero = chained(entry(48, 395, 275, 275, { order: 1 }), ['hero', 'gallery', 'main', 'page']);
+  const tiles = [0, 1, 2, 3].map((i) => chained(entry(32 + i * 245, 877, 227, 227, { order: 10 + i }),
+    [`t${i}`, `li${i}`, 'ul', 'zone', 'main', 'page']));
+  const headings = [{ text: 'Similar Items', chain: ['h2', ...ancestors('deep', 20), 'zone', 'main', 'page'] }];
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: [hero, ...tiles], cards: [], headings });
+  assert.equal(focus.kind, 'listing');
+  assert.equal(focus.main, hero);
+  assert.deepEqual(findRelatedEntries({ entries: [hero, ...tiles], headings, candidate: hero }), new Set(tiles));
+});
+
+test('a related heading whose container also holds the main photo marks nothing', () => {
+  const hero = chained(entry(48, 395, 475, 475, { order: 1 }), ['hero', 'main', 'page']);
+  const tiles = [0, 1, 2].map((i) => chained(entry(40 + i * 120, 900, 100, 100, { order: 10 + i }), [`t${i}`, 'main', 'page']));
+  const headings = [{ text: 'Similar items', chain: ['h2', 'main', 'page'] }];
+  assert.equal(findRelatedEntries({ entries: [hero, ...tiles], headings, candidate: hero }).size, 0);
+});
+
+test('a related heading in a section of its own does not touch other sections', () => {
+  const hero = chained(entry(48, 395, 475, 475, { order: 1 }), ['hero', 'gallery', 'page']);
+  const tile = chained(entry(40, 900, 100, 100, { order: 10 }), ['t0', 'zone', 'page']);
+  const headings = [{ text: 'People who viewed this item also viewed', chain: ['h2', 'zone', 'page'] }];
+  const related = findRelatedEntries({ entries: [hero, tile], headings, candidate: hero });
+  assert.equal(related.has(hero), false);
+  assert.equal(related.has(tile), true);
+});
+
+test('a search grid with no related heading stays a grid', () => {
+  const tiles = [];
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) {
+    tiles.push(chained(entry(300 + col * 245, 525 + row * 470, 230, 230, { order: row * 3 + col }), [`t${row}${col}`, `li${row}${col}`, 'ul', 'results', 'page']));
+  }
+  const headings = [{ text: '8,600,000+ results for pokemon', chain: ['h1', 'results', 'page'] }, { text: 'Popular Filters', chain: ['h2', 'filters', 'page'] }];
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: tiles, cards: [], headings });
+  assert.equal(focus.kind, 'grid');
+});
+
+test('a featured card above a grid stays a grid even with unrelated headings', () => {
+  const featured = chained(entry(40, 150, 420, 580, { order: 1 }), ['f', 'hero', 'page']);
+  const tiles = [0, 1, 2, 3].map((i) => chained(entry(520 + (i % 2) * 280, 150 + Math.floor(i / 2) * 330, 250, 300, { order: 5 + i }), [`t${i}`, 'grid', 'page']));
+  const headings = [{ text: 'Featured card', chain: ['h2', 'hero', 'page'] }, { text: 'All cards', chain: ['h2', 'grid', 'page'] }];
+  assert.notEqual(choosePageFocus({ viewport: VIEWPORT, photos: [featured], cards: tiles, headings }).kind, 'listing');
+});
+
+// --- single-row strips are carousels, not grid evidence ---
+
+test('a single horizontal row of comparable images in a scrolling container is a carousel', () => {
+  const hero = entry(48, 395, 275, 275, { order: 1 });
+  const strip = [0, 1, 2, 3].map((i) => entry(32 + i * 245, 877, 227, 227, { order: 10 + i, ctx: { hscroll: true } }));
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: [hero, ...strip], cards: [] });
+  assert.equal(focus.kind, 'listing');
+  assert.equal(focus.main, hero);
+});
+
+test('the same row without a scrolling container still counts against a listing', () => {
+  const hero = entry(48, 395, 275, 275, { order: 1 });
+  const row = [0, 1, 2, 3].map((i) => entry(32 + i * 245, 877, 227, 227, { order: 10 + i }));
+  assert.notEqual(choosePageFocus({ viewport: VIEWPORT, photos: [hero, ...row], cards: [] }).kind, 'listing');
+});
+
+test('two rows of comparable images are never a carousel, scrolling container or not', () => {
+  const hero = entry(48, 395, 275, 275, { order: 1 });
+  const rows = [0, 1, 2, 3, 4, 5].map((i) => entry(32 + (i % 3) * 245, 877 + Math.floor(i / 3) * 240, 227, 227, { order: 10 + i, ctx: { hscroll: true } }));
+  assert.notEqual(choosePageFocus({ viewport: VIEWPORT, photos: [hero, ...rows], cards: [] }).kind, 'listing');
+});
+
+test('a strip that overlaps the main photo is not a carousel beside it', () => {
+  const hero = entry(48, 395, 700, 700, { order: 1 });
+  const overlapping = [0, 1, 2].map((i) => entry(60 + i * 200, 420, 190, 190, { order: 10 + i, ctx: { hscroll: true } }));
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: [hero, ...overlapping], cards: [] });
+  assert.equal(focus.main, hero);
+});
+
+test('a grid needs two rows: one row of comparable cards is only unknown', () => {
+  const one = [0, 1, 2, 3].map((i) => entry(32 + i * 245, 400, 230, 320, { order: i }));
+  assert.equal(choosePageFocus({ viewport: VIEWPORT, photos: one, cards: [] }).kind, 'unknown');
+  const two = [...one, ...[0, 1, 2, 3].map((i) => entry(32 + i * 245, 760, 230, 320, { order: 10 + i }))];
+  assert.equal(choosePageFocus({ viewport: VIEWPORT, photos: two, cards: [] }).kind, 'grid');
 });

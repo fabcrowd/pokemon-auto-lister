@@ -403,6 +403,59 @@
     return found;
   }
 
+  // Stable ids for elements, so the background can ask "is this image inside that section" without
+  // the DOM: an element's chain is its own id followed by its ancestors', nearest first.
+  const _ids = new WeakMap();
+  let _nextId = 1;
+  function idOf(el) {
+    let id = _ids.get(el);
+    if (!id) {
+      id = _nextId++;
+      _ids.set(el, id);
+    }
+    return id;
+  }
+  function chainOf(el) {
+    const chain = [];
+    for (let p = el; p && chain.length < 80; p = p.parentElement) chain.push(idOf(p));
+    return chain;
+  }
+
+  // Inside a horizontally scrolling or clipped strip that is wider than what it shows: a carousel.
+  const _scrollsX = new WeakMap();
+  function scrollsHorizontally(el) {
+    let depth = 0;
+    for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement && depth < MAX_ANCESTORS; p = p.parentElement, depth++) {
+      let scrolls = _scrollsX.get(p);
+      if (scrolls === undefined) {
+        const overflow = getComputedStyle(p).overflowX;
+        scrolls = (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') && p.scrollWidth > p.clientWidth + 1;
+        _scrollsX.set(p, scrolls);
+      }
+      if (scrolls) return true;
+    }
+    return false;
+  }
+
+  const LABELLED_CONTAINERS = new Set(['SECTION', 'ASIDE', 'DIV', 'UL', 'OL', 'NAV', 'ARTICLE']);
+
+  // Short titles of sections: headings and labelled containers, with the chain of the element that carries
+  // them. Judging which are "similar items" happens in lib/page-focus.js.
+  function collectHeadings() {
+    const out = [];
+    for (const el of document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],section[aria-label],aside[aria-label],div[aria-label],ul[aria-label],ol[aria-label],nav[aria-label],article[aria-label],[role="region"][aria-label]')) {
+      if (out.length >= 300) break;
+      const label = el.getAttribute('aria-label');
+      const heading = /^H[1-6]$/.test(el.tagName) || el.getAttribute('role') === 'heading';
+      if (!heading && !(label && LABELLED_CONTAINERS.has(el.tagName))) continue;
+      if (heading && !label && el.querySelector('img,picture,video')) continue;
+      const text = tidyText(label || el.textContent);
+      if (!text || text.length > 100) continue;
+      out.push({ text, chain: chainOf(el) });
+    }
+    return out;
+  }
+
   function contextOf(node) {
     const landmarks = [];
     const headings = [];
@@ -418,7 +471,7 @@
       const heading = headingBefore(el);
       if (heading) headings.push(heading);
     }
-    return { landmarks, headings, labels, sealedLabel: hasSealedProductContext(node) };
+    return { landmarks, headings, labels, sealedLabel: hasSealedProductContext(node), chain: chainOf(node), hscroll: scrollsHorizontally(node) };
   }
 
   function metaContent(selector) {
@@ -440,6 +493,7 @@
       ogTitle: metaContent('meta[property="og:title"]').slice(0, 200),
       h1: (document.querySelector('h1')?.textContent || '').trim().slice(0, 200),
       ogImages,
+      headings: collectHeadings(),
     };
   }
 
@@ -676,6 +730,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf } };
   // dev-only:end
 }());

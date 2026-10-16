@@ -92,6 +92,69 @@ function overlapsMostly(a, b) {
   return (w * h) / Math.min(area(a), area(b)) > 0.5;
 }
 
+const STRIP_TOP_TOLERANCE = 6;        // px: images whose tops differ by less sit in one row
+const STRIP_COMPARABLE = 2.5;
+
+const sameRow = (a, b) => Math.abs(a.rect.y - b.rect.y) <= STRIP_TOP_TOLERANCE;
+
+function rowCount(entries) {
+  const tops = entries.map((entry) => entry.rect.y).sort((a, b) => a - b);
+  let rows = 0;
+  let last = -Infinity;
+  for (const top of tops) {
+    if (top - last > STRIP_TOP_TOLERANCE) rows += 1;
+    last = top;
+  }
+  return rows;
+}
+
+function disjoint(a, b) {
+  return a.rect.x + a.rect.w <= b.rect.x || b.rect.x + b.rect.w <= a.rect.x
+    || a.rect.y >= b.rect.y + b.rect.h || b.rect.y >= a.rect.y + a.rect.h;
+}
+
+/**
+ * Images that form one horizontal row of three or more comparable pictures inside a scrolling container,
+ * clear of the main photo (beside or below it): a carousel, which says nothing about the page being a grid.
+ */
+function stripMembers(entries, main) {
+  const members = new Set();
+  const scrolling = entries.filter((entry) => entry !== main && entry.ctx?.hscroll === true && disjoint(entry, main));
+  for (const anchor of scrolling) {
+    const row = scrolling.filter((entry) => sameRow(entry, anchor)
+      && area(entry) * STRIP_COMPARABLE >= area(anchor) && area(anchor) * STRIP_COMPARABLE >= area(entry));
+    // Another row of such images means a grid of tiles, not a single strip.
+    const rowsOfLookalikes = rowCount(scrolling.filter((entry) => area(entry) * STRIP_COMPARABLE >= area(anchor)
+      && area(anchor) * STRIP_COMPARABLE >= area(entry)));
+    if (row.length >= GRID_MIN_ITEMS && rowsOfLookalikes === 1) row.forEach((entry) => members.add(entry));
+  }
+  return members;
+}
+
+/**
+ * Entries inside a "similar / related / recommended" section, found from the heading down: the nearest
+ * ancestor of the heading that holds an image is the section. A section that also holds the candidate main
+ * photo is not a related section, and the search for that heading stops there.
+ *
+ * chain arrays list ids from the element itself up to the root.
+ *
+ * @param {{entries: object[], headings: {text: string, chain: string[]}[], candidate: object|null}} input
+ */
+export function findRelatedEntries({ entries, headings = [], candidate = null }) {
+  const related = new Set();
+  for (const heading of headings) {
+    if (!isRelatedHeading(heading?.text) || !Array.isArray(heading.chain)) continue;
+    for (const ancestor of heading.chain) {
+      const inside = entries.filter((entry) => entry.ctx?.chain?.includes(ancestor));
+      if (!inside.length) continue;
+      if (candidate && inside.includes(candidate)) break;
+      inside.forEach((entry) => related.add(entry));
+      break;
+    }
+  }
+  return related;
+}
+
 function passThrough(kind, photos, cards, reason) {
   return { kind, main: null, photos, cards, reason };
 }
@@ -107,7 +170,7 @@ function passThrough(kind, photos, cards, reason) {
  *
  * @param {{viewport: {w: number, h: number}, photos: object[], cards: object[], ogImages?: string[]}} page
  */
-export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = [] }) {
+export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = [], headings = [] }) {
   const all = [];
   const seen = new Set();
   for (const entry of [...photos, ...cards]) {
@@ -119,15 +182,24 @@ export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = 
   if (!all.length) return passThrough("unknown", photos, cards, "no-candidates");
 
   const viewportArea = Math.max(1, (viewport?.w || 0) * (viewport?.h || 0));
-  const own = all.filter((entry) => !relatedContext(entry.ctx));
-  const shown = own.filter((entry) => !isHidden(entry));
   const plausible = (entry) => {
     const ratio = entry.rect.h > 0 ? entry.rect.w / entry.rect.h : 0;
     return ratio >= MAIN_RATIO_MIN && ratio <= MAIN_RATIO_MAX;
   };
   const fraction = (entry) => area(entry) / viewportArea;
-  const bySize = [...shown].sort((a, b) => area(b) - area(a));
   const isOg = (entry) => entry.ctx?.ogMatch === true || ogImages.some((url) => sameImageUrl(url, entry.src));
+  const sorted = [...all].sort((a, b) => area(b) - area(a));
+  const likelyMain = sorted.find((entry) => isOg(entry) && plausible(entry) && fraction(entry) >= OG_MIN_FRACTION)
+    || sorted.find((entry) => plausible(entry) && fraction(entry) >= MAIN_MIN_FRACTION) || null;
+  const inRelatedSection = findRelatedEntries({ entries: all, headings, candidate: likelyMain });
+  const own = all.filter((entry) => !relatedContext(entry.ctx) && !inRelatedSection.has(entry));
+  const visible = own.filter((entry) => !isHidden(entry));
+  const bySizeAll = [...visible].sort((a, b) => area(b) - area(a));
+  const first = bySizeAll.find((entry) => isOg(entry) && plausible(entry) && fraction(entry) >= OG_MIN_FRACTION)
+    || bySizeAll.find((entry) => plausible(entry) && fraction(entry) >= MAIN_MIN_FRACTION) || null;
+  const strip = first ? stripMembers(visible, first) : new Set();
+  const shown = visible.filter((entry) => !strip.has(entry));
+  const bySize = [...shown].sort((a, b) => area(b) - area(a));
 
   const candidate = bySize.find((entry) => isOg(entry) && plausible(entry) && fraction(entry) >= OG_MIN_FRACTION)
     || bySize.find((entry) => plausible(entry) && fraction(entry) >= MAIN_MIN_FRACTION);
@@ -158,7 +230,7 @@ export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = 
 
   const sizes = shown.map((entry) => seenArea(entry)).filter((a) => a / viewportArea >= GRID_MIN_FRACTION).sort((a, b) => b - a);
   const alike = sizes.filter((a) => a * GRID_SIZE_SPREAD >= sizes[0]);
-  const grid = alike.length >= GRID_MIN_ITEMS;
+  const grid = alike.length >= GRID_MIN_ITEMS && rowCount(shown.filter((entry) => alike.includes(seenArea(entry)))) >= 2;
   return passThrough(grid ? "grid" : "unknown", photos, cards, grid ? "similar-sizes" : "no-main-photo");
 }
 
