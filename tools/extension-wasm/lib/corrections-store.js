@@ -4,6 +4,7 @@
 const DB_NAME = "card-scanner";
 const CORRECTIONS = "corrections";
 const SCANS = "scans";
+const PHOTOS = "testPhotos";
 const KEEP_SCANS = 2;
 
 /** @param idb an IndexedDB factory; the tests pass a small fake. */
@@ -13,13 +14,14 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
   function open() {
     if (!idb) return Promise.reject(new Error("IndexedDB is not available here"));
     opening ??= new Promise((resolve, reject) => {
-      const request = idb.open(DB_NAME, 2);
+      const request = idb.open(DB_NAME, 3);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(CORRECTIONS)) {
           db.createObjectStore(CORRECTIONS, { keyPath: "id", autoIncrement: true });
         }
         if (!db.objectStoreNames.contains(SCANS)) db.createObjectStore(SCANS, { keyPath: "scanId" });
+        if (!db.objectStoreNames.contains(PHOTOS)) db.createObjectStore(PHOTOS, { keyPath: "id" });
       };
       request.onsuccess = () => {
         const db = request.result;
@@ -74,5 +76,20 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       return saved;
     }),
     getScan: (scanId) => run("readonly", SCANS, (store) => store.get(scanId)),
+    /** Insert, or replace the photo with the same id. */
+    savePhoto: (photo) => run("readwrite", PHOTOS, (store) => store.put(photo)),
+    countPhotos: () => run("readonly", PHOTOS, (store) => store.count()),
+    photoIds: () => run("readonly", PHOTOS, (store) => store.getAllKeys()),
+    // Photos are big, so callers fetch a few at a time to stay under the message size limit.
+    getPhotos: (ids) => (ids.length === 0 ? Promise.resolve([]) : run("readonly", PHOTOS, (store) => {
+      const found = [];
+      for (const id of ids) {
+        store.get(id).onsuccess = (event) => {
+          if (event.target.result) found.push(event.target.result);
+        };
+      }
+      return { get result() { return found; } };
+    })),
+    clearPhotos: () => run("readwrite", PHOTOS, (store) => store.clear()),
   };
 }

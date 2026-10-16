@@ -33,6 +33,12 @@ data/card-catalog/ → embeddings.faiss + meta.json + phash.json
 2. Missing source or pairwise relative spread **> 15%** or low PokeGrade confidence → `needs_review`.
 3. Else surface median(available) in the Scanner panel price grid.
 
+## Sealed test set
+
+`data/sealed-test/` is the held-out measure of the scanner. Never open, list, or search files there.
+Never tune code or rules to per-photo results. Run `node scripts/sealed-score.mjs` only when the user
+asks, and report only the totals it prints.
+
 ## Session start checklist
 
 1. `git status` / check current branch

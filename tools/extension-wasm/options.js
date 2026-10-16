@@ -1,3 +1,5 @@
+import { LIMITS, describeSize } from "./lib/test-photos.js";
+
 const pptCard   = document.getElementById("ppt-card");
 const pptStatus = document.getElementById("ppt-status");
 const pptBodyNotConnected = document.getElementById("ppt-body-not-connected");
@@ -172,5 +174,76 @@ btnClearCorrections.addEventListener("click", async () => {
   showCorrectionsStatus("Cleared. 0 corrections saved.", "ok");
 });
 
+/* ─── Test photos ─── */
+
+const testToggle = document.getElementById("test-collection");
+const testCount  = document.getElementById("test-photos-count");
+const testStatus = document.getElementById("test-photos-status");
+const testLimit  = document.getElementById("test-photos-limit");
+const btnExportPhotos = document.getElementById("export-test-photos");
+const btnClearPhotos  = document.getElementById("clear-test-photos");
+const EXPORT_CHUNK = 10;
+
+function showTestStatus(text, kind = "info") {
+  testStatus.textContent = text;
+  testStatus.className = "test-result " + kind;
+  testStatus.focus();
+}
+
+async function refreshPhotoCount() {
+  const resp = await chrome.runtime.sendMessage({ action: "countTestPhotos" }).catch(() => null);
+  const known = typeof resp?.count === "number";
+  testCount.textContent = known ? `Test photos: ${resp.count} saved (about ${describeSize(resp.bytes || 0)})` : "Test photos: unavailable";
+  testLimit.hidden = !(known && resp.limitReached);
+  testLimit.textContent = `Collection has stopped: it keeps at most ${LIMITS.photos} photos or ${describeSize(LIMITS.bytes)}. Export them, then clear, to collect more.`;
+  btnExportPhotos.disabled = !known || resp.count === 0;
+  btnClearPhotos.disabled = !known || resp.count === 0;
+  if (!known) showTestStatus("Couldn't read the saved test photos. Reload this page to try again.", "err");
+}
+
+async function loadCollectionToggle() {
+  const { testSetCollection } = await chrome.storage.local.get("testSetCollection").catch(() => ({}));
+  testToggle.checked = testSetCollection === true;
+}
+
+testToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ testSetCollection: testToggle.checked }).catch(() => {});
+  showTestStatus(testToggle.checked ? "Collecting. Each page scan now keeps its photos." : "Collection is off.", "ok");
+});
+
+btnExportPhotos.addEventListener("click", async () => {
+  const listed = await chrome.runtime.sendMessage({ action: "testPhotoIds" }).catch(() => null);
+  if (!Array.isArray(listed?.ids)) { showTestStatus("Export failed. Try again.", "err"); return; }
+  // One message per chunk keeps each under the extension message size limit.
+  const parts = [`{"exportedAt":${JSON.stringify(new Date().toISOString())},"extVersion":${JSON.stringify(chrome.runtime.getManifest().version)},"photos":[`];
+  let exported = 0;
+  for (let at = 0; at < listed.ids.length; at += EXPORT_CHUNK) {
+    const chunk = await chrome.runtime.sendMessage({ action: "getTestPhotos", ids: listed.ids.slice(at, at + EXPORT_CHUNK) }).catch(() => null);
+    if (!Array.isArray(chunk?.photos)) { showTestStatus("Export failed part way. Try again.", "err"); return; }
+    for (const photo of chunk.photos) {
+      parts.push((exported ? "," : "") + JSON.stringify(photo));
+      exported += 1;
+    }
+  }
+  parts.push("]}");
+  const url = URL.createObjectURL(new Blob(parts, { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `card-scanner-test-photos-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showTestStatus(`Exported ${exported} test photos.`, "ok");
+});
+
+btnClearPhotos.addEventListener("click", async () => {
+  if (!window.confirm("Delete every saved test photo? Export first if you want to keep them.")) return;
+  const resp = await chrome.runtime.sendMessage({ action: "clearTestPhotos" }).catch(() => null);
+  if (!resp?.ok) { showTestStatus("Couldn't clear the test photos. Try again.", "err"); return; }
+  await refreshPhotoCount();
+  showTestStatus("Cleared. 0 test photos saved.", "ok");
+});
+
 refreshCorrectionCount();
+refreshPhotoCount();
+loadCollectionToggle();
 loadKey();

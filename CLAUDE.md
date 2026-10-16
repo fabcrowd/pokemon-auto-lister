@@ -139,5 +139,13 @@ Two extensions: `tools/chrome-extension/` (tracked, dev) and `dist/extension-was
 - Detector classes: `full_card` / `corner_closeup` / `card_back` — a corner close-up must
   never be used as a listing front.
 
+### Sealed test set
+- `data/sealed-test/` holds marketplace photos and labels that nothing may be tuned against.
+  Never open, list, or search files there (`.claude/settings.json` and `.cursorignore` block it).
+  Never tune code to per-photo results. Run `node scripts/sealed-score.mjs` only when the user asks;
+  it prints totals, and those are the only numbers to report. It scores `dist/extension-wasm-sealed`
+  (`scripts/build-wasm-extension.ps1 -Sealed`), the shipped code plus a source-URL check that also accepts
+  `http://127.0.0.1`; the shipped build never does.
+
 ### Native deps
 - `sharp` ships a native binding; reinstall (`npm ci`) if `node_modules` crosses OS/arch.

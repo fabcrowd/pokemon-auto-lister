@@ -40,12 +40,13 @@ export default [
     },
   },
   {
-    files: ['tools/extension-wasm/**/*.js', 'tests/e2e/**/*.js', 'tests/e2e/**/*.mjs', 'scripts/harvest-hibid-photos.mjs'],
+    files: ['tools/extension-wasm/**/*.js', 'tests/e2e/**/*.js', 'tests/e2e/**/*.mjs', 'scripts/harvest-hibid-photos.mjs', 'scripts/sealed-score.mjs', 'tools/labeler/**/*.js'],
     languageOptions: {
       globals: {
         caches: 'readonly',
         DecompressionStream: 'readonly',
         Option: 'readonly',
+        Image: 'readonly',
         ort: 'readonly',
         atob: 'readonly',
         btoa: 'readonly',

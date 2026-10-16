@@ -169,6 +169,24 @@
     button.btn:hover { opacity: 0.9; }
     button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    label.toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      color: #c5cadc;
+      cursor: pointer;
+    }
+    input[type="checkbox"] { width: 18px; height: 18px; accent-color: #6366f1; cursor: pointer; }
+    button:focus-visible, input:focus-visible, a:focus-visible, .test-result:focus-visible {
+      outline: 2px solid #a5b4fc;
+      outline-offset: 2px;
+    }
+
     a.link {
       color: #6366f1;
       text-decoration: none;
@@ -304,6 +322,27 @@
     </div>
   </div>
 
-  <script src="options.js"></script>
+  <div class="section-title">Test photos</div>
+  <div class="source-card" id="test-photos-card">
+    <div class="source-head">
+      <div class="source-name" id="test-photos-count">Test photos: … saved</div>
+    </div>
+    <div class="source-desc">
+      For measuring the scanner on pictures nobody tuned it against. While this is on, each page scan also
+      keeps the photo it looked at and where it drew boxes. It keeps no card names and no prices.
+      They stay in this browser until you export them.
+    </div>
+    <div class="source-body">
+      <label class="toggle" for="test-collection"><input type="checkbox" id="test-collection"> Test-set collection</label>
+      <div class="btn-row">
+        <button class="btn secondary" id="export-test-photos" type="button">Export</button>
+        <button class="btn danger" id="clear-test-photos" type="button">Clear</button>
+      </div>
+      <div class="test-result err" id="test-photos-limit" role="status" hidden></div>
+      <div class="test-result info" id="test-photos-status" role="status" tabindex="-1"></div>
+    </div>
+  </div>
+
+  <script type="module" src="options.js"></script>
 </body>
 </html>

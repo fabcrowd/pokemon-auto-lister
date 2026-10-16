@@ -22,6 +22,7 @@ import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNa
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
+import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
@@ -278,6 +279,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "countCorrections":
     case "exportCorrections":
     case "clearCorrections":
+    case "countTestPhotos":
+    case "testPhotoIds":
+    case "getTestPhotos":
+    case "clearTestPhotos":
       return handleOwnPageMessage(msg, sender, sendResponse);
 
     case "clearPageOverlay":
@@ -345,6 +350,7 @@ function readBitmap(bitmap) {
 async function handleScanPage(sendResponse, era) {
   console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId, "era =", era?.id || "any");
   if (!(await _ensureReady(sendResponse))) return;
+  const collecting = await testSetCollecting();
 
   // Resolve a scannable target tab — fall back to the most-recent non-popup active tab.
   let targetTab = null;
@@ -454,6 +460,7 @@ async function handleScanPage(sendResponse, era) {
         const imageW = photoBitmap.width;
         const imageH = photoBitmap.height;
         const boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
+        if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
         console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
                     imageW + "x" + imageH, fromSource ? "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
                     "boxes;", boxes.length, "passed card-size validation",
@@ -568,21 +575,55 @@ async function handleScanPage(sendResponse, era) {
 
 // ─── corrections ─────────────────────────────────────────────────────────────
 
+async function jpegDataUrl(source, width, height, quality) {
+  const small = new OffscreenCanvas(width, height);
+  small.getContext("2d").drawImage(source, 0, 0, width, height);
+  const blob = await small.convertToBlob({ type: "image/jpeg", quality });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let at = 0; at < bytes.length; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return "data:image/jpeg;base64," + btoa(binary);
+}
+
 // The same 375x525 size the stamp and edition checks read at.
 async function encodeCrop(cardCanvas) {
   try {
-    const small = new OffscreenCanvas(STAMP_CARD_W, STAMP_CARD_H);
-    small.getContext("2d").drawImage(cardCanvas, 0, 0, STAMP_CARD_W, STAMP_CARD_H);
-    const blob = await small.convertToBlob({ type: "image/jpeg", quality: 0.85 });
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = "";
-    for (let at = 0; at < bytes.length; at += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
-    }
-    return "data:image/jpeg;base64," + btoa(binary);
+    return await jpegDataUrl(cardCanvas, STAMP_CARD_W, STAMP_CARD_H, 0.85);
   } catch (err) {
     console.error("[BG] crop encode failed:", err?.message || err);
     return null;
+  }
+}
+
+// ─── test-set collection ─────────────────────────────────────────────────────
+
+async function testSetCollecting() {
+  try {
+    return (await chrome.storage.local.get("testSetCollection")).testSetCollection === true;
+  } catch {
+    return false;
+  }
+}
+
+// Saves the picture the detector ran on and its boxes; never what the scanner made of them.
+// Identical bytes get the same id and are kept once; near copies are dropped when the set is imported.
+// Past the cap nothing more is kept; the options page says so.
+async function collectTestPhoto(bitmap, detections, pageUrl) {
+  try {
+    if (limitReached(statsFromIds(await _corrections.photoIds()))) return;
+    const boxes = detections
+      .map(({ box }) => box)
+      .filter((box) => box[2] - box[0] >= 40 && box[3] - box[1] >= 60);
+    const fit = fitWithin(bitmap.width, bitmap.height);
+    const photo = await jpegDataUrl(bitmap, fit.width, fit.height, 0.9);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(photo));
+    const hash = [...new Uint8Array(digest)].slice(0, 16).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const id = idWithSize(hash, photo.length);
+    await _corrections.savePhoto(photoRecord({ id, ts: Date.now(), pageUrl, photo, boxes, scale: fit.scale }));
+  } catch (err) {
+    console.error("[BG] saving test photo failed:", err?.message || err);
   }
 }
 
@@ -614,6 +655,19 @@ const _ownPageActions = {
   exportCorrections: async () => ({ corrections: await _corrections.all() }),
   clearCorrections: async () => {
     await _corrections.clear();
+    return { ok: true };
+  },
+  countTestPhotos: async () => {
+    const stats = statsFromIds(await _corrections.photoIds());
+    return { ...stats, limitReached: limitReached(stats) };
+  },
+  testPhotoIds: async () => ({ ids: await _corrections.photoIds() }),
+  getTestPhotos: async (msg) => {
+    const ids = Array.isArray(msg.ids) ? msg.ids.filter((id) => typeof id === "string").slice(0, 20) : [];
+    return { photos: await _corrections.getPhotos(ids) };
+  },
+  clearTestPhotos: async () => {
+    await _corrections.clearPhotos();
     return { ok: true };
   },
 };

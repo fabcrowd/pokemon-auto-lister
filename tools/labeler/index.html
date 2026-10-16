@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sealed set labeler</title>
+  <link rel="stylesheet" href="/labeler.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Label the cards</h1>
+    <div class="progress">
+      <progress id="progress" max="1" value="0" aria-labelledby="progress-text"></progress>
+      <span id="progress-text">Loading</span>
+    </div>
+  </header>
+
+  <main id="main" hidden>
+    <section class="left" aria-labelledby="crop-title">
+      <div id="box-view">
+        <h2 id="crop-title">This box</h2>
+        <div class="mat">
+          <canvas id="crop" role="img" aria-label="The box to label"></canvas>
+        </div>
+        <div class="whole">
+          <div class="whole-frame">
+            <img id="whole" alt="The whole photo, with this box outlined">
+            <div class="outline" id="outline"></div>
+          </div>
+          <p class="note" id="where"></p>
+        </div>
+        <div class="actions" id="box-actions">
+          <button type="button" class="btn quiet" id="not-card">Not a card</button>
+          <button type="button" class="btn quiet" id="bad-box">Bad box (not one whole card)</button>
+          <button type="button" class="btn quiet" id="unknown">Can't tell which card</button>
+        </div>
+        <div class="actions" id="drawn-actions" hidden>
+          <button type="button" class="btn quiet" id="drawn-unknown">Can't tell which card</button>
+          <button type="button" class="btn quiet" id="drawn-cancel">Cancel this box</button>
+        </div>
+      </div>
+
+      <div id="review-view" hidden>
+        <h2 id="review-title">Any cards the detector missed?</h2>
+        <p class="note" id="review-help">Drag on the photo to draw a box around each card that has no outline. Gray outlines are boxes you already labeled.</p>
+        <div class="whole-frame draw" id="review-frame" tabindex="-1">
+          <img id="review-photo" alt="The whole photo. Drag on it to draw a box around a card the detector missed." draggable="false">
+          <div id="review-boxes"></div>
+          <div class="outline preview" id="preview" hidden></div>
+        </div>
+        <ul class="drawn-list" id="drawn-list" aria-label="Boxes you drew on this photo"></ul>
+        <div class="actions">
+          <button type="button" class="btn quiet" id="missed">+ a card I can't draw a box around</button>
+          <span class="count" id="missed-count" aria-live="polite"></span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn primary" id="done-photo">Finish this photo</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn quiet" id="back">Back to the last box</button>
+      </div>
+    </section>
+
+    <section class="right" aria-labelledby="find-title" id="find-pane">
+      <h2 id="find-title">Which card is it?</h2>
+      <label for="q">Search by name or number</label>
+      <input id="q" type="search" autocomplete="off" placeholder="charizard 4/102">
+      <div class="sr-only" id="found" role="status"></div>
+      <div class="results" id="results"></div>
+
+      <div id="variant-pane" hidden>
+        <div class="chosen" id="chosen"></div>
+        <fieldset>
+          <legend>Edition</legend>
+          <div class="choices" id="edition"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Finish</legend>
+          <div class="choices" id="finish"></div>
+        </fieldset>
+        <div class="actions">
+          <button type="button" class="btn primary" id="save" disabled>Save and next</button>
+          <button type="button" class="btn quiet" id="change">Pick a different card</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <p id="empty" class="finished" hidden>Every photo is labeled. Close this and run the scorer when you are ready.</p>
+  <p id="message" class="message" role="status" aria-live="polite"></p>
+  <script type="module" src="/labeler.js"></script>
+</body>
+</html>

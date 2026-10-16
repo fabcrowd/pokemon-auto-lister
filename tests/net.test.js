@@ -28,3 +28,9 @@ test('publicHttpsUrl rejects private, credential, and non-https targets', () => 
   assert.equal(publicHttpsUrl('/secret', 'https://127.0.0.1/card'), null);
   assert.equal(publicHttpsUrl('/a.jpg', 'https://cdn.example/card').href, 'https://cdn.example/a.jpg');
 });
+
+test('the shipped URL check never accepts a local http source', () => {
+  for (const url of ['http://127.0.0.1:3100/img/0.jpg', 'http://127.0.0.1/a.jpg', 'https://127.0.0.1/a.jpg', 'http://localhost:8080/a.jpg']) {
+    assert.equal(publicHttpsUrl(url), null, url);
+  }
+});

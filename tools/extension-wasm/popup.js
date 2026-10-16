@@ -425,7 +425,8 @@ function renderCardRow(card, idx) {
   const lone       = (card.setChoices?.length || 0) <= 1;
   const pricingRow = lone && card.pricing ? `<div class="no-price">Getting price…</div>`
     : lone && card.priceError ? `<div class="spread-warn">${escHtml(card.priceError)}</div>` : "";
-  const setRow     = renderSetRow(card, idx);
+  // The candidates already include the set choices; a second menu would ask the same question twice.
+  const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const condRow    = setKnown ? renderConditionGrid(card, printing) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";

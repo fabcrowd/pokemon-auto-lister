@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./data/sealed-test/**)",
+      "Grep(./data/sealed-test/**)",
+      "Glob(./data/sealed-test/**)",
+      "Edit(./data/sealed-test/**)",
+      "Bash(*sealed-test*)",
+      "Bash(*data/sealed-test*)",
+      "Bash(*data\\sealed-test*)",
+      "PowerShell(*sealed-test*)",
+      "PowerShell(*data/sealed-test*)",
+      "PowerShell(*data\\sealed-test*)"
+    ]
+  }
+}

@@ -36,6 +36,7 @@ function fakeIndexedDB({ failOpen = false, invalidStateOnce = false } = {}) {
       get: (key) => request(() => entry.rows.get(key)),
       delete: (key) => request(() => { entry.rows.delete(key); }),
       getAll: () => request(() => [...entry.rows.values()].map((r) => ({ ...r }))),
+      getAllKeys: () => request(() => [...entry.rows.keys()]),
       count: () => request(() => entry.rows.size),
       clear: () => request(() => { entry.rows.clear(); }),
     };
@@ -156,4 +157,24 @@ test('an InvalidStateError from a dying connection is retried once on a fresh on
 test('no IndexedDB at all is a clear error', async () => {
   const store = createCorrectionsStore(null);
   await assert.rejects(store.count(), /IndexedDB/);
+});
+
+test('test photos live in their own store, next to corrections and scans', async () => {
+  const idb = fakeIndexedDB();
+  const store = createCorrectionsStore(idb);
+  assert.equal(await store.countPhotos(), 0);
+  await store.savePhoto({ id: 'p1', ts: 1, photo: 'data:image/jpeg;base64,AA', boxes: [] });
+  await store.savePhoto({ id: 'p2', ts: 2, photo: 'data:image/jpeg;base64,BB', boxes: [[1, 2, 3, 4]] });
+  await store.savePhoto({ id: 'p1', ts: 3, photo: 'data:image/jpeg;base64,AA', boxes: [] });
+  assert.equal(await store.countPhotos(), 2);
+  assert.deepEqual((await store.photoIds()).sort(), ['p1', 'p2']);
+  const some = await store.getPhotos(['p2']);
+  assert.deepEqual(some.map((p) => p.id), ['p2']);
+  assert.deepEqual(some[0].boxes, [[1, 2, 3, 4]]);
+  assert.deepEqual(await store.getPhotos([]), []);
+  assert.equal(await store.count(), 0);
+  assert.equal(idb.opened[0].version, 3);
+  for (const name of ['corrections', 'scans', 'testPhotos']) assert.equal(idb.stores.has(name), true, name);
+  await store.clearPhotos();
+  assert.equal(await store.countPhotos(), 0);
 });
