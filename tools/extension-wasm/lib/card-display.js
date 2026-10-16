@@ -120,6 +120,43 @@ export function setRangeNote(range) {
   return range.low === range.high ? `${sets} · ${formatUsd(range.high)}` : `${sets} · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
 }
 
+/** "Pikachu ex · Surging Sparks #57 · $30.00": another version of the card, with its own price when it has one. */
+export function versionLabel(entry) {
+  const where = [entry?.set || entry?.setCode, entry?.number ? '#' + entry.number : ''].filter(Boolean).join(' ');
+  const range = setRangeOf([entry]);
+  const price = range ? (range.low === range.high ? formatUsd(range.high) : `${formatUsd(range.low)}–${formatUsd(range.high)}`) : '';
+  return [entry?.name, where, price].filter(Boolean).join(' · ');
+}
+
+const PRICE_FIELDS = ['market_price', 'price_variant', 'price_grid'];
+
+/**
+ * The row re-read as another version it offered, with that version's price. The card it was before becomes one
+ * of the choices when it was a single printing, so the user can go back. Confidence is untouched. Returns the same
+ * object when the id is not on offer.
+ */
+export function swapVersion(card, id) {
+  const choices = card?.versionChoices || [];
+  const entry = choices.find((c) => c?.id === id);
+  if (!entry) return card;
+  const { market_price, price_variant, price_grid, ...identity } = entry;
+  const back = card.identity?.id
+    ? [{ ...card.identity, market_price: card.market_price ?? null, price_variant: card.price_variant ?? null, price_grid: card.price_grid ?? null }]
+    : [];
+  const { setRange, ...rest } = card;
+  return {
+    ...rest,
+    identity,
+    market_price: market_price ?? null,
+    price_variant: price_variant ?? null,
+    price_grid: price_grid ?? null,
+    setChoices: card.setChoices ? [] : card.setChoices,
+    versionChoices: [...back, ...choices.filter((c) => c !== entry)],
+    pricing: false,
+    priceError: null,
+  };
+}
+
 const hasSetRange = (card) => card?.setRange?.high > 0;
 
 // More than one possible set means the user has to pick before we quote.

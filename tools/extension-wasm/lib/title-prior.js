@@ -6,6 +6,7 @@
 
 import { isUnsure } from "./card-display.js";
 import { choiceName } from "./set-choice.js";
+import { swapVersion } from "./card-display.js";
 import { UNCONFIRMED_SET_CONFIDENCE_CAP } from "./fusion.js";
 
 const SITES = "ebay|mercari|hibid|tcgplayer|pricecharting|pokellector|etsy|amazon(?:\\.com)?|whatnot|facebook marketplace|shop ?goodwill(?:\\.com)?";
@@ -115,6 +116,17 @@ export function nameFromTitle(parsed, names) {
   return [...names].find((name) => nameWords(name).join(" ") === key) ?? null;
 }
 
+/** The offered version whose name is the only card name the title mentions, else null. The shown card is a candidate too. */
+function versionNamedByTitle(card, parsed, knownNames) {
+  const offered = card.versionChoices;
+  if (!offered?.length || !card.identity?.name || !parsed?.tokens?.length || parsed.lot) return null;
+  const maximal = namesInTitle(parsed.tokens, [card.identity.name, ...offered.map((c) => c?.name), ...knownNames]);
+  if (maximal.length !== 1) return null;
+  const want = maximal[0].join(" ");
+  if (nameWords(card.identity.name).join(" ") === want) return null;
+  return offered.find((c) => nameWords(c?.name).join(" ") === want) ?? null;
+}
+
 /**
  * The candidates with the one the title names first; same objects, nothing added or removed.
  * Unchanged when the title is a lot, names more than one card, or names none of them.
@@ -175,6 +187,15 @@ export function applyTitlePrior(cards, { kind, page, knownNames = [], log = () =
       if (setChoices === card.setChoices && candidates === card.candidates) continue;
       next = { ...card, ...(setChoices !== card.setChoices ? { setChoices } : {}), ...(candidates !== card.candidates ? { candidates } : {}) };
       log(`title prior: moved ${(candidates !== card.candidates ? candidates : setChoices)[0].name} to front`);
+      break;
+    }
+    // Pikachu ex or Pikachu V: a title that names only the other version decides, with that card's price.
+    // Confidence stays where it was, so the row is not made surer by a listing's say-so.
+    for (const parsed of parsedTitles) {
+      const version = versionNamedByTitle(next, parsed, knownNames);
+      if (!version) continue;
+      next = swapVersion(next, version.id);
+      log(`title prior: showing ${version.name}`);
       break;
     }
     const heldBack = card.setUnconfirmed === true && card.identity?.id && card.confidenceBeforeSetCap > card.confidence

@@ -15,6 +15,23 @@ export function choiceName(name) {
   return String(name || "").replace(/\s*[δ★☆]$/u, "").trim().toLowerCase();
 }
 
+// Mechanic words that go on a card of the same Pokémon without redrawing the picture. Regional forms
+// ("Alolan Raichu") and owner cards ("Team Rocket's Zapdos") are new artwork, so they keep their prefix.
+const SUFFIX = /(?:\s+|-)(?:δ\s+delta\s+species|v-union|vstar|vmax|lv\.x|break|prime|legend|gx|ex|v|δ|★|☆)$/iu;
+const PREFIX = /^(?:dark|light|shining|radiant)\s+/i;
+
+/** "Pikachu ex", "Pikachu V" and "Dark Pikachu" are all "Pikachu". Never returns an empty name for a non-empty one. */
+export function baseName(name) {
+  let base = String(name ?? "").trim();
+  for (let i = 0; i < 3; i++) {
+    const next = base.replace(SUFFIX, "").trim();
+    if (!next || next === base) break;
+    base = next;
+  }
+  const bare = base.replace(PREFIX, "").trim();
+  return bare || base;
+}
+
 function looseName(text) {
   // "Lt.Surge" and "Lt. Surge" are the same name. Other spaces still separate words.
   return String(text || "").toLowerCase().replace(/\.\s*/g, ".");
@@ -221,4 +238,33 @@ export function setChoices(identity, hits, meta) {
     if (choices.length > MAX_CHOICES) choices.pop();
   }
   return choices;
+}
+
+// Another card of the same Pokémon (Pikachu ex beside Pikachu V) is a closer call than another printing of
+// one card, because the art is only similar. Measured 2026-10-16 on 181 labelled HiBid crops: a different-name
+// same-base hit within 0.03 of the best turned up on 9% of reads, and the top name was wrong on 2 of the 181,
+// both inside that window. At 0.05 it was 17% of reads with no extra catch, so the window is tighter than NEAR.
+const VERSION_NEAR = 0.03;
+const MAX_VERSIONS = 3;
+
+/** Cards with the same base name as the accepted one but another full name, close behind its best same-base hit. */
+export function versionChoices(identity, hits, meta) {
+  const base = baseName(choiceName(identity?.name));
+  const own = choiceName(identity?.name);
+  if (!base) return [];
+  const sameBase = (hits || [])
+    .map((h) => ({ card: meta[h.index], score: h.score }))
+    .filter(({ card }) => card && baseName(choiceName(card.name)) === base);
+  const best = sameBase.length ? sameBase[0].score : 0;
+  const seen = new Set();
+  const out = [];
+  for (const { card, score } of sameBase) {
+    if (best - score > VERSION_NEAR) break;
+    const name = choiceName(card.name);
+    if (name === own || seen.has(name)) continue;
+    seen.add(name);
+    out.push(card);
+    if (out.length === MAX_VERSIONS) break;
+  }
+  return out;
 }

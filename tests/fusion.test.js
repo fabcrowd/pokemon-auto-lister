@@ -167,3 +167,13 @@ test('a printing picked only by how the picture looks is capped when other sets 
   delete read.setUnconfirmed;
   assert.equal(capUnconfirmedSet(read), read, 'number, symbol and rules reads never carry the flag');
 });
+
+test('another version within reach keeps the name and the price but is never shown as high', () => {
+  const read = { identity: { id: 'swsh4-43', name: 'Pikachu V' }, confidence: 0.9, abstain: false, versionChoices: [{ id: 'sv8-57', name: 'Pikachu ex' }] };
+  const out = capUnconfirmedSet(read);
+  assert.equal(out.confidence, UNCONFIRMED_SET_CONFIDENCE_CAP);
+  assert.equal(confTier(out.confidence), 'medium');
+  assert.equal(out.identity.id, 'swsh4-43');
+  const none = { ...read, versionChoices: [] };
+  assert.equal(capUnconfirmedSet(none), none);
+});

@@ -6,6 +6,8 @@ import {
   detectedVariant,
   editionNote,
   isPrintingConfirmed,
+  swapVersion,
+  versionLabel,
   lotTotal,
   printingNote,
   quotedPrice,
@@ -282,4 +284,52 @@ test('several possible sets and no price at all still ask, and low confidence st
   assert.equal(isUnsure(setNamed()), true);
   assert.equal(classifyCard(setNamed()), 'pick');
   assert.equal(isUnsure(setNamed({ setRange: { low: 5, high: 40, count: 2 }, confidence: 0.3 })), true);
+});
+
+const pikaV = { id: 'swsh4-43', name: 'Pikachu V', set: 'Vivid Voltage', setCode: 'swsh4', number: '43' };
+const pikaEx = { id: 'sv8-57', name: 'Pikachu ex', set: 'Surging Sparks', setCode: 'sv8', number: '57' };
+const pikaVmax = { id: 'swsh4-44', name: 'Pikachu VMAX', set: 'Vivid Voltage', setCode: 'swsh4', number: '44' };
+const versionRead = (extra = {}) => ({
+  identity: pikaV, market_price: 2.1, price_variant: 'holofoil', price_grid: grid(2.1), confidence: 0.79, abstain: false,
+  versionChoices: [{ ...pikaEx, market_price: 30, price_variant: 'holofoil', price_grid: grid(30) }, { ...pikaVmax, market_price: null, price_grid: null }],
+  ...extra,
+});
+
+test('another-version choices do not make a read unsure, and its own price stays quotable', () => {
+  const read = versionRead();
+  assert.equal(isUnsure(read), false);
+  assert.equal(isIdentified(read), true);
+  assert.equal(classifyCard(read), 'identified');
+  assert.equal(isSetConfirmed(read), true);
+  assert.equal(quotedPrice(read, null).price, 2.1);
+});
+
+test('a version is listed with its set, number and price; no price is left out, not made up', () => {
+  assert.equal(versionLabel(versionRead().versionChoices[0]), 'Pikachu ex · Surging Sparks #57 · $30.00');
+  assert.equal(versionLabel(versionRead().versionChoices[1]), 'Pikachu VMAX · Vivid Voltage #44');
+});
+
+test('swapping to another version brings its price and keeps the old top as a choice', () => {
+  const read = versionRead();
+  const out = swapVersion(read, 'sv8-57');
+  assert.equal(out.identity.id, 'sv8-57');
+  assert.equal(out.identity.market_price, undefined, 'prices are fields of the card, not of its identity');
+  assert.equal(out.market_price, 30);
+  assert.deepEqual(out.versionChoices.map((c) => c.id), ['swsh4-43', 'swsh4-44']);
+  assert.equal(out.versionChoices[0].market_price, 2.1);
+  assert.equal(out.confidence, 0.79);
+  assert.equal(read.identity.id, 'swsh4-43', 'the input is not mutated');
+});
+
+test('swapping on a row whose set was open settles it on the chosen card', () => {
+  const open = versionRead({ identity: { name: 'Pikachu V' }, setChoices: [pikaV, { ...pikaV, id: 'cel-5' }], setRange: { low: 1, high: 2, count: 2 }, market_price: null, price_grid: null });
+  const out = swapVersion(open, 'sv8-57');
+  assert.deepEqual(out.setChoices, []);
+  assert.equal(out.setRange, undefined);
+  assert.deepEqual(out.versionChoices.map((c) => c.id), ['swsh4-44']);
+});
+
+test('swapping to an id that is not offered changes nothing', () => {
+  const read = versionRead();
+  assert.equal(swapVersion(read, 'nope'), read);
 });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, onlyPromoChoice, setChoices } from '../tools/extension-wasm/lib/set-choice.js';
+import { cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
 
 const meta = [
   { id: 'ex8-93', name: 'Boost Energy', set: 'Deoxys', setCode: 'ex8', number: '93' },
@@ -216,4 +216,62 @@ test('no more than four choices', () => {
   }));
   const hits = many.map((_, i) => hit(i, 0.9 - i * 0.001));
   assert.equal(setChoices(many[0], hits, many).length, 4);
+});
+
+test('baseName strips mechanic suffixes and prefixes that share art', () => {
+  const cases = {
+    'Pikachu ex': 'Pikachu', 'Mew EX': 'Mew', 'Charizard-GX': 'Charizard', 'Pikachu V': 'Pikachu', 'Pikachu VMAX': 'Pikachu',
+    'Drapion VSTAR': 'Drapion', 'Pikachu V-UNION': 'Pikachu', 'Rayquaza BREAK': 'Rayquaza', 'Garchomp LV.X': 'Garchomp',
+    'Mewtwo Prime': 'Mewtwo', 'Entei LEGEND': 'Entei', 'Vibrava δ': 'Vibrava', 'Raichu δ Delta Species': 'Raichu',
+    'Dark Jolteon': 'Jolteon', 'Light Dragonite': 'Dragonite', 'Shining Gyarados': 'Gyarados', 'Radiant Greninja': 'Greninja',
+    'Jolteon': 'Jolteon', 'Charizard ★': 'Charizard', 'Pikachu & Zekrom GX': 'Pikachu & Zekrom',
+  };
+  for (const [name, base] of Object.entries(cases)) assert.equal(baseName(name), base, name);
+});
+
+test('baseName keeps different-art forms and names that only contain a suffix as letters', () => {
+  // Regional forms and owner cards are new artwork, so they are not look-alikes of the plain card.
+  for (const name of ['Alolan Raichu', 'Galarian Zigzagoon', 'Hisuian Zorua', 'Paldean Wooper', "Team Rocket's Zapdos", "Lt. Surge's Raichu",
+    'Vaporeon', 'Venusaur', 'Darkrai', 'Lightning Energy', 'Exeggutor', 'Primeape', 'V', 'Dark', 'Shining']) {
+    assert.equal(baseName(name), name, name);
+  }
+  assert.equal(baseName(''), '');
+  assert.equal(baseName(null), '');
+});
+
+const lookalikes = [
+  { id: 'a-1', name: 'Pikachu V', set: 'Vivid Voltage', setCode: 'swsh4', number: '43' },
+  { id: 'a-2', name: 'Pikachu ex', set: 'Surging Sparks', setCode: 'sv8', number: '57' },
+  { id: 'a-3', name: 'Pikachu', set: 'Base Set', setCode: 'base1', number: '58' },
+  { id: 'a-4', name: 'Raichu', set: 'Base Set', setCode: 'base1', number: '14' },
+  { id: 'a-5', name: 'Pikachu V', set: 'Celebrations', setCode: 'cel25', number: '5' },
+  { id: 'a-6', name: 'Alolan Raichu', set: 'Sun & Moon', setCode: 'sm1', number: '1' },
+  { id: 'a-7', name: 'Raichu', set: 'Jungle', setCode: 'base2', number: '14' },
+  { id: 'a-8', name: 'Pikachu VMAX', set: 'Vivid Voltage', setCode: 'swsh4', number: '44' },
+  { id: 'a-9', name: 'Pikachu VSTAR', set: 'Crown Zenith', setCode: 'swsh12pt5', number: '1' },
+];
+
+test('set choices stay within one card name: a same-art ex or V is not folded into them', () => {
+  const hits = [hit(0, 0.86), hit(1, 0.85), hit(4, 0.84)];
+  assert.deepEqual(setChoices(lookalikes[0], hits, lookalikes).map((c) => c.id), ['a-1', 'a-5']);
+});
+
+test('a same-base card with another name within 0.03 of the best is offered as another version', () => {
+  const hits = [hit(0, 0.86), hit(3, 0.855), hit(1, 0.84), hit(2, 0.831)];
+  assert.deepEqual(versionChoices(lookalikes[0], hits, lookalikes).map((c) => c.id), ['a-2', 'a-3']);
+});
+
+test('a version 0.04 behind is not offered', () => {
+  assert.deepEqual(versionChoices(lookalikes[0], [hit(0, 0.86), hit(1, 0.82)], lookalikes), []);
+});
+
+test('versions leave out the card itself, other printings of its name, regional forms and other Pokémon', () => {
+  const hits = [hit(3, 0.86), hit(6, 0.859), hit(5, 0.858), hit(0, 0.857)];
+  assert.deepEqual(versionChoices(lookalikes[3], hits, lookalikes), []);
+});
+
+test('each version name is offered once and at most three versions', () => {
+  const hits = [hit(0, 0.86), hit(1, 0.859), hit(4, 0.858), hit(7, 0.857), hit(8, 0.856), hit(2, 0.855)];
+  const ids = versionChoices(lookalikes[0], hits, lookalikes).map((c) => c.id);
+  assert.deepEqual(ids, ['a-2', 'a-8', 'a-9']);
 });

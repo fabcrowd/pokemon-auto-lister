@@ -19,7 +19,7 @@ import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
 import { capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
-import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
+import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
 import { setRangeOf } from "./lib/card-display.js";
@@ -1375,11 +1375,29 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
       setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
       ocrText,
       ...unpriced,
+      ...(await versionsAlongside(identity, hits, abstain)),
     };
   }
   // Other sets print this name: the printing rests on the picture alone until a number, symbol, stamp or title confirms it.
   const setUnconfirmed = physicalHits(printingsOf(identity.name).map((index) => ({ index })), _meta).length > 1;
-  return { identity, confidence, abstain, ocrText, ...(setUnconfirmed ? { setUnconfirmed } : {}), ...(await priceIdentity(identity)) };
+  return { identity, confidence, abstain, ocrText, ...(setUnconfirmed ? { setUnconfirmed } : {}), ...(await priceIdentity(identity)), ...(await versionsAlongside(identity, hits, abstain)) };
+}
+
+// Pikachu ex and Pikachu V can score alike on art. The row keeps the best hit's own price; the lookalikes
+// ride along with theirs so the popup can offer "Other version?" without another round trip.
+async function versionsAlongside(identity, hits, abstain) {
+  if (abstain || !identity?.name) return {};
+  const entries = [];
+  for (const card of versionChoices(identity, hits, _meta)) {
+    let priced = { market_price: null, price_variant: null, price_grid: null };
+    try {
+      priced = await priceIdentity(card);
+    } catch (err) {
+      console.log("[BG] no price for", card.id, err?.message || err);
+    }
+    entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced });
+  }
+  return entries.length ? { versionChoices: entries } : {};
 }
 
 let _catalogNames = null;

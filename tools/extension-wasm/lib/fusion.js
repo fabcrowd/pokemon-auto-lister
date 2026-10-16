@@ -178,11 +178,12 @@ export const UNCONFIRMED_SET_CONFIDENCE_CAP = BELOW_HIGH_CONFIDENCE;
  * name). The name and the choices stay; only the confidence drops below "high", and the old value is kept
  * as confidenceBeforeSetCap so a listing title that names the number and set can restore it. A read whose
  * set was settled by the printed number, the set symbol, an edition stamp or the rules text has no choices
- * and no flag, and is returned as is.
+ * and no flag, and is returned as is. Another version of the same Pokémon within reach (versionChoices) holds
+ * a read below "high" in the same way, though the row keeps its own price.
  */
 export function capUnconfirmedSet(result) {
   if (!result || result.abstain) return result;
-  const open = (result.setChoices?.length || 0) > 1 || result.setUnconfirmed === true;
+  const open = (result.setChoices?.length || 0) > 1 || result.setUnconfirmed === true || (result.versionChoices?.length || 0) > 0;
   if (!open || !(result.confidence > UNCONFIRMED_SET_CONFIDENCE_CAP)) return result;
   return { ...result, confidence: UNCONFIRMED_SET_CONFIDENCE_CAP, confidenceBeforeSetCap: result.confidence };
 }

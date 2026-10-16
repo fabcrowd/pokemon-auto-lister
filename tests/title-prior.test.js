@@ -184,3 +184,35 @@ test('the title never lifts a read that something else lowered further', () => {
   const [out] = applyTitlePrior([small], listing('Charizard 4/102 Base Set'));
   assert.equal(out.confidence, 0.49);
 });
+
+const pikaV = { id: 'swsh4-43', name: 'Pikachu V', set: 'Vivid Voltage', setCode: 'swsh4', number: '43' };
+const pikaEx = { id: 'sv8-57', name: 'Pikachu ex', set: 'Surging Sparks', setCode: 'sv8', number: '57' };
+const versionCard = (over = {}) => ({
+  identity: pikaV, market_price: 2.1, price_grid: null, confidence: 0.79, abstain: false,
+  versionChoices: [{ ...pikaEx, market_price: 30, price_grid: null }], ...over,
+});
+const apply = (card, h1, knownNames = ['Pikachu', 'Pikachu V', 'Pikachu ex', 'Charizard ex']) =>
+  applyTitlePrior([card], { kind: 'listing', page: { h1 }, knownNames, log: () => {} })[0];
+
+test('a title naming the other version swaps to it with its price; confidence does not rise', () => {
+  const out = apply(versionCard(), 'Pokemon Pikachu ex Surging Sparks Holo');
+  assert.equal(out.identity.id, 'sv8-57');
+  assert.equal(out.market_price, 30);
+  assert.deepEqual(out.versionChoices.map((c) => c.id), ['swsh4-43']);
+  assert.equal(out.confidence, 0.79);
+});
+
+test('a title naming the top version, no version, or both leaves the row as it was', () => {
+  const card = versionCard();
+  for (const h1 of ['Pikachu V Vivid Voltage', 'Pikachu Holo Pokemon Card', 'Pikachu V and Pikachu ex lot pair', 'Charizard ex']) {
+    assert.equal(apply(card, h1), card, h1);
+  }
+});
+
+test('a plain title picks the plain card over its Dark version', () => {
+  const dark = { id: 'n-1', name: 'Dark Jolteon', set: 'Team Rocket', setCode: 'base5', number: '38' };
+  const plain = { id: 'n-2', name: 'Jolteon', set: 'Jungle', setCode: 'base2', number: '4' };
+  const card = { identity: dark, confidence: 0.79, abstain: false, versionChoices: [plain] };
+  assert.equal(apply(card, 'Jolteon 4/64 Jungle', ['Jolteon', 'Dark Jolteon']).identity.id, 'n-2');
+  assert.equal(apply(card, 'Dark Jolteon 38/82', ['Jolteon', 'Dark Jolteon']), card);
+});

@@ -1,4 +1,4 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -462,8 +462,16 @@ function renderResults() {
     sel.addEventListener("change", (e) => pickSet(Number(e.target.dataset.idx), e.target.value));
   });
 
+  document.querySelectorAll(".version-select-row select").forEach((sel) => {
+    sel.addEventListener("change", (e) => {
+      const idx = Number(e.target.dataset.idx);
+      const card = _lastResult?.cards?.[idx];
+      if (card && e.target.value) replaceCard(idx, swapVersion(card, e.target.value));
+    });
+  });
+
   // Wire variant selectors
-  document.querySelectorAll(".variant-select-row select").forEach((sel) => {
+  document.querySelectorAll(".variant-select-row:not(.version-select-row) select").forEach((sel) => {
     sel.addEventListener("change", (e) => {
       const idx = Number(e.target.dataset.idx);
       const value = e.target.value;
@@ -502,6 +510,7 @@ function renderCardRow(card, idx) {
   const rangeNote  = !setKnown ? setRangeNote(card.setRange) : null;
   const rangeRow   = rangeNote ? `<div class="spread-warn set-range">${escHtml(rangeNote)} · best guess, pick the set for one price</div>` : "";
   const repeatRow  = card.repeatedName ? `<div class="spread-warn repeat-note">Same name found several times in this photo. Check it.</div>` : "";
+  const versionRow = renderVersionRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const condRow    = setKnown ? renderConditionGrid(card, printing) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
@@ -522,6 +531,7 @@ function renderCardRow(card, idx) {
     ${rangeRow}
     ${repeatRow}
     ${setRow}
+    ${versionRow}
     ${variantRow}
     ${condRow}
     ${gradedRow}
@@ -701,6 +711,17 @@ function renderSetRow(card, idx) {
     <span class="lbl">Set?</span>
     <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
     ${status}
+  </div>`;
+}
+
+// The matcher's best card is shown with its own price; a look-alike version (Pikachu ex beside Pikachu V) is one tap away.
+function renderVersionRow(card, idx) {
+  const versions = card.versionChoices || [];
+  if (!versions.length) return "";
+  const options = versions.map((v) => `<option value="${escHtml(v.id)}">${escHtml(versionLabel(v))}</option>`).join("");
+  return `<div class="variant-select-row version-select-row">
+    <span class="lbl">Other version?</span>
+    <select data-idx="${idx}" aria-label="Other version"><option value="" selected>Keep ${escHtml(card.identity?.name || "this card")}</option>${options}</select>
   </div>`;
 }
 
