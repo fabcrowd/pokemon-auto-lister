@@ -20,6 +20,8 @@ import { loadCatalog, searchCatalog, physicalHits, scoreIndices } from "./lib/se
 import { fuseResults }                 from "./lib/fusion.js";
 import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
+import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
+import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
@@ -43,6 +45,10 @@ let _idMap            = null;
 let _popupWinId       = null;
 let _targetTabId      = null;
 let _autoScanInFlight = false;
+
+// Rectified card pictures are kept in IndexedDB per scan: the service worker sleeps
+// between a scan and the user's pick, and memory does not survive that.
+const _corrections = createCorrectionsStore();
 
 // Persists _targetTabId across service-worker restarts (chrome.storage.session survives SW idle kills).
 function _setTargetTabId(id) {
@@ -235,7 +241,7 @@ function _loadNumberReader() {
 
 // ─── message handler ─────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.action) {
     case "checkReady":
       // The service worker starts blank after Chrome suspends it. Models stay
@@ -266,6 +272,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "scanPage":
       handleScanPage(sendResponse, eraById(msg.era));
       return true; // async
+
+    case "findCards":
+    case "saveCorrection":
+    case "countCorrections":
+    case "exportCorrections":
+    case "clearCorrections":
+      return handleOwnPageMessage(msg, sender, sendResponse);
 
     case "clearPageOverlay":
       relayToTab({ action: "relayClear" });
@@ -392,6 +405,12 @@ async function handleScanPage(sendResponse, era) {
     console.log("[BG] bitmap", bitmap.width + "x" + bitmap.height, "viewport", domResp.viewportWidth + "x" + domResp.viewportHeight, "dpr reported", dprReported, "measured", dprMeasured.toFixed(3), "using", dpr.toFixed(3));
 
     const cards = [];
+    const scanId = crypto.randomUUID().slice(0, 8);
+    const crops = [];
+    const pushCard = (card, cardCanvas) => {
+      cards.push(card);
+      crops.push(encodeCrop(cardCanvas));
+    };
     const preemptedPhotoKeys = new Set();
 
     // ── Multi-card photo split ────────────────────────────────────────────
@@ -470,7 +489,7 @@ async function handleScanPage(sendResponse, era) {
             console.error("[BG] card read failed:", err?.message || err);
             read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
           }
-          cards.push({ box: viewportBox, score, ...read, via: "yolo-in-photo" });
+          pushCard({ box: viewportBox, score, ...read, via: "yolo-in-photo" }, cardCanvas);
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
       finally { photoBitmap?.close?.(); }
@@ -490,11 +509,11 @@ async function handleScanPage(sendResponse, era) {
 
       // Build the 750x1050 rectified canvas the embedder expects.
       const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
-      cards.push({
+      pushCard({
         box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
         score: 1.0,
         ...(await identifyCard(cardCanvas, era, sh)),
-      });
+      }, cardCanvas);
     }
 
     // ── Fallback: YOLO viewport scan ───────────────────────────────────────
@@ -509,12 +528,12 @@ async function handleScanPage(sendResponse, era) {
           const [x1, y1, x2, y2] = box;
           if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
           const cardCanvas = rectifyCard(bitmap, box);
-          cards.push({
+          pushCard({
             box: [x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr],
             score,
             ...(await identifyCard(cardCanvas, era, y2 - y1)),
             via: "yolo-viewport",
-          });
+          }, cardCanvas);
         }
       } catch (err) {
         console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
@@ -535,11 +554,87 @@ async function handleScanPage(sendResponse, era) {
     // Ask the content script to start watching for lazy-loaded card images.
     chrome.tabs.sendMessage(targetTab.id, { action: "startObserving" }).catch(() => {});
 
-    sendResponse({ cards, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0 });
+    const encoded = await Promise.all(crops);
+    await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded })
+      .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
+    const asked = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta) } : card));
+
+    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0 });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendResponse({ error: String(err?.message || err) });
   }
+}
+
+// ─── corrections ─────────────────────────────────────────────────────────────
+
+// The same 375x525 size the stamp and edition checks read at.
+async function encodeCrop(cardCanvas) {
+  try {
+    const small = new OffscreenCanvas(STAMP_CARD_W, STAMP_CARD_H);
+    small.getContext("2d").drawImage(cardCanvas, 0, 0, STAMP_CARD_W, STAMP_CARD_H);
+    const blob = await small.convertToBlob({ type: "image/jpeg", quality: 0.85 });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let at = 0; at < bytes.length; at += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+    }
+    return "data:image/jpeg;base64," + btoa(binary);
+  } catch (err) {
+    console.error("[BG] crop encode failed:", err?.message || err);
+    return null;
+  }
+}
+
+// Only the extension's own pages may read or write corrections; a web page's content script may not.
+const _ownPageActions = {
+  findCards: async (msg) => {
+    await _ensureCatalog();
+    return { cards: findCards(_meta, msg.query, { era: eraById(msg.era) }) };
+  },
+  saveCorrection: async (msg) => {
+    await _ensureCatalog();
+    if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
+    // A scan older than the last two has lost its pictures; the answer is still worth keeping.
+    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    await _corrections.save(correctionRecord({
+      ts: Date.now(),
+      scanId: msg.scanId,
+      index: msg.index,
+      pageUrl: scan?.pageUrl,
+      guess: msg.guess,
+      pickedId: msg.pickedId,
+      via: msg.via,
+      crop: scan?.crops?.[msg.index],
+      extVersion: chrome.runtime.getManifest().version,
+    }));
+    return { ok: true };
+  },
+  countCorrections: async () => ({ count: await _corrections.count() }),
+  exportCorrections: async () => ({ corrections: await _corrections.all() }),
+  clearCorrections: async () => {
+    await _corrections.clear();
+    return { ok: true };
+  },
+};
+
+function handleOwnPageMessage(msg, sender, sendResponse) {
+  if (!sender.url?.startsWith(chrome.runtime.getURL(""))) {
+    sendResponse({ error: "Not allowed." });
+    return false;
+  }
+  _ownPageActions[msg.action](msg)
+    .then(sendResponse)
+    .catch((err) => {
+      console.error("[BG]", msg.action, "failed", err?.message || err);
+      sendResponse({ error: String(err?.message || err) });
+    });
+  return true;
+}
+
+// The catalog alone is enough to search and to check a pick; no need to wait for the models.
+async function _ensureCatalog() {
+  _meta ??= await getAssetJson("meta.json");
 }
 
 // ─── detection ───────────────────────────────────────────────────────────────

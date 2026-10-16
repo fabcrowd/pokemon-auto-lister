@@ -48,6 +48,7 @@ export default [
         Option: 'readonly',
         ort: 'readonly',
         atob: 'readonly',
+        btoa: 'readonly',
         Blob: 'readonly',
         chrome: 'readonly',
         createImageBitmap: 'readonly',

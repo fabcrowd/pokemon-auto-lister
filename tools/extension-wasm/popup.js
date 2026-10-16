@@ -1,5 +1,6 @@
-import { detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
+import { escHtml, guessOf, isUnsure, matchesLabel, renderPickList } from "./lib/card-picker.js";
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
@@ -40,6 +41,10 @@ let _lastResult = null;
 let _scanSeq = 0;
 let _filters   = JSON.parse(JSON.stringify(DEFAULT_FILTERS));
 let _variantChoice = new Map(); // card index -> printing chosen this scan
+let _picker = new Map();        // card index -> { via, query, results } while its search box is open
+let _searchTimer = null;
+let _pickSeq = 0;
+const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
 
 /* ─── Model status pill ─── */
 
@@ -52,6 +57,7 @@ function setModelStatus(state, label) {
 function showMessage(text, isError = false) {
   msgBar.textContent = text;
   msgBar.classList.toggle("error", isError);
+  msgBar.setAttribute("role", isError ? "alert" : "status");
   msgBar.classList.toggle("hidden", !text);
 }
 
@@ -226,6 +232,7 @@ btnClear.addEventListener("click", () => {
   chrome.runtime.sendMessage({ action: "clearPageOverlay" }).catch(() => {});
   _lastResult = null;
   _variantChoice = new Map();
+  _picker = new Map();
   resetResults();
   showMessage("");
 });
@@ -256,15 +263,16 @@ async function scanPage() {
     return;
   }
 
-  _lastResult = { scanId: ++_scanSeq, cards: data.cards || [], srcWidth: data.srcWidth, srcHeight: data.srcHeight };
+  const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
+  _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight };
   _variantChoice = new Map();
+  _picker = new Map();
   _lastResult.cards.forEach(seedVariant);
   updateStats(_lastResult.cards, Math.round(performance.now() - t0));
   renderResults();
   refreshSourceIndicators(_lastResult.cards);
   finishScan();
 
-  const cards = _lastResult.cards;
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
   } else {
@@ -347,12 +355,6 @@ function enabledGraders()    { return Object.keys(_filters.graded).filter((g) =>
 
 /* ─── Stats + results ─── */
 
-function confTier(confidence) {
-  if (confidence >= 0.80) return "high";
-  if (confidence >= 0.50) return "medium";
-  return "low";
-}
-
 function updateStats(cards, ms) {
   const lot = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
   sDetected.textContent = cards.length > 0 ? String(cards.length) : "—";
@@ -419,13 +421,17 @@ function renderCardRow(card, idx) {
     ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
     : "Set not sure";
 
+  const askRow     = renderAskRow(card, idx);
+  const lone       = (card.setChoices?.length || 0) <= 1;
+  const pricingRow = lone && card.pricing ? `<div class="no-price">Getting price…</div>`
+    : lone && card.priceError ? `<div class="spread-warn">${escHtml(card.priceError)}</div>` : "";
   const setRow     = renderSetRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const condRow    = setKnown ? renderConditionGrid(card, printing) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
   const srcClass   = source === "backend" ? "backend" : (source === "ppt" ? "ppt" : "pokemontcg");
 
-  return `<div class="card-row">
+  return `<div class="card-row" data-idx="${idx}">
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
       <div class="card-meta">
@@ -433,13 +439,143 @@ function renderCardRow(card, idx) {
         <div class="card-sub">${subHtml}</div>
       </div>
       ${grid ? `<div class="src-badge ${srcClass}" title="pricing source">${escHtml(sourceName({ source }) || source)}</div>` : ""}
+      <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
+    ${askRow}
+    ${pricingRow}
     ${setRow}
     ${variantRow}
     ${condRow}
     ${gradedRow}
   </div>`;
 }
+
+function searchResultsHtml(state, idx) {
+  if (!state.results) return "";
+  if (state.results.length === 0) return `<div class="no-price">No matches. Try the name, the number, or both.</div>`;
+  return renderPickList(state.results, idx);
+}
+
+function renderAskRow(card, idx) {
+  const state = _picker.get(idx);
+  const ask = isUnsure(card) && !card.pricing
+    ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
+        <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
+        <div class="pick-row">${renderPickList(card.candidates, idx)}</div>
+        ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
+      </div>`
+    : "";
+  const search = state
+    ? `<div class="picker">
+        <div class="picker-bar">
+          <input class="picker-input" type="search" data-idx="${idx}" value="${escHtml(state.query)}" placeholder="Name or number, e.g. charizard 4/102" aria-label="Search cards by name or number" autocomplete="off">
+          <button type="button" class="link-btn" data-close-search data-idx="${idx}">Close</button>
+        </div>
+        <div class="sr-only" role="status" data-search-status="${idx}">${matchesLabel(state.results?.length)}</div>
+        <div class="pick-row picker-results" data-idx="${idx}">${searchResultsHtml(state, idx)}</div>
+      </div>`
+    : "";
+  return ask + search;
+}
+
+function openSearch(idx, via) {
+  const open = _picker.get(idx);
+  if (open) open.via = via;
+  else _picker.set(idx, { via, query: "", results: null });
+  renderResults();
+  resultsEl.querySelector(`.picker-input[data-idx="${idx}"]`)?.focus();
+}
+
+// Re-rendering drops the focused element, so keyboard users land back on a button in the same card.
+function focusOpener(idx, via = "wrong-card") {
+  const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
+  (row?.querySelector(`[data-open-search][data-via="${via}"]`) ?? row?.querySelector("[data-open-search]"))?.focus();
+}
+
+function closeSearch(idx) {
+  const via = _picker.get(idx)?.via;
+  _picker.delete(idx);
+  renderResults();
+  focusOpener(idx, via);
+}
+
+function onSearchInput(idx, query) {
+  const state = _picker.get(idx);
+  if (!state) return;
+  state.query = query;
+  clearTimeout(_searchTimer);
+  const scan = _lastResult;
+  if (!query.trim()) {
+    state.results = null;
+    showSearchResults(idx);
+    return;
+  }
+  _searchTimer = setTimeout(async () => {
+    let resp;
+    try {
+      resp = await chrome.runtime.sendMessage({ action: "findCards", query, era: eraSelect.value || null });
+    } catch (err) {
+      resp = { error: explainScanError(err?.message || err) };
+    }
+    // The box was closed, retyped, or a new scan replaced the cards while this was loading.
+    if (_lastResult !== scan || _picker.get(idx) !== state || state.query !== query) return;
+    if (resp?.error) { showMessage(resp.error, true); return; }
+    state.results = resp?.cards || [];
+    showSearchResults(idx);
+  }, 200);
+}
+
+// Rewrites only the results so the box being typed in keeps focus.
+function showSearchResults(idx) {
+  const state = _picker.get(idx);
+  const box = resultsEl.querySelector(`.picker-results[data-idx="${idx}"]`);
+  if (state && box) box.innerHTML = searchResultsHtml(state, idx);
+  const status = resultsEl.querySelector(`[data-search-status="${idx}"]`);
+  if (state && status) status.textContent = matchesLabel(state.results?.length);
+}
+
+function pickCard(idx, id, via, row) {
+  const scan = _lastResult;
+  if (!scan?.cards?.[idx]) return;
+  _picker.delete(idx);
+  chrome.runtime.sendMessage({
+    action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess: scan.cards[idx].guess, pickedId: id, via,
+  }).then((resp) => {
+    if (resp?.error) showMessage(resp.error, true);
+  }).catch((err) => showMessage(explainScanError(err?.message || err), true));
+  return pickSet(idx, id, row ?? { id });
+}
+
+resultsEl.addEventListener("click", (e) => {
+  const button = e.target.closest("button");
+  if (!button || !resultsEl.contains(button)) return;
+  const idx = Number(button.dataset.idx);
+  if (button.dataset.pick) {
+    const fromSearch = Boolean(button.closest(".picker-results"));
+    const shown = fromSearch ? _picker.get(idx)?.results : _lastResult?.cards?.[idx]?.candidates;
+    pickCard(
+      idx,
+      button.dataset.pick,
+      fromSearch ? _picker.get(idx)?.via || "search" : "candidates",
+      shown?.find((card) => card.id === button.dataset.pick),
+    );
+  } else if ("openSearch" in button.dataset) {
+    openSearch(idx, button.dataset.via);
+  } else if ("closeSearch" in button.dataset) {
+    closeSearch(idx);
+  }
+});
+
+resultsEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && e.target.classList.contains("picker-input")) {
+    e.preventDefault();
+    closeSearch(Number(e.target.dataset.idx));
+  }
+});
+
+resultsEl.addEventListener("input", (e) => {
+  if (e.target.classList.contains("picker-input")) onSearchInput(Number(e.target.dataset.idx), e.target.value);
+});
 
 function renderSetRow(card, idx) {
   const choices = card.setChoices || [];
@@ -460,36 +596,51 @@ function renderSetRow(card, idx) {
 }
 
 function replaceCard(idx, next) {
+  const hadFocus = resultsEl.contains(document.activeElement);
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   _variantChoice.delete(idx);
   seedVariant(next, idx);
   renderResults();
+  if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);
   updateStats(cards, Number(sMs.textContent) || 0);
   pushOverlay();
 }
 
-async function pickSet(idx, id) {
+// picked is the catalog row the user chose from candidates or search; null when the set menu was used.
+async function pickSet(idx, id, picked = null) {
   const scan = _lastResult;
   const card = scan?.cards?.[idx];
   if (!card) return;
+  const token = ++_pickSeq;
+  _pickToken.set(idx, token);
+  // A new scan replaced the results, or the user picked again, while this price was loading.
+  const stale = () => _lastResult?.scanId !== scan.scanId || _pickToken.get(idx) !== token;
   const unpriced = { market_price: null, price_variant: null, price_grid: null, priceError: null };
   if (!id) {
     replaceCard(idx, { ...card, ...unpriced, identity: { name: card.identity?.name }, setConfirmed: false });
     return;
   }
-  replaceCard(idx, { ...card, pricing: true, priceError: null });
+  const label = picked?.name || card.identity?.name || "this card";
+  if (picked) {
+    // The other sets on offer no longer apply, and the old card's price must not stay on screen.
+    replaceCard(idx, { ...card, ...unpriced, identity: picked, setChoices: [], setConfirmed: false, pricing: true });
+    showMessage(`Getting price for ${label}…`);
+  } else {
+    replaceCard(idx, { ...card, pricing: true, priceError: null });
+  }
   let resp;
   try {
     resp = await chrome.runtime.sendMessage({ action: "priceCard", id });
   } catch (err) {
     resp = { error: explainScanError(err?.message || err) };
   }
-  // A new scan replaced the results while this price was loading.
-  if (_lastResult?.scanId !== scan.scanId) return;
+  if (stale()) return;
   const current = _lastResult.cards[idx];
   if (!resp || resp.error) {
-    replaceCard(idx, { ...current, ...unpriced, pricing: false, priceError: resp?.error || "Couldn't get a price. Try again." });
+    const error = resp?.error || "Couldn't get a price. Try again.";
+    replaceCard(idx, { ...current, ...unpriced, pricing: false, priceError: error });
+    if (picked) showMessage(error, true);
     return;
   }
   replaceCard(idx, {
@@ -499,9 +650,12 @@ async function pickSet(idx, id) {
     price_variant: resp.price_variant,
     price_grid: resp.price_grid,
     setConfirmed: true,
+    // A card the scanner gave up on is still a card the user named.
+    ...(picked ? { abstain: false, confidence: 1 } : {}),
     pricing: false,
     priceError: null,
   });
+  if (picked) showMessage(`Price updated for ${resp.identity?.name || label}.`);
 }
 
 function seedVariant(card, idx) {
@@ -628,14 +782,6 @@ function computeDisplayForOverlay(card, idx) {
     printingNote: quote ? null : printingNote(card.price_grid),
     footer: sourceFooter(card.price_grid),
   };
-}
-
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /* ─── Init ─── */

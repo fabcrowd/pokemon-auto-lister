@@ -85,6 +85,12 @@ export function sourceFooter(grid, now = Date.now()) {
   return age ? `${name} · ${age.text}` : name;
 }
 
+export function confTier(confidence) {
+  if (confidence >= 0.80) return 'high';
+  if (confidence >= 0.50) return 'medium';
+  return 'low';
+}
+
 // More than one possible set means the user has to pick before we quote.
 export function isSetConfirmed(card) {
   return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true;

@@ -124,4 +124,53 @@ async function probeBackend() {
   }
 })();
 
+/* ─── Corrections ─── */
+
+const correctionsCount  = document.getElementById("corrections-count");
+const correctionsStatus = document.getElementById("corrections-status");
+const btnExportCorrections = document.getElementById("export-corrections");
+const btnClearCorrections  = document.getElementById("clear-corrections");
+
+// Disabling the button that was just pressed would drop focus to the page, so the result takes it.
+function showCorrectionsStatus(text, kind = "info") {
+  correctionsStatus.textContent = text;
+  correctionsStatus.className = "test-result " + kind;
+  correctionsStatus.focus();
+}
+
+async function refreshCorrectionCount() {
+  const resp = await chrome.runtime.sendMessage({ action: "countCorrections" }).catch(() => null);
+  const known = typeof resp?.count === "number";
+  correctionsCount.textContent = known ? `Corrections: ${resp.count} saved` : "Corrections: unavailable";
+  btnExportCorrections.disabled = !known || resp.count === 0;
+  btnClearCorrections.disabled = !known || resp.count === 0;
+  if (!known) showCorrectionsStatus("Couldn't read the saved corrections. Reload this page to try again.", "err");
+}
+
+btnExportCorrections.addEventListener("click", async () => {
+  const resp = await chrome.runtime.sendMessage({ action: "exportCorrections" }).catch(() => null);
+  if (!resp?.corrections) { showCorrectionsStatus("Export failed. Try again.", "err"); return; }
+  const file = {
+    exportedAt: new Date().toISOString(),
+    extVersion: chrome.runtime.getManifest().version,
+    corrections: resp.corrections,
+  };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `card-scanner-corrections-${file.exportedAt.slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showCorrectionsStatus(`Exported ${resp.corrections.length} corrections.`, "ok");
+});
+
+btnClearCorrections.addEventListener("click", async () => {
+  if (!window.confirm("Delete every saved correction? Export first if you want to keep them.")) return;
+  const resp = await chrome.runtime.sendMessage({ action: "clearCorrections" }).catch(() => null);
+  if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the corrections. Try again.", "err"); return; }
+  await refreshCorrectionCount();
+  showCorrectionsStatus("Cleared. 0 corrections saved.", "ok");
+});
+
+refreshCorrectionCount();
 loadKey();
