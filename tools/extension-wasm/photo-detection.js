@@ -178,3 +178,150 @@ export function filterPhotoDetections(detections, imageWidth, imageHeight) {
       areaFraction <= MAX_PHOTO_AREA_FRACTION;
   });
 }
+
+// Zoomed centre crops tried when the detector sees nothing in a card-shaped hero photo.
+const HERO_ZOOMS = [1, 0.8, 0.65];
+// A whole-photo read that abstained is kept (as a guess for the picker) only when the catalog at
+// least resembles it; below this the photo is a lot, a binder or a product shot, not one card.
+export const WHOLE_PHOTO_MIN_SIMILARITY = 0.6;
+
+/**
+ * What to do with the listing's main photo, given the raw detector output. The size filter
+ * above exists to stop a binder or lot photo from becoming one "card"; for the photo the
+ * listing is built around, a card-shaped box that fills the frame is the card.
+ *
+ * @returns {{kind: 'detected'} | {kind: 'large-box', box: number[], score: number}
+ *   | {kind: 'whole-photo', crops: number[][]} | {kind: 'none'}}
+ */
+export function planHeroCard({ imageW, imageH, detections }) {
+  if (!(imageW > 0) || !(imageH > 0)) return { kind: 'none' };
+  const found = Array.isArray(detections) ? detections : [];
+  if (filterPhotoDetections(found, imageW, imageH).length) return { kind: 'detected' };
+
+  let best = null;
+  for (const detection of found) {
+    const { box, score } = detection || {};
+    if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite)) continue;
+    const width = box[2] - box[0];
+    const height = box[3] - box[1];
+    if (width <= 0 || height <= 0) continue;
+    const ratio = width / height;
+    if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX) continue;
+    if (!best || score > best.score) best = { box, score };
+  }
+  if (best) return { kind: 'large-box', box: best.box, score: best.score };
+
+  // Boxes that were not card-shaped mean the detector saw something else (a lot, a binder).
+  const ratio = imageW / imageH;
+  if (found.length) return { kind: 'none' };
+  if (ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX) {
+    return { kind: 'whole-photo', strict: false, crops: HERO_ZOOMS.map((zoom) => centredCrop(imageW, imageH, zoom)) };
+  }
+  // A square slot (or a cover-cropped view) around one card: the card is in the middle, so look there.
+  if (ratio > CARD_RATIO_MAX && ratio <= SQUARISH_MAX) {
+    return { kind: 'whole-photo', strict: true, crops: HERO_ZOOMS.map((zoom) => cardShapedCrop(imageW, imageH, zoom)) };
+  }
+  return { kind: 'none' };
+}
+
+const SQUARISH_MAX = 1.25;
+const CARD_RATIO = 5 / 7;
+
+function cardShapedCrop(width, height, zoom) {
+  const h = Math.round(Math.min(height, width / CARD_RATIO) * zoom);
+  const w = Math.round(h * CARD_RATIO);
+  const x = Math.round((width - w) / 2);
+  const y = Math.round((height - h) / 2);
+  return [x, y, x + w, y + h];
+}
+
+function centredCrop(width, height, zoom) {
+  const w = Math.round(width * zoom);
+  const h = Math.round(height * zoom);
+  const x = Math.round((width - w) / 2);
+  const y = Math.round((height - h) / 2);
+  return [x, y, x + w, y + h];
+}
+
+/** Keep a whole-photo read only if it named a card or the catalog saw something card-like in it. */
+export function acceptWholePhoto(read, { strict = false, croppedView = false } = {}) {
+  if (!read || read.cardBack) return false;
+  if (!read.abstain && read.identity) return true;
+  // A view cropped by its slot (object-fit: cover, screenshot) cuts card edges, so a look-alike
+  // without a name is still a fair suggestion for the picker.
+  if (strict && !croppedView) return false;
+  return Number(read.catalogTop) >= WHOLE_PHOTO_MIN_SIMILARITY;
+}
+
+/**
+ * Where the picture itself sits inside a screenshot crop of its slot, in device pixels relative to the
+ * crop. A square slot around a portrait card is mostly bars; the detector and the card-shape check
+ * should see the picture only. Null when the crop already is the picture or the layout is unknown.
+ */
+export function displayedRegion(rect, naturalWidth, naturalHeight, render, dpr) {
+  if (!rect || !(naturalWidth > 0) || !(naturalHeight > 0) || !(dpr > 0)) return null;
+  if (Math.abs(rect.vw - rect.w) > 1 || Math.abs(rect.vh - rect.h) > 1) return null;
+  const transform = imageToViewportTransform(rect, naturalWidth, naturalHeight, render || {});
+  if (!transform) return null;
+  const x1 = Math.max(0, (transform.left - rect.vx) * dpr);
+  const y1 = Math.max(0, (transform.top - rect.vy) * dpr);
+  const x2 = Math.min(rect.vw * dpr, (transform.left - rect.vx + naturalWidth * transform.scaleX) * dpr);
+  const y2 = Math.min(rect.vh * dpr, (transform.top - rect.vy + naturalHeight * transform.scaleY) * dpr);
+  const region = { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+  if (region.w < 20 || region.h < 20) return null;
+  const whole = (rect.vw * dpr * rect.vh * dpr);
+  if (region.w * region.h >= whole * 0.97) return null;
+  return region;
+}
+
+const TILE_OVERLAP = 0.3;
+const NMS_IOU = 0.45;
+// A tile that cuts a card in half still lights the detector a little; real cards score well above this.
+const TILE_MIN_SCORE = 0.5;
+
+/** n x n overlapping tiles [x1, y1, x2, y2] that cover a width x height photo. */
+export function tileRects(width, height, n, overlap = TILE_OVERLAP) {
+  const span = n - (n - 1) * overlap;
+  const tileW = width / span;
+  const tileH = height / span;
+  const rects = [];
+  for (let row = 0; row < n; row++) {
+    for (let col = 0; col < n; col++) {
+      const x1 = Math.round(col * tileW * (1 - overlap));
+      const y1 = Math.round(row * tileH * (1 - overlap));
+      rects.push([x1, y1, Math.min(width, Math.round(x1 + tileW)), Math.min(height, Math.round(y1 + tileH))]);
+    }
+  }
+  return rects;
+}
+
+function iou(a, b) {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  if (w <= 0 || h <= 0) return 0;
+  const inter = w * h;
+  return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter);
+}
+
+/**
+ * Card boxes found by running the detector on tiles of a photo, in photo coordinates. Each tile's boxes
+ * go through the same card-shape filter as a whole photo; a card seen in two overlapping tiles is one box.
+ *
+ * @param {{rect: number[], detections: {box: number[], score: number}[]}[]} tiles
+ */
+export function mergeTileDetections(tiles, { minScore = TILE_MIN_SCORE } = {}) {
+  const all = [];
+  for (const { rect, detections } of tiles) {
+    const kept = filterPhotoDetections(detections, rect[2] - rect[0], rect[3] - rect[1]);
+    for (const { box, score } of kept) {
+      if (score < minScore) continue;
+      all.push({ box: [box[0] + rect[0], box[1] + rect[1], box[2] + rect[0], box[3] + rect[1]], score });
+    }
+  }
+  all.sort((a, b) => b.score - a.score);
+  const out = [];
+  for (const item of all) {
+    if (out.every((other) => iou(other.box, item.box) <= NMS_IOU)) out.push(item);
+  }
+  return out;
+}

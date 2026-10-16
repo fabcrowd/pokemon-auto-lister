@@ -102,3 +102,38 @@ function leadingName(clipHits, meta) {
   if (!winner || tied || winner.count < 2) return null;
   return winner.hit;
 }
+
+// A card read from a crop shorter than this is a few hundred blurry pixels, and CLIP matches look-alike
+// art with high similarity. Heights are the pixels the matcher actually sees (informationHeight).
+// This rests on few samples: in the 2026-10-16 run every read we could verify against the listing title
+// came from a crop of at least 271 px, and the confident wrong ones in the first report came from
+// thumbnail-class crops. Grid and lot pages had no ground truth, so 300 is a conservative guess, not a fit.
+export const MIN_RELIABLE_HEIGHT = 300;
+// Below the "medium" tier (0.50) so the scan's picker asks the user, with the guess first.
+export const SMALL_SOURCE_CONFIDENCE_CAP = 0.49;
+
+/**
+ * An automatic read from a small crop may be listed as a suggestion, but never as sure.
+ * Unknown height (0 or missing) is not small. Reads that already abstained or are unsure pass through.
+ */
+export function capSmallSource(result, sourceHeight) {
+  if (!result || result.abstain) return result;
+  if (!(sourceHeight > 0) || sourceHeight >= MIN_RELIABLE_HEIGHT) return result;
+  if (!(result.confidence > SMALL_SOURCE_CONFIDENCE_CAP)) return result;
+  return { ...result, confidence: SMALL_SOURCE_CONFIDENCE_CAP, smallSource: true, unsure: true };
+}
+
+/**
+ * Pixels of the card the matcher can really use: what was fed to it, but no more than the picture holds.
+ * naturalPerFed is natural picture pixels per fed pixel (1 for a fetched source; below 1 when a small
+ * picture is stretched on screen; unknown or 0 means no limit beyond what was fed).
+ */
+export function informationHeight(fedHeight, naturalPerFed) {
+  if (!(fedHeight > 0)) return 0;
+  return naturalPerFed > 0 ? fedHeight * Math.min(1, naturalPerFed) : fedHeight;
+}
+
+/** Height to cap against, or 0 for none: small tiles are normal on grid pages and are judged by the matcher. */
+export function capHeightFor(pageKind, height) {
+  return pageKind === "grid" ? 0 : height;
+}

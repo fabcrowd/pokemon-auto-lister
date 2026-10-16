@@ -335,18 +335,141 @@
   // run YOLO inside them to find individual cards. Marketplace lot shots and FB
   // Marketplace listings fall here (landscape / square multi-card photos).
   const PHOTO_MIN_SIDE = 180;
-  const SEALED_PRODUCT_LABEL = /\b(?:ultra[\s-]*premium collection|premium collection|collection (?:box|chest|set)|booster(?: box| pack| bundle)?|elite trainer box|tin|deck box|starter deck|battle deck|gift set|bundle|playmat|binder|portfolio|trading card game classic)\b/i;
+  // Box art that says what it sells. A bare "tin", "bundle", "binder" or "playmat" also names cards
+  // photographed in one, so those need a sealed context word to count.
+  const SEALED_PRODUCT_LABEL = /\b(?:ultra[\s-]*premium collection|premium collection|collection (?:box|chest|set)|booster(?: box| pack| bundle)?|elite trainer box|starter deck|battle deck|gift set|trading card game classic)\b/i;
 
+  function isSealedLabel(text) {
+    return SEALED_PRODUCT_LABEL.test(String(text || ''));
+  }
+
+  // Only the image's own alt and aria text: a link's visible text names the whole tile, not the picture.
   function hasSealedProductContext(node) {
     const link = node.closest('a');
     const label = [
       node.alt,
-      node.title,
       node.getAttribute('aria-label'),
       link?.getAttribute('aria-label'),
-      link?.innerText,
     ].filter(Boolean).join(' ');
-    return SEALED_PRODUCT_LABEL.test(label);
+    return isSealedLabel(label);
+  }
+
+  function tidyText(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  const MAX_ANCESTORS = 12;
+
+  // Clip a box (viewport px) by the ancestors that really clip this element. chain[0] is the element
+  // (position only); the rest are its ancestors, nearest first, as {position, clipX, clipY, root, rect}.
+  // body/html never clip; a fixed element is not clipped by ancestors; an absolutely positioned element
+  // is only clipped from its containing block outward; the walk stops at a fixed ancestor.
+  function clipBox(box, chain) {
+    let { x1, y1, x2, y2 } = box;
+    const self = chain[0] || {};
+    if (self.position === 'fixed') return { x1, y1, x2, y2 };
+    let skipping = self.position === 'absolute';
+    for (let i = 1; i < chain.length && i <= MAX_ANCESTORS; i++) {
+      const a = chain[i];
+      if (a.root) break;
+      if (skipping) {
+        if (a.position === 'static') continue;
+        skipping = false;
+      }
+      if (a.clipX) { x1 = Math.max(x1, a.rect.left); x2 = Math.min(x2, a.rect.right); }
+      if (a.clipY) { y1 = Math.max(y1, a.rect.top); y2 = Math.min(y2, a.rect.bottom); }
+      if (a.position === 'fixed') break;
+      if (a.position === 'absolute') skipping = true;
+    }
+    return { x1, y1, x2, y2 };
+  }
+
+  // What surrounds an image, for the background's page-focus decision: landmarks, aria labels,
+  // and the short heading ("Similar items") that sits just before a block of images. Raw
+  // strings only; the judging lives in lib/page-focus.js.
+  const HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
+  const _headingBefore = new WeakMap();
+
+  function headingBefore(el) {
+    if (_headingBefore.has(el)) return _headingBefore.get(el);
+    let found = '';
+    let sibling = el.previousElementSibling;
+    for (let step = 0; sibling && step < 2 && !found; step++, sibling = sibling.previousElementSibling) {
+      const text = tidyText(sibling.textContent);
+      const isHeading = sibling.matches(HEADING_SELECTOR) || sibling.querySelector(HEADING_SELECTOR);
+      if (isHeading && text && text.length <= 100 && !sibling.querySelector('img,picture,video')) found = text;
+    }
+    _headingBefore.set(el, found);
+    return found;
+  }
+
+  function contextOf(node) {
+    const landmarks = [];
+    const headings = [];
+    const labels = [];
+    let depth = 0;
+    for (let el = node; el && el !== document.documentElement && depth < 12; el = el.parentElement, depth++) {
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'main' || tag === 'aside' || tag === 'nav' || tag === 'footer' || tag === 'article') landmarks.push(tag);
+      const role = el.getAttribute('role');
+      if (role) landmarks.push(role.toLowerCase());
+      const label = el.getAttribute('aria-label');
+      if (label) labels.push(label.slice(0, 100));
+      const heading = headingBefore(el);
+      if (heading) headings.push(heading);
+    }
+    return { landmarks, headings, labels, sealedLabel: hasSealedProductContext(node) };
+  }
+
+  function metaContent(selector) {
+    return document.querySelector(selector)?.getAttribute('content') || '';
+  }
+
+  // What the page says it is about: used to recognise the listing photo and sealed products.
+  function pageInfo() {
+    const ogImages = [
+      metaContent('meta[property="og:image"]'),
+      metaContent('meta[property="og:image:secure_url"]'),
+      metaContent('meta[name="twitter:image"]'),
+      document.querySelector('link[rel="image_src"]')?.getAttribute('href') || '',
+    ].filter(Boolean).map((url) => {
+      try { return new URL(url, document.baseURI).href; } catch { return ''; }
+    }).filter(Boolean);
+    return {
+      title: (document.title || '').slice(0, 200),
+      ogTitle: metaContent('meta[property="og:title"]').slice(0, 200),
+      h1: (document.querySelector('h1')?.textContent || '').trim().slice(0, 200),
+      ogImages,
+    };
+  }
+
+  // The part of an image that is actually on screen: inside the viewport and inside the ancestors that
+  // clip it. A carousel slide pushed out of an overflow:hidden strip has a layout box and nothing to see.
+  function visibleBox(el, r) {
+    const viewport = {
+      x1: Math.max(0, r.left), y1: Math.max(0, r.top),
+      x2: Math.min(window.innerWidth, r.right), y2: Math.min(window.innerHeight, r.bottom),
+    };
+    const pvw = Math.max(0, viewport.x2 - viewport.x1);
+    const pvh = Math.max(0, viewport.y2 - viewport.y1);
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+      return { vx: viewport.x1, vy: viewport.y1, vw: 0, vh: 0, pvw, pvh };
+    }
+    const chain = [{ position: getComputedStyle(el).position }];
+    let depth = 0;
+    for (let p = el.parentElement; p && depth < MAX_ANCESTORS; p = p.parentElement, depth++) {
+      const root = p === document.body || p === document.documentElement;
+      const style = getComputedStyle(p);
+      const clipX = style.overflowX !== 'visible';
+      const clipY = style.overflowY !== 'visible';
+      chain.push({
+        position: style.position, clipX, clipY, root,
+        rect: clipX || clipY ? p.getBoundingClientRect() : null,
+      });
+      if (root) break;
+    }
+    const c = clipBox(viewport, chain);
+    return { vx: c.x1, vy: c.y1, vw: Math.max(0, c.x2 - c.x1), vh: Math.max(0, c.y2 - c.y1), pvw, pvh };
   }
 
   function findCardImages(opts = {}) {
@@ -380,11 +503,10 @@
       else if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX)               reason = 'wrong-ratio';
       else if (hasSealedProductContext(img))                                    reason = 'sealed-product';
 
-      // Rect visible within viewport
-      const vx = Math.max(0, r.left);
-      const vy = Math.max(0, r.top);
-      const vw = Math.min(window.innerWidth,  r.right)  - vx;
-      const vh = Math.min(window.innerHeight, r.bottom) - vy;
+      // Rect visible within the viewport and every overflow-clipping ancestor. Skipped for images
+      // already rejected as unloaded, tiny or off-screen: they are never scanned.
+      const gone = reason === 'not-loaded' || reason === 'too-small' || reason === 'off-screen';
+      const { vx, vy, vw, vh, pvw, pvh } = gone ? { vx: 0, vy: 0, vw: 0, vh: 0, pvw: 0, pvh: 0 } : visibleBox(img, r);
       const visibleCoverage = r.width > 0 && r.height > 0
         ? (vw * vh) / (r.width * r.height)
         : 0;
@@ -394,20 +516,23 @@
       // runs inside it to find individual cards. Multi-card photos (lot shots,
       // lightbox-expanded listing photos) match here regardless of aspect ratio.
       const isLargePhoto = img.complete && img.naturalWidth > 0 &&
-        vw >= PHOTO_MIN_SIDE && vh >= PHOTO_MIN_SIDE;
+        pvw >= PHOTO_MIN_SIDE && pvh >= PHOTO_MIN_SIDE;
 
       if (reason) {
         if (opts.diag) rejected.push({ reason, src: src.slice(0, 160), w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)) });
-        if (reason === 'wrong-ratio' && isLargePhoto) {
+        // A sealed product's box art is kept as a photo candidate too, so the background can see that
+        // the listing's main picture is a product and not a card; it never scans it for cards.
+        if ((reason === 'wrong-ratio' || reason === 'sealed-product') && isLargePhoto) {
           const key = 'p:' + src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
           if (!seen.has(key)) {
             seen.add(key);
             const style = getComputedStyle(img);
             photos.push({
-              rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+              rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh, pvw, pvh },
               naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
               src: img.currentSrc || img.src || '',
               render: { fit: style.objectFit || 'fill', position: style.objectPosition || '50% 50%' },
+              ctx: contextOf(img),
             });
           }
         }
@@ -418,24 +543,26 @@
       seen.add(key);
       const imageStyle = getComputedStyle(img);
       found.push({
-        rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+        rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh, pvw, pvh },
         naturalWidth:  img.naturalWidth,
         naturalHeight: img.naturalHeight,
         src: img.currentSrc || img.src || '',
         render: { fit: imageStyle.objectFit || 'fill', position: imageStyle.objectPosition || '50% 50%' },
+        ctx: contextOf(img),
       });
       // ALSO add big card-shaped images to the photos list, so a single large
       // image that actually contains multiple cards (e.g. a stack photo cropped
       // tall) can be split by YOLO. The background prefers YOLO hits when ≥ 2.
-      if (vw >= PHOTO_MIN_SIDE && vh >= PHOTO_MIN_SIDE) {
+      if (pvw >= PHOTO_MIN_SIDE && pvh >= PHOTO_MIN_SIDE) {
         const pkey = 'p:' + src + ':' + Math.round(r.left) + ':' + Math.round(r.top);
         if (!seen.has(pkey)) {
           seen.add(pkey);
           photos.push({
-            rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
+            rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh, pvw, pvh },
             naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
             src: img.currentSrc || img.src || '',
             render: { fit: imageStyle.objectFit || 'fill', position: imageStyle.objectPosition || '50% 50%' },
+            ctx: contextOf(img),
           });
         }
       }
@@ -446,7 +573,7 @@
       const key = 'bg:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
       if (ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX && !seen.has(key)) {
         seen.add(key);
-        found.push({ rect, naturalWidth: null, naturalHeight: null });
+        found.push({ rect, naturalWidth: null, naturalHeight: null, ctx: candidate.ctx });
       }
       if (rect.vw >= PHOTO_MIN_SIDE && rect.vh >= PHOTO_MIN_SIDE) {
         const photoKey = 'bgp:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
@@ -458,6 +585,7 @@
             naturalHeight: null,
             src: candidate.src,
             render: { fit: 'background', size: candidate.size, position: candidate.position, repeat: candidate.repeat },
+            ctx: candidate.ctx,
           });
         }
       }
@@ -497,6 +625,7 @@
                 rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
                 w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)),
                 tag: node.tagName, bg: bg.slice(0, 120),
+                ctx: contextOf(node),
                 src,
                 size: style.backgroundSize,
                 position: style.backgroundPosition,
@@ -523,6 +652,7 @@
         cards,
         photos,
         pending,
+        page: pageInfo(),
         viewportWidth:  window.innerWidth,
         viewportHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio || 1,
@@ -546,6 +676,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel } };
   // dev-only:end
 }());
