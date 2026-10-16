@@ -210,12 +210,13 @@ test('guessOf keeps what the scanner said, not what the user later chose', () =>
     abstain: false,
     setChoices: [{ id: 'base1-4' }, { id: 'xy12-11' }],
   };
-  assert.deepEqual(guessOf(card), { id: 'base1-4', confidence: 0.42, abstain: false, choiceIds: ['base1-4', 'xy12-11'] });
-  assert.deepEqual(guessOf({ abstain: true }), { id: null, confidence: null, abstain: true, choiceIds: [] });
+  assert.deepEqual(guessOf(card), { id: 'base1-4', confidence: 0.42, abstain: false, choiceIds: ['base1-4', 'xy12-11'], catalogTop: null });
+  assert.deepEqual(guessOf({ abstain: true }), { id: null, confidence: null, abstain: true, choiceIds: [], catalogTop: null });
+  assert.equal(guessOf({ ...card, catalogTop: 0.81 }).catalogTop, 0.81);
 });
 
 test('correctionRecord builds the stored shape', () => {
-  const guess = { id: 'a', confidence: 0.4, abstain: false, choiceIds: ['a', 'b'] };
+  const guess = { id: 'a', confidence: 0.4, abstain: false, choiceIds: ['a', 'b'], catalogTop: 0.8 };
   assert.deepEqual(
     correctionRecord({
       ts: 123, pageUrl: 'https://example.com/lot', guess, pickedId: 'b', via: 'candidates',
@@ -262,7 +263,8 @@ test('correctionRecord fills gaps and rejects unknown paths', () => {
   assert.equal(record.pageUrl, null);
   assert.equal(record.crop, null);
   assert.equal(record.extVersion, null);
-  assert.deepEqual(record.guess, { id: null, confidence: null, abstain: false, choiceIds: [] });
+  assert.deepEqual(record.guess, { id: null, confidence: null, abstain: false, choiceIds: [], catalogTop: null });
+  assert.equal(correctionRecord({ ts: 1, pickedId: 'b', via: 'search', guess: { catalogTop: 'x' } }).guess.catalogTop, null);
   assert.throws(() => correctionRecord({ ts: 1, pickedId: 'b', via: 'magic' }), /via/);
   assert.throws(() => correctionRecord({ ts: 1, pickedId: '', via: 'search' }), /pickedId/);
   for (const via of ['candidates', 'search', 'wrong-card']) {
@@ -307,4 +309,17 @@ test('renderPickList without an image still renders a button, and nothing render
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /<button type="button" class="pick-card"/);
   assert.equal(renderPickList([], 0), '');
+});
+
+test('candidatesFor puts the card the user corrected before first', () => {
+  const card = { identity: { id: 'base1-4', name: 'Charizard' }, referencedId: 'xy12-11', setChoices: [{ id: 'base1-4', name: 'Charizard' }] };
+  const ids = candidatesFor(card, META).map((c) => c.id);
+  assert.equal(ids[0], 'xy12-11');
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.includes('base1-4'));
+});
+
+test('candidatesFor ignores a referenced card the catalog does not have', () => {
+  const ids = candidatesFor({ identity: { id: 'base1-4', name: 'Charizard' }, referencedId: 'nope' }, META).map((c) => c.id);
+  assert.equal(ids[0], 'base1-4');
 });

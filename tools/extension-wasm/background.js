@@ -22,6 +22,7 @@ import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNa
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
+import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, singleFlight, withEmbeddings } from "./lib/references.js";
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
@@ -207,6 +208,7 @@ async function loadModels() {
     _ready = true;
     _loadNumberReader();
     _loadVariantModel();
+    embedPendingReferences();
   })();
   try {
     await _loadPromise;
@@ -279,6 +281,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "countCorrections":
     case "exportCorrections":
     case "clearCorrections":
+    case "countReferences":
+    case "importReferences":
+    case "startReferences":
     case "countTestPhotos":
     case "testPhotoIds":
     case "getTestPhotos":
@@ -638,7 +643,7 @@ const _ownPageActions = {
     if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
-    await _corrections.save(correctionRecord({
+    const record = correctionRecord({
       ts: Date.now(),
       scanId: msg.scanId,
       index: msg.index,
@@ -648,13 +653,40 @@ const _ownPageActions = {
       via: msg.via,
       crop: scan?.crops?.[msg.index],
       extVersion: chrome.runtime.getManifest().version,
-    }));
+    });
+    // The old answer's vector must not outlive it; a failed delete is caught by the ts check in correctionsToEmbed.
+    if (record.id) {
+      await _corrections.deleteReference(record.id).catch((err) => console.error("[BG] dropping the old reference failed:", err?.message || err));
+      referencesChanged();
+    }
+    await _corrections.save(record);
+    if (_ready) embedPendingReferences();
     return { ok: true };
   },
   countCorrections: async () => ({ count: await _corrections.count() }),
-  exportCorrections: async () => ({ corrections: await _corrections.all() }),
+  exportCorrections: async () => ({ corrections: withEmbeddings(await _corrections.all(), await _corrections.allReferences()) }),
   clearCorrections: async () => {
+    // References first: a failure after this leaves corrections without references, which are rebuilt, not references without corrections.
+    await _corrections.clearReferences();
+    referencesChanged();
     await _corrections.clear();
+    return { ok: true };
+  },
+  countReferences: async () => ({ count: await _corrections.countReferences() }),
+  importReferences: async (msg) => {
+    const rows = (Array.isArray(msg.references) ? msg.references : []).flatMap((ref) => {
+      const embedding = decodeEmbedding(ref?.embedding);
+      return embedding && typeof ref.id === "string" && typeof ref.cardId === "string" && ref.cardId
+        ? [{ id: `import:${ref.id}`, cardId: ref.cardId, ts: null, embedding }]
+        : [];
+    });
+    await _corrections.replaceReferences(rows, { clearCorrections: msg.clearCorrections === true });
+    referencesChanged();
+    return { imported: rows.length };
+  },
+  startReferences: async () => {
+    if (_ready) embedPendingReferences();
+    else tryAutoLoad().catch((err) => console.error("[BG] model reload failed", err?.message || err));
     return { ok: true };
   },
   countTestPhotos: async () => {
@@ -686,6 +718,82 @@ function handleOwnPageMessage(msg, sender, sendResponse) {
   return true;
 }
 
+// ─── references ──────────────────────────────────────────────────────────────
+
+let _refs = null;
+let _refsVersion = 0;
+let _embedQueue = Promise.resolve();
+
+function referencesChanged() {
+  _refs = null;
+  _refsVersion += 1;
+}
+
+async function loadedReferences() {
+  if (_refs) return _refs;
+  const version = _refsVersion;
+  const [stored, heads] = await Promise.all([_corrections.allReferences(), _corrections.correctionHeads()]);
+  const rows = currentReferences(stored, heads);
+  if (version === _refsVersion) _refs = rows;
+  return rows;
+}
+
+async function referencesInUse() {
+  try {
+    return (await chrome.storage.local.get("useReferences")).useReferences === true;
+  } catch {
+    return false;
+  }
+}
+
+// A scan and a reference pass can both want the embedder, and one session cannot run twice at once.
+function embedSerial(canvas) {
+  const run = _embedQueue.then(() => embedCard(canvas));
+  _embedQueue = run.catch(() => {});
+  return run;
+}
+
+// A reference only reorders cards the catalog already returned, at the catalog's own top score, so a
+// reprint of a corrected card is not made certain. Any failure leaves the catalog hits as they were.
+async function withReferenceHit(embedding, hits) {
+  try {
+    if (!(await referencesInUse())) return { hits, referencedId: null };
+    const hit = referenceHit(embedding, await loadedReferences(), hits[0]?.score ?? 0);
+    const at = hit ? hits.findIndex((h) => _meta[h.index]?.id === hit.cardId) : -1;
+    return at < 0 ? { hits, referencedId: null } : { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId };
+  } catch (err) {
+    console.error("[BG] reference lookup failed:", err?.message || err);
+    return { hits, referencedId: null };
+  }
+}
+
+// Only made while the option is on, so nothing is embedded for someone who never asked for it.
+async function embedPendingOnce() {
+  if (!_ready || !(await referencesInUse())) return;
+  const [heads, refs] = await Promise.all([_corrections.correctionHeads(), _corrections.allReferences()]);
+  for (const head of correctionsToEmbed(heads, refs)) {
+    try {
+      const correction = await _corrections.getCorrection(head.id);
+      if (!correction?.crop || correction.ts !== head.ts) continue;
+      const bitmap = await b64ToBitmap(correction.crop.replace(/^data:image\/jpeg;base64,/, ""));
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const embedding = await embedSerial(canvas);
+      // The answer may have been replaced or cleared while the model ran.
+      const now = await _corrections.getCorrection(correction.id);
+      if (now?.ts !== correction.ts || now.pickedId !== correction.pickedId) continue;
+      await _corrections.saveReference(referenceRow(correction, embedding));
+      referencesChanged();
+    } catch (err) {
+      console.error("[BG] embedding a correction failed, will retry:", err?.message || err);
+    }
+  }
+}
+
+// Fire and forget: saving a correction never waits for the models, and one pass runs at a time.
+const embedPendingReferences = singleFlight(embedPendingOnce, (err) => console.error("[BG] reference pass failed:", err?.message || err));
+
 // The catalog alone is enough to search and to check a pick; no need to wait for the models.
 async function _ensureCatalog() {
   _meta ??= await getAssetJson("meta.json");
@@ -704,12 +812,13 @@ async function handleDetect(imageB64, sendResponse) {
     const cards = [];
     for (const { box, score } of rawBoxes) {
       const cardCanvas = rectifyCard(bitmap, box);
-      const embedding  = await embedCard(cardCanvas);
-      const hits       = physicalHits(searchCatalog(embedding, 20), _meta);
-      if (isCardBack(embedding, hits[0]?.score ?? 0)) {
+      const embedding  = await embedSerial(cardCanvas);
+      const catalogHits = physicalHits(searchCatalog(embedding, 20), _meta);
+      if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
       }
+      const { hits }   = await withReferenceHit(embedding, catalogHits);
       const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
       const priceData  = abstain ? null : await getPrice(identity);
       const market_price  = priceData?.price  ?? null;
@@ -964,11 +1073,21 @@ function cardGrayFull(cardCanvas) {
  * the card is not priced: the user picks the set and the popup asks "priceCard".
  */
 async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
-  const embedding = await embedCard(cardCanvas);
-  const hits = physicalHits(searchCatalog(embedding, 20), _meta);
-  if (isCardBack(embedding, hits[0]?.score ?? 0)) {
+  const seen = {};
+  const result = await recognizeWith(cardCanvas, era, sourceHeight, seen);
+  // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
+  return { ...result, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}) };
+}
+
+async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
+  const embedding = await embedSerial(cardCanvas);
+  const catalogHits = physicalHits(searchCatalog(embedding, 20), _meta);
+  seen.catalogTop = catalogHits[0]?.score ?? null;
+  if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
+  const { hits, referencedId } = await withReferenceHit(embedding, catalogHits);
+  seen.referencedId = referencedId;
   const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;

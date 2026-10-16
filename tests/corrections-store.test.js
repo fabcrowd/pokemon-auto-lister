@@ -8,6 +8,7 @@ import { createCorrectionsStore } from '../tools/extension-wasm/lib/corrections-
 function fakeIndexedDB({ failOpen = false, invalidStateOnce = false } = {}) {
   const stores = new Map();
   const opened = [];
+  const transactions = [];
   const dbs = [];
   let invalidState = invalidStateOnce;
   const later = (fn) => Promise.resolve().then(fn);
@@ -39,11 +40,28 @@ function fakeIndexedDB({ failOpen = false, invalidStateOnce = false } = {}) {
       getAllKeys: () => request(() => [...entry.rows.keys()]),
       count: () => request(() => entry.rows.size),
       clear: () => request(() => { entry.rows.clear(); }),
+      openCursor: () => {
+        const req = { result: null, onsuccess: null };
+        const rows = [...entry.rows.values()];
+        let at = 0;
+        tx.pending += 1;
+        const step = () => later(() => {
+          req.result = at < rows.length ? { value: { ...rows[at++] }, continue: step } : null;
+          req.onsuccess?.({ target: req });
+          if (!req.result) {
+            tx.pending -= 1;
+            if (tx.pending === 0) later(() => tx.oncomplete?.());
+          }
+        });
+        step();
+        return req;
+      },
     };
   }
 
   return {
     opened,
+    transactions,
     stores,
     dbs,
     open(name, version) {
@@ -63,12 +81,13 @@ function fakeIndexedDB({ failOpen = false, invalidStateOnce = false } = {}) {
           objectStoreNames: { contains: (n) => stores.has(n) },
           createObjectStore: (n, options) => { stores.set(n, { rows: new Map(), options, next: 1 }); },
           transaction: (n) => {
+            transactions.push(n);
             if (invalidState) {
               invalidState = false;
               throw Object.assign(new Error('closing'), { name: 'InvalidStateError' });
             }
             const tx = { oncomplete: null, pending: 0 };
-            tx.objectStore = () => makeStore(n, tx);
+            tx.objectStore = (name) => makeStore(Array.isArray(n) ? name : n, tx);
             return tx;
           },
         };
@@ -173,8 +192,57 @@ test('test photos live in their own store, next to corrections and scans', async
   assert.deepEqual(some[0].boxes, [[1, 2, 3, 4]]);
   assert.deepEqual(await store.getPhotos([]), []);
   assert.equal(await store.count(), 0);
-  assert.equal(idb.opened[0].version, 3);
-  for (const name of ['corrections', 'scans', 'testPhotos']) assert.equal(idb.stores.has(name), true, name);
+  assert.equal(idb.opened[0].version, 4);
+  for (const name of ['corrections', 'scans', 'testPhotos', 'references']) assert.equal(idb.stores.has(name), true, name);
   await store.clearPhotos();
   assert.equal(await store.countPhotos(), 0);
+});
+
+test('references live in their own store and are kept apart from corrections', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  assert.equal(await store.countReferences(), 0);
+  await store.saveReference({ id: 's:0', cardId: 'a', ts: 1, embedding: new Float32Array([1, 0]) });
+  await store.saveReference({ id: 's:1', cardId: 'b', ts: 1, embedding: new Float32Array([0, 1]) });
+  await store.saveReference({ id: 's:0', cardId: 'c', ts: 2, embedding: new Float32Array([1, 1]) });
+  assert.equal(await store.countReferences(), 2);
+  assert.equal(await store.count(), 0);
+  assert.deepEqual((await store.allReferences()).map((r) => r.cardId).sort(), ['b', 'c']);
+  await store.deleteReference('s:1');
+  assert.deepEqual((await store.allReferences()).map((r) => r.id), ['s:0']);
+  await store.clearReferences();
+  assert.equal(await store.countReferences(), 0);
+});
+
+test('getCorrection reads one saved answer by id', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.save({ id: 's:0', ts: 1, pickedId: 'a' });
+  assert.equal((await store.getCorrection('s:0')).pickedId, 'a');
+  assert.equal(await store.getCorrection('nope'), undefined);
+});
+
+test('correctionHeads lists what decides "needs embedding" without the pictures', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.save({ id: 's:0', ts: 4, pickedId: 'a', crop: 'data:image/jpeg;base64,AA', pageUrl: 'https://x.test' });
+  await store.save({ id: 's:1', ts: 5, pickedId: 'b', crop: null });
+  const heads = (await store.correctionHeads()).sort((a, b) => a.id.localeCompare(b.id));
+  assert.deepEqual(heads, [
+    { id: 's:0', ts: 4, pickedId: 'a', hasCrop: true },
+    { id: 's:1', ts: 5, pickedId: 'b', hasCrop: false },
+  ]);
+  assert.deepEqual(await createCorrectionsStore(fakeIndexedDB()).correctionHeads(), []);
+});
+
+test('replaceReferences swaps the whole set in one transaction, and can empty the corrections with it', async () => {
+  const idb = fakeIndexedDB();
+  const store = createCorrectionsStore(idb);
+  await store.save({ id: 's:0', ts: 1, pickedId: 'a' });
+  await store.saveReference({ id: 's:0', cardId: 'a', ts: 1, embedding: [1] });
+  const before = idb.transactions.length;
+  await store.replaceReferences([{ id: 'import:x', cardId: 'b', ts: null, embedding: [0, 1] }, { id: 'import:y', cardId: 'c', ts: null, embedding: [1, 1] }]);
+  assert.equal(idb.transactions.length - before, 1);
+  assert.deepEqual((await store.allReferences()).map((r) => r.id).sort(), ['import:x', 'import:y']);
+  assert.equal(await store.count(), 1);
+  await store.replaceReferences([], { clearCorrections: true });
+  assert.equal(await store.countReferences(), 0);
+  assert.equal(await store.count(), 0);
 });

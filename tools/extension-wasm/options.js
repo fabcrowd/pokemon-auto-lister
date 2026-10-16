@@ -171,7 +171,30 @@ btnClearCorrections.addEventListener("click", async () => {
   const resp = await chrome.runtime.sendMessage({ action: "clearCorrections" }).catch(() => null);
   if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the corrections. Try again.", "err"); return; }
   await refreshCorrectionCount();
+  await refreshReferenceCount();
   showCorrectionsStatus("Cleared. 0 corrections saved.", "ok");
+});
+
+const referencesToggle = document.getElementById("use-references");
+const referencesCount  = document.getElementById("references-count");
+
+async function refreshReferenceCount() {
+  const resp = await chrome.runtime.sendMessage({ action: "countReferences" }).catch(() => null);
+  referencesCount.textContent = typeof resp?.count === "number" ? `${resp.count} references` : "References: unavailable";
+}
+
+async function loadReferencesToggle() {
+  const { useReferences } = await chrome.storage.local.get("useReferences").catch(() => ({}));
+  referencesToggle.checked = useReferences === true;
+}
+
+referencesToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ useReferences: referencesToggle.checked }).catch(() => {});
+  if (referencesToggle.checked) {
+    await chrome.runtime.sendMessage({ action: "startReferences" }).catch(() => null);
+    setTimeout(refreshReferenceCount, 3000);
+  }
+  showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
 });
 
 /* ─── Test photos ─── */
@@ -244,6 +267,8 @@ btnClearPhotos.addEventListener("click", async () => {
 });
 
 refreshCorrectionCount();
+refreshReferenceCount();
+loadReferencesToggle();
 refreshPhotoCount();
 loadCollectionToggle();
 loadKey();

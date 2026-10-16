@@ -39,8 +39,8 @@ export function nearestWithin(hashes, hash, limit) {
   return best;
 }
 
-/** Hash an image buffer, or a pixel box [x1, y1, x2, y2] of it. */
-export async function dhashImage(buffer, box = null) {
+/** Hash an image buffer, or a pixel box [x1, y1, x2, y2] of it, optionally turned by 90, 180 or 270 degrees first. */
+export async function dhashImage(buffer, box = null, turn = 0) {
   let image = sharp(buffer, { limitInputPixels: MAX_PIXELS });
   if (box) {
     const { width, height } = await image.metadata();
@@ -53,6 +53,8 @@ export async function dhashImage(buffer, box = null) {
       height: Math.max(1, Math.min(height - top, Math.ceil(box[3]) - top)),
     });
   }
+  // Turned after the cut, in its own pass: sharp would otherwise turn first and cut a different box.
+  if (turn) image = sharp(await image.toBuffer()).rotate(turn);
   const gray = await image.greyscale().resize(COLS, ROWS, { fit: 'fill' }).raw().toBuffer();
   return dhashFromGray(gray);
 }

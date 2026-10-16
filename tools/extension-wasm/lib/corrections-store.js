@@ -5,6 +5,7 @@ const DB_NAME = "card-scanner";
 const CORRECTIONS = "corrections";
 const SCANS = "scans";
 const PHOTOS = "testPhotos";
+const REFERENCES = "references";
 const KEEP_SCANS = 2;
 
 /** @param idb an IndexedDB factory; the tests pass a small fake. */
@@ -14,7 +15,7 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
   function open() {
     if (!idb) return Promise.reject(new Error("IndexedDB is not available here"));
     opening ??= new Promise((resolve, reject) => {
-      const request = idb.open(DB_NAME, 3);
+      const request = idb.open(DB_NAME, 4);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(CORRECTIONS)) {
@@ -22,6 +23,7 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
         }
         if (!db.objectStoreNames.contains(SCANS)) db.createObjectStore(SCANS, { keyPath: "scanId" });
         if (!db.objectStoreNames.contains(PHOTOS)) db.createObjectStore(PHOTOS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(REFERENCES)) db.createObjectStore(REFERENCES, { keyPath: "id" });
       };
       request.onsuccess = () => {
         const db = request.result;
@@ -38,11 +40,12 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
     return opening;
   }
 
+  // A list of store names gives `start` a function that picks the store, all inside one transaction.
   async function attempt(mode, storeName, start) {
     const db = await open();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(storeName, mode);
-      const request = start(tx.objectStore(storeName));
+      const request = start(Array.isArray(storeName) ? (name) => tx.objectStore(name) : tx.objectStore(storeName));
       tx.oncomplete = () => resolve(request.result);
       tx.onerror = () => reject(tx.error ?? request.error);
       tx.onabort = () => reject(tx.error ?? new Error("transaction aborted"));
@@ -63,6 +66,20 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
   return {
     /** Insert, or replace the record with the same id. */
     save: (record) => run("readwrite", CORRECTIONS, (store) => store.put(record)),
+    getCorrection: (id) => run("readonly", CORRECTIONS, (store) => store.get(id)),
+    // Without the pictures, which are most of each row: one row is held at a time.
+    correctionHeads: () => run("readonly", CORRECTIONS, (store) => {
+      const heads = [];
+      const cursor = store.openCursor();
+      cursor.onsuccess = () => {
+        const at = cursor.result;
+        if (!at) return;
+        const { id, ts, pickedId, crop } = at.value;
+        heads.push({ id, ts, pickedId, hasCrop: Boolean(crop) });
+        at.continue();
+      };
+      return { get result() { return heads; } };
+    }),
     all: () => run("readonly", CORRECTIONS, (store) => store.getAll()),
     count: () => run("readonly", CORRECTIONS, (store) => store.count()),
     clear: () => run("readwrite", CORRECTIONS, (store) => store.clear()),
@@ -91,5 +108,19 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       return { get result() { return found; } };
     })),
     clearPhotos: () => run("readwrite", PHOTOS, (store) => store.clear()),
+    /** Insert, or replace the reference with the same id (the id of its correction). */
+    saveReference: (ref) => run("readwrite", REFERENCES, (store) => store.put(ref)),
+    allReferences: () => run("readonly", REFERENCES, (store) => store.getAll()),
+    countReferences: () => run("readonly", REFERENCES, (store) => store.count()),
+    deleteReference: (id) => run("readwrite", REFERENCES, (store) => store.delete(id)),
+    clearReferences: () => run("readwrite", REFERENCES, (store) => store.clear()),
+    /** Swap every reference for `rows` in one transaction, so no reader sees half a set. */
+    replaceReferences: (rows, { clearCorrections = false } = {}) => run("readwrite", [REFERENCES, CORRECTIONS], (storeOf) => {
+      if (clearCorrections) storeOf(CORRECTIONS).clear();
+      const refs = storeOf(REFERENCES);
+      let last = refs.clear();
+      for (const row of rows) last = refs.put(row);
+      return last;
+    }),
   };
 }

@@ -15,7 +15,7 @@ export function isUnsure(card) {
   return Boolean(card.abstain) || (card.setChoices?.length || 0) > 1 || confTier(card.confidence) === "low";
 }
 
-/** Set choices first, then the scanner's guess, then other printings of the name. */
+/** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
 export function candidatesFor(card, meta, limit = 5) {
   if (!card) return [];
   const catalog = Array.isArray(meta) ? meta : [];
@@ -28,6 +28,7 @@ export function candidatesFor(card, meta, limit = 5) {
     seen.add(row.id);
     out.push(row);
   };
+  if (card.referencedId) add(catalog.find((row) => row.id === card.referencedId));
   for (const choice of choices) add(byId.get(choice.id) ?? choice);
   if (card.identity?.id) add(byId.get(card.identity.id) ?? card.identity);
   const name = choiceName(card.identity?.name ?? choices[0]?.name);
@@ -131,6 +132,7 @@ export function guessOf(card) {
     confidence: Number.isFinite(card?.confidence) ? card.confidence : null,
     abstain: Boolean(card?.abstain),
     choiceIds: (card?.setChoices || []).map((choice) => choice.id),
+    catalogTop: Number.isFinite(card?.catalogTop) ? card.catalogTop : null,
   };
 }
 
@@ -167,6 +169,7 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
       confidence: Number.isFinite(guess?.confidence) ? guess.confidence : null,
       abstain: Boolean(guess?.abstain),
       choiceIds: Array.isArray(guess?.choiceIds) ? guess.choiceIds.filter((id) => typeof id === "string") : [],
+      catalogTop: Number.isFinite(guess?.catalogTop) ? guess.catalogTop : null,
     },
     pickedId,
     via,

@@ -91,6 +91,27 @@ Scraping eBay, Mercari, or Facebook breaks their terms, and Facebook needs a log
 - It never prints file names, listing ids, or per-photo results.
 - Each run appends `{ ts, gitCommit, counts }` to `data/sealed-test/score-log.jsonl`, so the number of runs is visible.
 
+## Step 3a — Reference memory from corrections (building 2026-10-16)
+
+- **Reference store.** A `references` IndexedDB store holds one row per correction: `{ id, cardId, ts, embedding }`. `ts` is the correction's time, so a reference made from a replaced answer is recognized as stale.
+  - The embedding is the normalized 512-float CLIP vector of the correction's crop, made with the extension's own `embedCard`.
+  - Corrections without an embedding are embedded later, once the models are loaded and only while the option is on. Saving a correction never waits for the models.
+  - Embeddings must be finite, 512 floats, unit length (within 1e-3); anything else is refused on import and export.
+  - When a correction is replaced (same `scanId:index`), its reference is replaced with it.
+- **Use at search.** After `searchCatalog`, the query is also scored against the references. A reference reorders printings; it never overrides the catalog.
+  - A reference counts only if its score reaches `REFERENCE_MIN`, and only if it also beats the top catalog hit by `REFERENCE_MARGIN`.
+  - It may only promote a card that is already in the catalog's physical top 20. That card moves to the front at the catalog's top score, so fusion sees a tie: no confidence is added and the unsure picker can still appear.
+  - When the card is unsure, its `candidates` list starts with the referenced card.
+  - Each correction also saves the catalog's top score (`guess.catalogTop`) so the margin can be measured later.
+  - Both constants are documented as unmeasured. They may be set only from dev data (the user's own corrections, leave-one-out), never from the sealed set.
+- **Option.** "Recognize cards I corrected before" is **off by default** until a sealed score shows it helps.
+- **Measuring it.** `sealed-score.mjs --references <corrections-export.json>` loads that export's references into the scoring profile.
+  - Any correction whose crop dHash is within 6 of a sealed photo, a sealed box crop, or a box crop turned 90, 180 or 270 degrees is dropped first. The dropped count and a histogram of how close the kept ones came (7-10, 11-15, over 15 bits) are printed.
+  - This cannot catch a different photo of the same physical card.
+  - The scoring profile's own corrections are cleared and the loaded reference count is checked before the first scan and after the last.
+  - Comparing a run with references to one without is the gate.
+- **Leave-one-out dev check.** `scripts/references-dev-check.mjs <corrections-export.json>` reports, for a given threshold and margin, how often a held-out correction's nearest reference from another scan is the right card. Results are an upper bound for `REFERENCE_MIN` (they ignore whether the card was in the catalog's top 20). The margin can be judged only for corrections saved with a catalog top score.
+
 ## Step 3 — Learn from corrections (plan only; build after steps 1–2)
 - The cheapest learning needs no retraining. Add user-confirmed crops as extra reference embeddings for their card id in the FAISS index, so a card seen and corrected once is found next time.
 - Periodic retrain: corrections go to the train split only. Drop any whose dHash or URL matches a sealed photo.

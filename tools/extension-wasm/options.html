@@ -314,6 +314,11 @@
       They stay in this browser. Nothing is uploaded.
     </div>
     <div class="source-body">
+      <label class="toggle" for="use-references"><input type="checkbox" id="use-references"> Recognize cards I corrected before</label>
+      <div class="source-desc" id="references-desc">
+        Uses your own corrections to put a card you fixed earlier first among the choices. It is off until its accuracy has been measured, and turning it on makes the scanner read your saved pictures once.
+      </div>
+      <div class="source-name" id="references-count">References: … </div>
       <div class="btn-row">
         <button class="btn secondary" id="export-corrections" type="button">Export</button>
         <button class="btn danger" id="clear-corrections" type="button">Clear</button>

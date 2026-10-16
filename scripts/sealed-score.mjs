@@ -1,6 +1,10 @@
 // Score the sealed-test build of the extension on the sealed test photos. Prints totals only.
 //
 //   node scripts/sealed-score.mjs [--dir data/sealed-test] [--profile data/sealed-score-profile] [--ext dist/extension-wasm-sealed]
+//                                 [--references <corrections-export.json>]
+//
+// --references scores with reference memory on, loaded from a corrections export. Corrections that look like a
+// sealed photo are dropped first. Without it, references are cleared and off, so runs stay comparable.
 //
 // Build the extension first: powershell -File scripts/build-wasm-extension.ps1 -Sealed
 // Run it when asked, not in a tuning loop: every run is logged in score-log.jsonl.
@@ -17,6 +21,7 @@ import { currentLabels, isPhotoDone, truthOf, validPhotoRow } from './lib/sealed
 import { addTallies, emptyTally, summarize, tallyPhoto } from './lib/sealed-metrics.mjs';
 import { clearStaleServiceWorker } from './lib/profile-cache.mjs';
 import { isInside, localHostAllowed } from './lib/sealed-paths.mjs';
+import { dropNearSealed, sealedHashes } from './lib/references-sealed.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -27,6 +32,12 @@ const flag = (name, fallback) => {
 const dir = path.resolve(flag('dir', path.join('data', 'sealed-test')));
 const profile = path.resolve(flag('profile', path.join(root, 'data', 'sealed-score-profile')));
 const extPath = path.resolve(flag('ext', path.join(root, 'dist', 'extension-wasm-sealed')));
+const referencesFile = flag('references', null);
+if (args.includes('--references') && (!referencesFile || referencesFile.startsWith('--'))) {
+  console.error('--references needs the path of a corrections export file.');
+  process.exit(2);
+}
+const DROP_WITHIN_BITS = 6;
 const MAX_VIEWPORT_SIDE = 1400;
 const SCAN_TIMEOUT_MS = 4 * 60_000;
 
@@ -58,6 +69,24 @@ const labels = currentLabels(readJsonl(path.join(dir, 'labels.jsonl')));
 const allPhotos = readJsonl(path.join(dir, 'photos.jsonl')).filter(validPhotoRow);
 const ready = allPhotos.filter((photo) => isPhotoDone(photo, labels));
 if (ready.length === 0) fail('No fully labeled photos yet.');
+
+// Reference memory is built from the user's own corrections, so any that show a sealed card would leak the answer.
+let referenceRows = [];
+if (referencesFile) {
+  let exported;
+  try {
+    exported = JSON.parse(fs.readFileSync(path.resolve(referencesFile), 'utf8'));
+  } catch {
+    fail('--references needs a corrections export file (JSON) from the extension settings page.');
+  }
+  if (!Array.isArray(exported?.corrections)) fail('That file has no "corrections" list.');
+  const withVectors = exported.corrections.filter((c) => typeof c?.embedding === 'string' && typeof c?.pickedId === 'string');
+  const { kept, dropped, histogram } = await dropNearSealed(withVectors, await sealedHashes(dir, allPhotos), DROP_WITHIN_BITS);
+  referenceRows = kept.map((c) => ({ id: String(c.id), cardId: c.pickedId, embedding: c.embedding }));
+  console.log(`Dropped ${dropped} corrections that look like sealed photos.`);
+  console.log(`Kept corrections by distance to the nearest sealed hash: 7-10 bits ${histogram['7-10']}, 11-15 bits ${histogram['11-15']}, over 15 bits ${histogram['>15']}.`);
+  console.log('This cannot catch a different photo of the same physical card.');
+}
 
 // Photos are served by position, so no file name or sha reaches a log line or the browser.
 const server = http.createServer((req, res) => {
@@ -134,6 +163,20 @@ try {
   if (await scanner.locator('#btn-wiz-skip').isVisible()) await scanner.locator('#btn-wiz-skip').click();
   if (!(await scanner.locator('#btn-scan').isEnabled())) throw new SetupError('The extension models are not ready in the scoring profile.');
 
+  // The profile is reused between runs, so every run sets references explicitly: this run's set, or none.
+  const loaded = await scanner.evaluate(async ({ references, on }) => {
+    const answer = await chrome.runtime.sendMessage({ action: 'importReferences', references, clearCorrections: true });
+    await chrome.storage.local.set({ useReferences: on });
+    return answer?.imported;
+  }, { references: referenceRows, on: Boolean(referencesFile) });
+  if (loaded !== referenceRows.length) throw new SetupError('The extension did not take the references.');
+  // The scoring profile may hold corrections of its own; these checks make sure only the loaded set was ever in use.
+  const referencesHeld = () => scanner.evaluate(async () => (await chrome.runtime.sendMessage({ action: 'countReferences' }))?.count);
+  const checkReferences = async () => {
+    if ((await referencesHeld()) !== referenceRows.length) throw new SetupError('The references in the scoring profile changed during the run, so the scores are not comparable.');
+  };
+  await checkReferences();
+
   for (const [index, photo] of ready.entries()) {
     const scale = Math.min(1, MAX_VIEWPORT_SIDE / Math.max(photo.width, photo.height));
     let response = null;
@@ -176,6 +219,7 @@ try {
     }));
     tally = addTallies(tally, tallyPhoto({ truth, missed, preds }));
   }
+  await checkReferences();
 } catch (err) {
   stopped = err instanceof SetupError ? err.message : 'The run stopped early because of a browser or extension problem.';
 } finally {
@@ -185,6 +229,7 @@ try {
 if (stopped) fail(stopped);
 
 const metrics = summarize(tally);
+console.log(referencesFile ? `Mode: references on (${referenceRows.length} loaded).` : 'Mode: baseline (references cleared and off).');
 const percent = (value) => `${(value * 100).toFixed(1)}%`;
 const NAMES = {
   detectionRecall: 'Detection recall (of all labeled cards)',
@@ -214,5 +259,6 @@ for (const [key, label] of Object.entries(NAMES)) {
 const logFile = path.join(dir, 'score-log.jsonl');
 fs.appendFileSync(logFile, JSON.stringify({
   ts: Date.now(), gitCommit: gitCommit(), n: tally.photos, of: allPhotos.length, failed, input, metrics,
+  references: referencesFile ? referenceRows.length : null,
 }) + '\n');
 console.log(`This is run ${readJsonl(logFile).length} on this set.`);

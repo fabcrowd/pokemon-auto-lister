@@ -61,3 +61,13 @@ test('dhashImage can hash just a box of the picture', async () => {
   const leftOnly = await sharp(half).extract({ left: 0, top: 0, width: 100, height: 200 }).png().toBuffer();
   assert.equal(left, await dhashImage(leftOnly));
 });
+
+test('dhashImage can hash a turned copy of the picture', async () => {
+  const raw = Buffer.alloc(20 * 30 * 3);
+  for (let y = 0; y < 30; y++) for (let x = 0; x < 20; x++) raw.set([x * 12, y * 8, (x * y) % 255], (y * 20 + x) * 3);
+  const jpeg = await sharp(raw, { raw: { width: 20, height: 30, channels: 3 } }).png().toBuffer();
+  const turned = await sharp(jpeg).rotate(90).png().toBuffer();
+  assert.equal(await dhashImage(jpeg, null, 90), await dhashImage(turned));
+  assert.notEqual(await dhashImage(jpeg, null, 90), await dhashImage(jpeg));
+  assert.equal(await dhashImage(jpeg, [0, 0, 10, 30], 180), await dhashImage(await sharp(jpeg).extract({ left: 0, top: 0, width: 10, height: 30 }).rotate(180).png().toBuffer()));
+});
