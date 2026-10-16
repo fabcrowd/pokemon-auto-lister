@@ -1,3 +1,4 @@
+import { MIN_BOX_PX, boxFromCorners, defaultBox, keyStep, moveBox, resizeBox } from "/box-geometry.js";
 import { escHtml, renderPickList, thumbUrl } from "/lib/card-picker.js";
 
 const $ = (id) => document.getElementById(id);
@@ -5,7 +6,6 @@ const EDITIONS = [["first", "1st Edition"], ["shadowless", "Shadowless"], ["stan
 const FINISHES = [["holofoil", "Holo"], ["reverse", "Reverse"], ["normal", "Normal"], [null, "Can't tell"]];
 const CROP_BOX = { width: 360, height: 480 };
 const MAX_DRAWN = 60;
-const MIN_DRAW_PX = 8;
 
 // mode: "box" labels a detector box, "review" is the end-of-photo check, "drawn" labels a box the person just drew.
 const state = {
@@ -172,6 +172,7 @@ function renderReview(item) {
 function showReview(item) {
   setMode("review");
   state.drawnBox = null;
+  endAssist();
   renderReview(item);
   $("done-photo").focus();
 }
@@ -332,51 +333,45 @@ $("back").addEventListener("click", async () => {
   }
 });
 
-// Drawing: drag on the whole photo. Positions are kept as fractions of the shown photo, then scaled to photo pixels.
+// Drawing a box has three ways in: drag, click two opposite corners, or the keyboard.
 const frame = $("review-frame");
 let drag = null;
+let corner = null;
+let keyBox = null;
 
 function pointFrom(event) {
   const rect = frame.getBoundingClientRect();
   return {
-    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * state.item.width,
+    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)) * state.item.height,
   };
 }
 
-function dragBox(end) {
-  return [Math.min(drag.x, end.x), Math.min(drag.y, end.y), Math.max(drag.x, end.x), Math.max(drag.y, end.y)];
+function showPreview(box) {
+  $("preview").hidden = false;
+  placeRect($("preview"), state.item, box);
 }
 
-frame.addEventListener("pointerdown", (event) => {
-  if (state.mode !== "review" || event.button !== 0) return;
-  drag = pointFrom(event);
-  frame.setPointerCapture(event.pointerId);
-  event.preventDefault();
-});
-
-frame.addEventListener("pointermove", (event) => {
-  if (!drag) return;
-  const [x1, y1, x2, y2] = dragBox(pointFrom(event));
-  const preview = $("preview");
-  preview.hidden = false;
-  preview.style.left = `${x1 * 100}%`;
-  preview.style.top = `${y1 * 100}%`;
-  preview.style.width = `${(x2 - x1) * 100}%`;
-  preview.style.height = `${(y2 - y1) * 100}%`;
-});
-
-async function finishDrag(event) {
-  if (!drag) return;
-  const [x1, y1, x2, y2] = dragBox(pointFrom(event));
-  drag = null;
-  $("preview").hidden = true;
+function describeBox([x1, y1, x2, y2]) {
   const { width, height } = state.item;
-  const box = [x1 * width, y1 * height, x2 * width, y2 * height].map(Math.round);
-  if (box[2] - box[0] < MIN_DRAW_PX || box[3] - box[1] < MIN_DRAW_PX) return;
+  const pct = (value, of) => Math.round((value / of) * 100);
+  return `Box ${pct(x2 - x1, width)} percent wide and ${pct(y2 - y1, height)} percent tall, ${pct(x1, width)} percent from the left and ${pct(y1, height)} percent from the top.`;
+}
+
+function endAssist() {
+  corner = null;
+  keyBox = null;
+  $("preview").hidden = true;
+  $("preview").classList.remove("keyboard");
+  $("kbd-help").hidden = true;
+  frame.removeAttribute("tabindex");
+}
+
+async function startDrawn(box) {
   const used = new Set(state.item.drawn.map((row) => row.drawnId));
   let id = 0;
   while (used.has(id) && id < MAX_DRAWN) id += 1;
+  endAssist();
   if (id >= MAX_DRAWN) {
     say("That is as many boxes as one photo can hold.");
     return;
@@ -398,10 +393,95 @@ async function finishDrag(event) {
   $("q").focus();
 }
 
+const isBigEnough = (box) => box[2] - box[0] >= MIN_BOX_PX && box[3] - box[1] >= MIN_BOX_PX;
+
+frame.addEventListener("pointerdown", (event) => {
+  if (state.mode !== "review" || event.button !== 0) return;
+  if (keyBox) endAssist();
+  drag = pointFrom(event);
+  frame.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+
+frame.addEventListener("pointermove", (event) => {
+  const from = drag || corner;
+  if (!from) return;
+  showPreview(boxFromCorners(from, pointFrom(event), state.item.width, state.item.height));
+});
+
+async function finishDrag(event) {
+  if (!drag) return;
+  const end = pointFrom(event);
+  const { width, height } = state.item;
+  const dragged = boxFromCorners(drag, end, width, height);
+  drag = null;
+  if (isBigEnough(dragged)) {
+    await startDrawn(dragged);
+    return;
+  }
+  if (!corner) {
+    corner = end;
+    $("preview").hidden = true;
+    say("First corner set. Click the opposite corner of the card, or press Escape to start over.", true);
+    return;
+  }
+  const clicked = boxFromCorners(corner, end, width, height);
+  if (!isBigEnough(clicked)) {
+    say("Those corners are too close together. Click the opposite corner of the card.");
+    return;
+  }
+  await startDrawn(clicked);
+}
+
 frame.addEventListener("pointerup", finishDrag);
 frame.addEventListener("pointercancel", () => {
   drag = null;
   $("preview").hidden = true;
+});
+
+$("kbd-draw").addEventListener("click", () => {
+  endAssist();
+  keyBox = defaultBox(state.item.width, state.item.height);
+  frame.tabIndex = 0;
+  $("preview").classList.add("keyboard");
+  $("kbd-help").hidden = false;
+  showPreview(keyBox);
+  frame.focus();
+  say(`Drawing a box. Arrow keys move it, Shift with arrow keys resizes it, Enter confirms, Escape cancels. ${describeBox(keyBox)}`, true);
+});
+
+frame.addEventListener("keydown", (event) => {
+  if (!keyBox || event.altKey || event.ctrlKey || event.metaKey) return;
+  const { width, height } = state.item;
+  const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+  if (arrow) {
+    event.preventDefault();
+    const step = keyStep(width, height);
+    const [dx, dy] = [arrow[0] * step, arrow[1] * step];
+    keyBox = event.shiftKey ? resizeBox(keyBox, dx, dy, width, height) : moveBox(keyBox, dx, dy, width, height);
+    showPreview(keyBox);
+    say(describeBox(keyBox), true);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    startDrawn(keyBox);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    endAssist();
+    say("Box cancelled.", true);
+    $("kbd-draw").focus();
+  }
+});
+
+frame.addEventListener("focusout", () => {
+  if (!keyBox) return;
+  endAssist();
+  say("Box cancelled.", true);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !corner) return;
+  endAssist();
+  say("Corner cleared.", true);
 });
 
 choiceButtons($("edition"), EDITIONS, "edition");

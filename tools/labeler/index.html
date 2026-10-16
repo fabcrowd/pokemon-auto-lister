@@ -42,9 +42,13 @@
 
       <div id="review-view" hidden>
         <h2 id="review-title">Any cards the detector missed?</h2>
-        <p class="note" id="review-help">Drag on the photo to draw a box around each card that has no outline. Gray outlines are boxes you already labeled.</p>
-        <div class="whole-frame draw" id="review-frame" tabindex="-1">
-          <img id="review-photo" alt="The whole photo. Drag on it to draw a box around a card the detector missed." draggable="false">
+        <p class="note" id="review-help">Draw a box around each card that has no outline: drag on the photo, click two opposite corners, or use the keyboard button. Gray outlines are boxes you already labeled.</p>
+        <div class="actions">
+          <button type="button" class="btn" id="kbd-draw">Draw a box with the keyboard</button>
+        </div>
+        <p class="note" id="kbd-help" hidden>Arrow keys move the box. Shift with arrow keys makes it larger or smaller. Enter confirms. Escape cancels.</p>
+        <div class="whole-frame draw" id="review-frame" role="group" aria-label="Photo drawing area" aria-describedby="kbd-help">
+          <img id="review-photo" alt="The whole photo. Draw a box on it around a card the detector missed." draggable="false">
           <div id="review-boxes"></div>
           <div class="outline preview" id="preview" hidden></div>
         </div>

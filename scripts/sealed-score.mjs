@@ -15,6 +15,7 @@ import { isUnsure } from '../tools/extension-wasm/lib/card-picker.js';
 import { detectedVariant } from '../tools/extension-wasm/lib/card-display.js';
 import { currentLabels, isPhotoDone, truthOf, validPhotoRow } from './lib/sealed-labels.mjs';
 import { addTallies, emptyTally, summarize, tallyPhoto } from './lib/sealed-metrics.mjs';
+import { clearStaleServiceWorker } from './lib/profile-cache.mjs';
 import { isInside, localHostAllowed } from './lib/sealed-paths.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,10 +50,6 @@ function fail(message) {
   process.exit(2);
 }
 
-// The cache cleanup below deletes inside the profile, so it must be a scratch folder of this repo, never a real browser profile.
-if (!isInside(path.join(root, 'data'), profile) && !isInside(path.join(root, '.tmp'), profile)) {
-  fail('--profile must be a folder inside this repo\'s data/ folder.');
-}
 if (!isInside(path.join(root, 'dist'), extPath) || !fs.existsSync(path.join(extPath, 'lib', 'net-shipped.js'))) {
   fail('Build the sealed test extension first: powershell -File scripts/build-wasm-extension.ps1 -Sealed');
 }
@@ -87,10 +84,10 @@ const server = http.createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 
-// Chrome keeps running the service worker script it cached on an earlier launch of the same
-// profile, so a rebuilt extension would be scored as its old self. Models live in CacheStorage, which stays.
-for (const stale of ['ScriptCache', 'Database']) {
-  fs.rmSync(path.join(profile, 'Default', 'Service Worker', stale), { recursive: true, force: true });
+try {
+  clearStaleServiceWorker(root, profile);
+} catch {
+  fail("--profile must be a folder inside this repo's data/ or .tmp/ folder.");
 }
 
 const isExtensionWorker = (w) => w.url().startsWith('chrome-extension://');

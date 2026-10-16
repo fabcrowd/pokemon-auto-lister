@@ -15,6 +15,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/labeler.js': ['labeler.js', 'text/javascript; charset=utf-8'],
+  '/box-geometry.js': ['box-geometry.js', 'text/javascript; charset=utf-8'],
   '/labeler.css': ['labeler.css', 'text/css; charset=utf-8'],
 };
 // Catalog thumbnails come from TCGdex and pokemontcg.io, so images may load from any https host; nothing else may.

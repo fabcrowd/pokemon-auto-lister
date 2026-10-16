@@ -11,6 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { clearStaleServiceWorker } from '../../scripts/lib/profile-cache.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const extPath = path.join(root, 'dist', 'extension-wasm');
 const photoPath = process.argv[2]
@@ -55,6 +57,8 @@ const server = http.createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const logs = [];
+
+clearStaleServiceWorker(root, profile);
 
 const launch = () => chromium.launchPersistentContext(profile, {
   headless: false,
