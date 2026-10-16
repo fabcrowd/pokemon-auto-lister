@@ -1,4 +1,4 @@
-import { detectedVariant, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
+import { detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, sourceFooter, sourceName } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 
 const btnScan      = document.getElementById("btn-scan");
@@ -512,11 +512,21 @@ function seedVariant(card, idx) {
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
   const printings = Object.keys(grid?.variants || {});
-  if (printings.length <= 1) return "";
+  const shadowless = editionNote(card);
+  if (printings.length <= 1) return shadowless ? `<div class="spread-warn">${escHtml(shadowless)}</div>` : "";
   const picked = _variantChoice.get(idx) || "";
   const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
   const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
-  const note = picked && picked === detectedVariant(card) ? "1st Edition stamp found" : printingNote(grid);
+  const seen = picked && picked === detectedVariant(card);
+  const stampNote = {
+    prerelease: "Prerelease stamp found",
+    staff: "Staff stamp found",
+    league: "League stamp found",
+    setstamp: "Set stamp found",
+  }[card.variant?.stamp];
+  const note = seen
+    ? (stampNote || editionNote(card) || (card.firstEdition ? "1st Edition stamp found" : card.shadow ? "Drop shadow seen" : "Variant seen on the card"))
+    : (editionNote(card) || printingNote(grid));
   return `<div class="variant-select-row">
     <span class="lbl">Variant</span>
     <select data-idx="${idx}" aria-label="Variant">${blank}${options}</select>

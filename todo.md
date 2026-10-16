@@ -10,7 +10,15 @@ The existing backend `GET /api/price-grid` is documented as a JustTCG price-grid
 
 The popup now says "Choose variant". These steps let the scan pick the variant when the card shows it.
 
-### V1. 1st Edition stamp — DONE (uncommitted)
+Measurement caveat (2026-10-15): every number below comes from ShopGoodwill crops labeled by listing title, and the "held-out" listings were used to tune these rules one photo at a time. Treat them as dev-set numbers. The variant model (`tools/extension-wasm/models/variant.onnx`) is not committed. The scanner works without it, and it ships only after it scores on a sealed test set of hand-checked photos from other marketplaces.
+
+Open from the 2026-10-15 review:
+- Split training photos by near-duplicate groups (a perceptual hash across listings), not by listing id. A relisted card with a re-shot photo can still land in train and holdout.
+- Require a minimum per-class count in validation and holdout before a score is reported. Shadowless has 5 holdout crops and set stamps have 8.
+- `recognizeCard` drops `numberRead` and `agreedFinish` on the named returns, so the tied-sets finish is lost there.
+- `identifyCard` reads the art stamp and promo star on every card of 400 px or more, including modern sets that cannot have them, and computes `cardGrayFull` twice.
+
+### V1. 1st Edition stamp — DONE
 - `tools/extension-wasm/lib/edition-stamp.js`: masked template match of the real stamp (cut from a Jungle Marowak photo, `lib/first-edition-stamp.js`) in the area left of the stat bar, below the art. Card resized to 375x525, 8 stamp sizes, 134 ms per card.
 - It runs only when the card's set (or a set the user may pick) had a 1st Edition: base1, base2, base3, base5, gym1, gym2, neo1–neo4. It also needs the card to be at least 400 source px tall.
 - Stamp found:
@@ -27,14 +35,11 @@ The popup now says "Choose variant". These steps let the scan pick the variant w
   - Cost: about 1 in 12 real 1st Editions would be priced low (glare).
   - Needs a decision.
 
-### V2. Shadowless (Base Set only)
-- Cue: Unlimited Base Set cards have a dark drop shadow along the right edge of the art frame; Shadowless and 1st Edition Base Set do not (seen on the 279630487 Ivysaur vs the 276846227 Squirtle).
-- Measure first, as for V1:
-  - Labelled set: the base1 cards in lots 279630487/279630443 (Unlimited) against 273298162, 274640714, 274639003, 276846227, 277838115, 279336484, 279118621 and 276737413 (Shadowless; already downloaded).
-  - Feature: the luminance profile across the art frame's right border, in rows 20–38% of card height. Shadow means a dark band between the gold frame and the card body. Locate the frame edge per crop; the finder's boxes are loose.
-  - Ship only if it separates like V1 does (no false Shadowless at the chosen threshold).
-- Only for `base1`. A 1st Edition stamp on base1 already implies Shadowless.
-- Result values: `shadowless: true | false | null`. `false` = shadow seen, so Unlimited can be preselected; that is safe because it is the cheaper price.
+### V2. Shadowless border — measured, shown as a note (never auto-priced)
+- `tools/extension-wasm/lib/frame-shadow.js`: a near-black valley between the gold art frame and the yellow border, rows 22–34% of the card, right edge.
+- Measured on the downloaded lots. Shadowless-titled crops (33) all score 0. Cards with the band score 0.36–0.65. Threshold 0.25. The 11 zeros inside the "unlimited" lot 279630443 are 2004 cards, which have no WotC shadow.
+- It runs only when every set choice is `base1` (Jungle and Fossil have the same band on every copy, so it cannot name the set). A 1st Edition stamp still wins.
+- Shadow seen, and the grid has one non-1st-Edition price: the popup preselects it and says "Drop shadow seen". No shadow: the user still picks. A missed shadow must not be labeled Shadowless, because that price is higher and V3 is what supplies it.
 
 ### V3. Price source for Shadowless and Base Set 1st Edition (TCGCSV)
 - TCGdex/pokemontcg.io have one Base Set price (Unlimited). [TCGCSV](https://tcgcsv.com) mirrors TCGplayer daily, keyless:

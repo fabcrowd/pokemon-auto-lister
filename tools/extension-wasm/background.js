@@ -13,18 +13,22 @@ try {
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset } from "./lib/setup.js";
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
-import { filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
+import { extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport } from "./photo-detection.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { loadCatalog, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
 import { fuseResults }                 from "./lib/fusion.js";
-import { setChoices, choiceName }      from "./lib/set-choice.js";
+import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { isCardBack }                  from "./lib/card-back.js";
-import { loadNumberReader, readCardNumber } from "./lib/ocr.js";
-import { setSizes, printingByNumber }  from "./lib/card-number.js";
+import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
+import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
-import { FIRST_EDITION_MIN_SCORE, grayFromRgba, hasFirstEdition, stampScore } from "./lib/edition-stamp.js";
+import { FIRST_EDITION_MIN_SCORE, editionAfterEreader, editionAfterPromo, editionForSets, grayFromRgba, hasFirstEdition, pricedEdition, stampAfterFirst, stampBelowText, stampScore } from "./lib/edition-stamp.js";
+import { SHADOW_MIN_DEPTH, borderEdition, shadowDepth } from "./lib/frame-shadow.js";
+import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-model.js";
+import { choiceForStamp, finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
+import { PROMO_STAR_MIN, choicesForSymbol, promoStarScore, symbolFromScores, symbolScores } from "./lib/set-symbol.js";
 import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
@@ -195,6 +199,7 @@ async function loadModels() {
 
     _ready = true;
     _loadNumberReader();
+    _loadVariantModel();
   })();
   try {
     await _loadPromise;
@@ -205,6 +210,15 @@ async function loadModels() {
 }
 
 let _numberReader = null;
+
+// The variant model ships inside the extension. Scanning works without it.
+function _loadVariantModel() {
+  fetch(chrome.runtime.getURL("models/variant.onnx"))
+    .then((res) => (res.ok ? res.arrayBuffer() : null))
+    .then((buffer) => (buffer ? loadVariantModel(buffer) : null))
+    .then(() => { if (variantModelReady()) console.log("[BG] variant model loaded"); })
+    .catch((err) => console.log("[BG] variant model not available", err?.message || err));
+}
 
 // Scans run without the number reader until its files are cached.
 function _loadNumberReader() {
@@ -307,6 +321,13 @@ async function handleSetup(sendResponse) {
 }
 
 // ─── page scan ───────────────────────────────────────────────────────────────
+
+function readBitmap(bitmap) {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+}
 
 async function handleScanPage(sendResponse, era) {
   console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId, "era =", era?.id || "any");
@@ -422,20 +443,34 @@ async function handleScanPage(sendResponse, era) {
         if (!boxes.length) continue;
         console.log("[BG]   splitting", boxes.length, "cards");
         preemptedPhotoKeys.add(_photoKey(ph));
+        const photoPixels = readBitmap(photoBitmap);
         for (const { box, score } of boxes) {
           const [bx1, by1, bx2, by2] = box;
           if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
+          const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
           let viewportBox;
-          let cardCanvas;
           if (fromSource) {
             viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
             if (!viewportBox) continue;
-            cardCanvas = rectifyCard(photoBitmap, box);
           } else {
             viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
-            cardCanvas = rectifyCard(bitmap, [sx + bx1, sy + by1, sx + bx2, sy + by2]);
           }
-          cards.push({ box: viewportBox, score, ...(await identifyCard(cardCanvas, era, by2 - by1)), via: "yolo-in-photo" });
+          const rectify = (rect) => fromSource
+            ? rectifyCard(photoBitmap, rect)
+            : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
+          const cardCanvas = rectify(box);
+          // The number is read from the detector box. The stamp is scored on the
+          // box after a clipped yellow border is included, so the card is not stretched.
+          const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
+          // One card that fails to read must not drop the rest of the photo.
+          let read;
+          try {
+            read = await identifyCard(cardCanvas, era, by2 - by1, stampCanvas);
+          } catch (err) {
+            console.error("[BG] card read failed:", err?.message || err);
+            read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
+          }
+          cards.push({ box: viewportBox, score, ...read, via: "yolo-in-photo" });
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
       finally { photoBitmap?.close?.(); }
@@ -584,11 +619,175 @@ const STAMP_CARD_H = 525;
  * the user may pick) was printed in 1st Edition. `firstEdition` stays unset otherwise.
  * A stamp rules out the set choices that never had a 1st Edition.
  */
-async function identifyCard(cardCanvas, era = null, sourceHeight = 0) {
+async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null) {
   const result = await recognizeCard(cardCanvas, era, sourceHeight);
   const setCodes = result.setChoices ? result.setChoices.map((c) => c.setCode) : [result.identity?.setCode];
-  if (sourceHeight < STAMP_MIN_HEIGHT || !setCodes.some(hasFirstEdition)) return result;
-  result.firstEdition = hasFirstEditionStamp(cardCanvas);
+  if (sourceHeight < STAMP_MIN_HEIGHT) return result;
+  if (variantModelReady()) {
+    const seen = await readVariant(cardCanvas);
+    result.variant = seen;
+    if (seen?.edition === "first") result.firstEdition = true;
+    console.log("[BG] variant", seen?.edition ?? "unsure", seen?.finish ?? "unsure", seen?.stamp ?? "none");
+  }
+  // On Base Set the stamp template decides 1st Edition. The border then
+  // separates Shadowless from Unlimited. A model "first" without that stamp
+  // is a Shadowless card, which has the same missing band. On other sets the
+  // stamp template can still call 1st Edition after the model has spoken.
+  const knownSets = setCodes.filter(Boolean);
+  const modelEdition = editionForSets(result.variant?.edition, knownSets);
+  if (result.variant?.edition === "first" && modelEdition !== "first") {
+    result.firstEdition = false;
+    result.variant = { ...result.variant, edition: modelEdition };
+  }
+  const baseSet = knownSets.length > 0 && knownSets.every((code) => code === "base1");
+  const canBeFirst = knownSets.some((code) => hasFirstEdition(code));
+  const setUncertain = (result.setChoices?.length || 0) > 1;
+  // Fossil 30/62 is the non-holo Zapdos. The photo model calls that glare holofoil.
+  const readTotal = Number(String(result.numberRead ?? "").split("/")[1]);
+  const numberedFinish = finishFromNumber(result.identity?.setCode, result.identity?.number, readTotal) || result.agreedFinish || null;
+  if (numberedFinish) {
+    result.variant = {
+      edition: result.variant?.edition ?? null,
+      finish: numberedFinish,
+      stamp: result.variant?.stamp ?? "none",
+    };
+  }
+  const artText = await readOnce(cardCanvas, "art", readArtStamp);
+  const cornerStamp = stampFromCorner(artText);
+  if (cornerStamp === "setstamp" || (cornerStamp === "none" && result.variant?.stamp === "setstamp")) {
+    result.variant = {
+      edition: result.variant?.edition ?? null,
+      finish: result.variant?.finish ?? null,
+      stamp: cornerStamp,
+    };
+    console.log("[BG] art stamp", cornerStamp);
+  }
+  if (result.variant?.stamp === "setstamp") {
+    const cleared = stampAfterWizards(result.variant.stamp, result.ocrText);
+    if (cleared !== "setstamp") {
+      result.variant = { ...result.variant, stamp: cleared };
+      console.log("[BG] wizards copyright");
+    }
+  }
+  if (setUncertain && !result.identity?.id) {
+    const stamped = choiceForStamp(result.setChoices, artText);
+    const stampedCard = stamped ? catalogCard(stamped.id) : null;
+    if (stampedCard) {
+      console.log("[BG] set stamp", stampedCard.id);
+      result.identity = stampedCard;
+      result.setChoices = undefined;
+      result.abstain = false;
+      Object.assign(result, await priceIdentity(stampedCard));
+    }
+  }
+  if (setUncertain && result.setChoices?.length > 1) {
+    const full = cardGrayFull(cardCanvas);
+    const symbol = symbolFromScores(symbolScores(full.gray, full.width, full.height));
+    const kept = choicesForSymbol(result.setChoices, symbol);
+    if (kept.length < result.setChoices.length && kept.length === 1) {
+      const identity = catalogCard(kept[0].id);
+      if (identity) {
+        console.log("[BG] set symbol", symbol);
+        result.identity = identity;
+        result.setChoices = undefined;
+        result.abstain = false;
+        Object.assign(result, await priceIdentity(identity));
+      } else {
+        result.setChoices = kept;
+      }
+    } else if (kept.length < result.setChoices.length) {
+      console.log("[BG] set symbol", symbol);
+      result.setChoices = kept;
+    }
+  }
+  const full = cardGrayFull(cardCanvas);
+  const promoStar = promoStarScore(full.gray, full.width, full.height) >= PROMO_STAR_MIN;
+  const eReader = editionAfterEreader("first", artText) === "standard";
+  if (result.variant?.edition === "first" && (promoStar || eReader)) {
+    result.firstEdition = false;
+    result.variant = { ...result.variant, edition: "standard" };
+    console.log(promoStar ? "[BG] promo star" : "[BG] e-reader id");
+  }
+  if (promoStar && !result.numberRead) {
+    const number = promoCollectorNumber(await readOnce(cardCanvas, "corner", readCollectorCorner));
+    const promo = blackStarPromo(_meta, number);
+    const current = result.identity?.name;
+    if (promo && nameAgrees(promo.name, await readOnce(cardCanvas, "name", readCardName)) && (!current || choiceName(current) === choiceName(promo.name))) {
+      const identity = catalogCard(promo.id);
+      if (identity && result.identity?.id !== identity.id) {
+        console.log("[BG] promo number", number, "→", identity.id);
+        result.identity = identity;
+        result.setChoices = undefined;
+        result.abstain = false;
+        Object.assign(result, await priceIdentity(identity));
+      }
+    }
+  }
+  // The star is the Wizards promo, even when the corner number was not read.
+  if (promoStar && !result.identity?.id) {
+    const chosen = onlyPromoChoice(result.setChoices);
+    const identity = chosen ? catalogCard(chosen.id) : null;
+    if (identity) {
+      console.log("[BG] promo star", identity.id);
+      result.identity = identity;
+      result.setChoices = undefined;
+      result.abstain = false;
+      Object.assign(result, await priceIdentity(identity));
+    }
+  }
+  // A Black Star promo number is only one finish. Other sets stay with the
+  // photo: a reverse Nidoqueen is catalogued as normal-only.
+  if (result.identity?.setCode === "basep" && !numberedFinish) {
+    const finish = finishFromVariants((await getTcgdexCard(result.identity.id))?.variants);
+    if (finish) {
+      result.variant = {
+        edition: result.variant?.edition ?? null,
+        finish,
+        stamp: result.variant?.stamp ?? "none",
+      };
+      console.log("[BG] promo finish", finish);
+    }
+  }
+  if (result.identity?.setCode === "basep" && !result.setChoices) return result;
+  if (!baseSet && !canBeFirst) return result;
+  const gray = cardGray(stampCanvas || cardCanvas);
+  const border = borderEdition(gray, STAMP_CARD_W, STAMP_CARD_H);
+  const stampValue = stampScore(gray, STAMP_CARD_W, STAMP_CARD_H, undefined, stampBelowText(knownSets));
+  if (baseSet) {
+    const stamped = stampValue >= FIRST_EDITION_MIN_SCORE;
+    console.log("[BG] frame border", border ?? "unsure", stamped ? "stamp" : "no stamp");
+    const finish = result.variant?.finish ?? null;
+    const promo = result.variant?.stamp ?? "none";
+    if (stamped && border === "unlimited") {
+      // A 1st Edition Base Set card has no drop shadow. Both signals cannot be right.
+      console.log("[BG] stamp and drop shadow disagree");
+    } else if (stamped) {
+      result.firstEdition = true;
+      result.variant = { edition: "first", finish, stamp: stampAfterFirst(promo, true) };
+    } else if (border === "shadowless") {
+      result.firstEdition = false;
+      result.variant = { edition: "shadowless", finish, stamp: promo };
+    } else if (border === "unlimited" || shadowDepth(gray, STAMP_CARD_W, STAMP_CARD_H) >= SHADOW_MIN_DEPTH) {
+      result.shadow = true;
+      result.firstEdition = false;
+      if (result.variant) result.variant = { ...result.variant, edition: "standard" };
+    }
+  } else {
+    console.log("[BG] 1st Edition stamp", stampValue.toFixed(3));
+    // A model "first" without the stamp prices an ordinary card as 1st Edition.
+    const edition = editionAfterEreader(editionAfterPromo(pricedEdition(modelEdition, stampValue), promoStar), artText);
+    if (edition === "first") {
+      result.firstEdition = true;
+      result.variant = {
+        edition: "first",
+        finish: result.variant?.finish ?? null,
+        stamp: stampAfterFirst(result.variant?.stamp, true),
+      };
+    } else if (result.firstEdition || result.variant?.edition === "first") {
+      result.firstEdition = false;
+      if (result.variant) result.variant = { ...result.variant, edition };
+    }
+  }
   if (!result.firstEdition || !result.setChoices) return result;
   const stamped = result.setChoices.filter((c) => hasFirstEdition(c.setCode));
   if (stamped.length !== 1) return { ...result, setChoices: stamped.length ? stamped : result.setChoices };
@@ -597,14 +796,18 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0) {
   return { ...result, identity, setChoices: undefined, ...(await priceIdentity(identity)) };
 }
 
-function hasFirstEditionStamp(cardCanvas) {
+function cardGray(cardCanvas) {
   const small = new OffscreenCanvas(STAMP_CARD_W, STAMP_CARD_H);
   const ctx = small.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(cardCanvas, 0, 0, STAMP_CARD_W, STAMP_CARD_H);
   const { data } = ctx.getImageData(0, 0, STAMP_CARD_W, STAMP_CARD_H);
-  const score = stampScore(grayFromRgba(data, STAMP_CARD_W, STAMP_CARD_H), STAMP_CARD_W, STAMP_CARD_H);
-  console.log("[BG] 1st Edition stamp", score.toFixed(3));
-  return score >= FIRST_EDITION_MIN_SCORE;
+  return grayFromRgba(data, STAMP_CARD_W, STAMP_CARD_H);
+}
+
+function cardGrayFull(cardCanvas) {
+  const ctx = cardCanvas.getContext("2d", { willReadFrequently: true });
+  const { data, width, height } = ctx.getImageData(0, 0, cardCanvas.width, cardCanvas.height);
+  return { gray: grayFromRgba(data, width, height), width, height };
 }
 
 /**
@@ -620,33 +823,53 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
   const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;
-  const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits) : null;
-  if (numbered) {
-    return { identity: numbered.card, confidence, abstain: false, numberRead: numbered.read, ...(await priceIdentity(numbered.card)) };
+  const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits, era) : null;
+  const ocrText = numbered?.text || "";
+  if (numbered?.card) {
+    return { identity: numbered.card, confidence, abstain: false, numberRead: numbered.read, ocrText, ...(await priceIdentity(numbered.card)) };
   }
-  if (!named) return { identity, confidence, abstain, ...unpriced };
+  if (!named) {
+    const fromRules = era ? await cardFromNameAndRules(cardCanvas, era, null) : null;
+    if (fromRules) {
+      return { identity: fromRules, confidence, abstain: false, ocrText, ...(await priceIdentity(fromRules)) };
+    }
+    return {
+      identity,
+      confidence,
+      abstain,
+      ocrText,
+      numberRead: numbered?.read,
+      agreedFinish: numbered?.finish || null,
+      ...unpriced,
+    };
+  }
 
   const eraRows = era ? eraPrintingsOf(identity.name, era) : null;
   // The user said when these cards are from; a name never printed then was misread.
-  if (eraRows && !eraRows.length) return { identity: null, confidence, abstain: true, ...unpriced };
+  if (eraRows && !eraRows.length) return { identity: null, confidence, abstain: true, ocrText, ...unpriced };
   const inPeriod = eraRows ? eraPrintings(scoreIndices(embedding, eraRows)) : null;
   if (inPeriod?.pick != null) {
     const picked = _meta[inPeriod.pick];
-    return { identity: picked, confidence, abstain, ...(await priceIdentity(picked)) };
+    return { identity: picked, confidence, abstain, ocrText, ...(await priceIdentity(picked)) };
   }
   const choices = inPeriod?.choices
     ? inPeriod.choices.map((index) => _meta[index])
     : setChoices(identity, hits, _meta);
   if (choices.length > 1) {
+    const fromRules = era ? await cardFromNameAndRules(cardCanvas, era, identity.name) : null;
+    if (fromRules) {
+      return { identity: fromRules, confidence, abstain: false, ocrText, ...(await priceIdentity(fromRules)) };
+    }
     return {
       identity: { name: identity.name },
       confidence,
       abstain,
       setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
+      ocrText,
       ...unpriced,
     };
   }
-  return { identity, confidence, abstain, ...(await priceIdentity(identity)) };
+  return { identity, confidence, abstain, ocrText, ...(await priceIdentity(identity)) };
 }
 
 let _indicesByName = null;
@@ -668,19 +891,68 @@ function eraPrintingsOf(name, era) {
   return printingsOf(name).filter((index) => inEra(_meta[index], era));
 }
 
+// Pikachu, including the delta printings, has 20 cards in the EX era.
+const RULES_NAME_CAP = 20;
+
+/**
+ * The embedder missed the card. The title line names one Pokémon, and the
+ * attack text is only printed on one of that Pokémon's cards in the era.
+ */
+async function cardFromNameAndRules(cardCanvas, era, knownName) {
+  const title = knownName || await readOnce(cardCanvas, "name", readCardName);
+  const seen = new Set();
+  const cards = [];
+  for (const card of _meta) {
+    if (!card?.id || seen.has(card.id) || !inEra(card, era)) continue;
+    const agrees = knownName
+      ? choiceName(card.name) === choiceName(knownName)
+      : nameAlmostAgrees(card.name, title);
+    if (!agrees) continue;
+    seen.add(card.id);
+    cards.push(card);
+  }
+  const names = new Set(cards.map((card) => choiceName(card.name)));
+  if (names.size !== 1 || cards.length < 2 || cards.length > RULES_NAME_CAP) return null;
+  const describedCards = await Promise.all(cards.map(async (card) => {
+    const payload = await getTcgdexCard(card.id);
+    return {
+      ...card,
+      description: descriptionFromCard(payload),
+      attacks: attacksFromCard(payload),
+    };
+  }));
+  const rules = await readOnce(cardCanvas, "rules", readCardRules);
+  const described = cardDescribedInText(describedCards, rules) || cardNamedByAttacks(describedCards, rules);
+  if (!described) return null;
+  console.log("[BG] name", JSON.stringify(title), "→", described.id, "(rules)");
+  return cards.find((card) => card.id === described.id) || null;
+}
+
 // Source pixels of card height; below this the number does not read (measured on ShopGoodwill lots).
 const NUMBER_MIN_HEIGHT = 600;
 let _setSizes = null;
+
+// Each fallback asks for the name and rules again. One OCR pass per region per card.
+const _regionReads = new WeakMap();
+function readOnce(cardCanvas, region, read) {
+  let reads = _regionReads.get(cardCanvas);
+  if (!reads) {
+    reads = new Map();
+    _regionReads.set(cardCanvas, reads);
+  }
+  if (!reads.has(region)) reads.set(region, read(cardCanvas));
+  return reads.get(region);
+}
 
 /**
  * The printing named by the collector number on the card, or null. Printings of the
  * recognized name come first, then the closest-looking cards (the name may be wrong).
  */
-async function printingFromNumber(cardCanvas, name, hits) {
+async function printingFromNumber(cardCanvas, name, hits, era) {
   const read = await readCardNumber(cardCanvas);
   if (!read?.number) {
     if (read) console.log("[BG] no number in", JSON.stringify(read.text));
-    return null;
+    return read?.text ? { text: read.text } : null;
   }
   _setSizes ??= setSizes(_meta);
   const namedRows = name
@@ -691,10 +963,78 @@ async function printingFromNumber(cardCanvas, name, hits) {
     const at = printingByNumber(rows, read, _setSizes);
     if (at == null) continue;
     console.log("[BG] number", JSON.stringify(read.text), "→", rows[at].id, rows === namedRows ? "" : "(look-alike of " + (name ?? "unknown card") + ")");
-    return { card: rows[at], read: `${read.number}/${read.total}` };
+    return { card: rows[at], read: `${read.number}/${read.total}`, text: read.text };
+  }
+  if (era) {
+    const eraCards = _meta.filter((card) => inEra(card, era));
+    const eraHits = exactTotalHits(eraCards, read, _setSizes);
+    if (eraHits.length === 1) {
+      const card = eraCards[eraHits[0]];
+      // A wrong name (Dodrio for Doduo) stays until the title line names this card.
+      // With no name at all, the title still has to agree: one misread digit can
+      // land on another set's real size.
+      const title = await readOnce(cardCanvas, "name", readCardName);
+      const titleAgrees = name ? nameAgrees(card.name, title) : nameAlmostAgrees(card.name, title);
+      if (titleAgrees) {
+        console.log("[BG] number", JSON.stringify(read.text), "→", card.id, name ? "(era, name)" : "(era)");
+        return { card, read: `${read.number}/${read.total}`, text: read.text };
+      }
+    }
+    if (eraHits.length > 1) {
+      const tied = eraHits.map((index) => eraCards[index]);
+      const namedCard = cardNamedInText(tied, await readOnce(cardCanvas, "name", readCardName));
+      if (namedCard) {
+        console.log("[BG] number", JSON.stringify(read.text), "→", namedCard.id, "(name)");
+        return { card: namedCard, read: `${read.number}/${read.total}`, text: read.text };
+      }
+      const describedCards = await Promise.all(tied.map(async (card) => ({
+        ...card,
+        description: descriptionFromCard(await getTcgdexCard(card.id)),
+      })));
+      const described = cardDescribedInText(describedCards, await readOnce(cardCanvas, "rules", readCardRules));
+      if (described) {
+        console.log("[BG] number", JSON.stringify(read.text), "→", described.id, "(rules)");
+        return { card: tied.find((card) => card.id === described.id), read: `${read.number}/${read.total}`, text: read.text };
+      }
+      const finish = finishSharedByNumber(tied, read.total);
+      if (finish) {
+        console.log("[BG] number", JSON.stringify(read.text), "→", finish, "(tied sets)");
+        return { read: `${read.number}/${read.total}`, text: read.text, finish };
+      }
+    }
+  }
+  // "18/132" with the last digit cut off is "18/13". The rules text has to
+  // pick the card. A truncated total never names a card by itself.
+  if (era) {
+    const prefixes = prefixTotals(read.total);
+    if (prefixes.length) {
+      const eraCards = _meta.filter((card) => inEra(card, era));
+      const tied = [];
+      for (const total of prefixes) {
+        for (const index of exactTotalHits(eraCards, { number: read.number, total }, _setSizes)) {
+          tied.push(eraCards[index]);
+        }
+      }
+      if (tied.length > 1) {
+        const namedCard = cardNamedInText(tied, await readOnce(cardCanvas, "name", readCardName));
+        if (namedCard) {
+          console.log("[BG] number", JSON.stringify(read.text), "→", namedCard.id, "(short total, name)");
+          return { card: namedCard, read: `${read.number}/${read.total}`, text: read.text };
+        }
+        const describedCards = await Promise.all(tied.map(async (card) => ({
+          ...card,
+          description: descriptionFromCard(await getTcgdexCard(card.id)),
+        })));
+        const described = cardDescribedInText(describedCards, await readOnce(cardCanvas, "rules", readCardRules));
+        if (described) {
+          console.log("[BG] number", JSON.stringify(read.text), "→", described.id, "(short total, rules)");
+          return { card: tied.find((card) => card.id === described.id), read: `${read.number}/${read.total}`, text: read.text };
+        }
+      }
+    }
   }
   console.log("[BG] number", JSON.stringify(read.text), "→ no printing of", name);
-  return null;
+  return { text: read.text };
 }
 
 /** Price exactly this catalog card. Never substitutes another printing. */

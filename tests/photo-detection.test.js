@@ -1,10 +1,52 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extendClippedBottom,
   filterPhotoDetections,
   imageToViewportTransform,
   mapPhotoBoxToViewport,
 } from '../tools/extension-wasm/photo-detection.js';
+
+function painted(width, height, paint) {
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  pixels.fill(180);
+  for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255;
+  paint(pixels, width);
+  return pixels;
+}
+
+function fillRow(pixels, width, y, r, g, b) {
+  for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4;
+    pixels[i] = r;
+    pixels[i + 1] = g;
+    pixels[i + 2] = b;
+  }
+}
+
+test('a box that stops in the yellow border grows through that border only', () => {
+  const width = 40;
+  const height = 250;
+  const pixels = painted(width, height, (data) => {
+    for (let y = 199; y <= 206; y++) fillRow(data, width, y, 224, 194, 64);
+    for (let y = 207; y <= 209; y++) fillRow(data, width, y, 230, 232, 236);
+  });
+  const grown = extendClippedBottom(pixels, width, height, [4, 20, 36, 200]);
+  assert.deepEqual(grown, [4, 20, 36, 210]);
+  assert.deepEqual(extendClippedBottom(pixels, width, height, [4, 20, 36, 230]), [4, 20, 36, 230]);
+});
+
+test('a white table past the card edge does not keep the box growing', () => {
+  const width = 40;
+  const height = 120;
+  const pixels = painted(width, height, (data) => {
+    fillRow(data, width, 49, 224, 194, 64);
+    for (let y = 50; y < height; y++) fillRow(data, width, y, 240, 240, 240);
+  });
+  const grown = extendClippedBottom(pixels, width, height, [4, 10, 36, 50]);
+  assert.ok(grown[3] < 60);
+  assert.ok(grown[3] > 50);
+});
 
 test('does not invent card boxes when photo detection returns none', () => {
   assert.deepEqual(filterPhotoDetections([], 1260, 675), []);

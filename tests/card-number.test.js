@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  textBoxes, ctcDecode, parseCardNumber, setSizes, printingByNumber,
+  textBoxes, ctcDecode, parseCardNumber, setSizes, printingByNumber, printingByExactTotal, exactTotalHits,
+  prefixTotals, promoCollectorNumber, blackStarPromo,
 } from '../tools/extension-wasm/lib/card-number.js';
 
 function probMap(width, height, rects) {
@@ -46,11 +47,47 @@ test('a letter O inside the number is a zero', () => {
   assert.deepEqual(parseCardNumber(['O7/1O2']), { number: '07', total: 102 });
 });
 
+test('a letter I beside the digits is a one', () => {
+  assert.deepEqual(parseCardNumber(['95/I32']), { number: '95', total: 132 });
+  assert.deepEqual(parseCardNumber(['I999 Wizards 8/102']), { number: '8', total: 102 });
+  assert.equal(parseCardNumber(['I995,96,98 Nintendo']), null);
+});
+
 test('words in front of the number are not part of it', () => {
   assert.deepEqual(parseCardNumber(['SVI EN 001/198']), { number: '001', total: 198 });
   assert.deepEqual(parseCardNumber(['MEW EN 001/165']), { number: '001', total: 165 });
   assert.deepEqual(parseCardNumber(['ILLUS.KAGEMARU HIMENO 058/165']), { number: '058', total: 165 });
   assert.equal(parseCardNumber(['EN001/165']), null);
+});
+
+test('a slash read as the digit 1 is still the collector number', () => {
+  assert.deepEqual(parseCardNumber(['Wizards 39164']), { number: '39', total: 64 });
+  assert.deepEqual(parseCardNumber(['53164@ SHOPGOODWILL']), { number: '53', total: 64 });
+  assert.deepEqual(parseCardNumber(['Wrds33164']), { number: '33', total: 64 });
+  assert.deepEqual(parseCardNumber(['17162']), { number: '17', total: 62 });
+  assert.deepEqual(parseCardNumber(['flavor 11162 and 39164']), { number: '39', total: 64 });
+  assert.deepEqual(parseCardNumber(['2164★']), { number: '2', total: 64 });
+  assert.deepEqual(parseCardNumber(['55/640']), { number: '55', total: 64 });
+  assert.deepEqual(parseCardNumber(['Sugimori 11624']), { number: '11', total: 62 });
+  assert.deepEqual(parseCardNumber(['631102 | 1999Wizards.']), { number: '63', total: 102 });
+  assert.equal(parseCardNumber(['1999102']), null);
+});
+
+test('a slash read as 1 keeps a three-digit number and needs no digit before it', () => {
+  assert.deepEqual(parseCardNumber(['1011102']), { number: '101', total: 102 });
+  assert.equal(parseCardNumber(['123456162']), null);
+});
+
+test('a truncated total can be one digit short of a real set size', () => {
+  assert.deepEqual(prefixTotals(13), [130, 131, 132, 135]);
+  assert.deepEqual(prefixTotals(132), []);
+  assert.deepEqual(prefixTotals(64), []);
+  assert.deepEqual(prefixTotals(7), []);
+});
+
+test('a copyright year is not a collector number', () => {
+  assert.equal(parseCardNumber(['1995,96,98 Nintendo']), null);
+  assert.equal(parseCardNumber(['©1999 Wizards']), null);
 });
 
 test('text without a number/total gives nothing', () => {
@@ -105,6 +142,41 @@ test('official set totals beat a closer catalog row count', () => {
 test('a letter-prefixed subset is matched by its own count', () => {
   const holos = Array.from({ length: 32 }, (_, i) => ({ setCode: 'ecard2', number: `H${i + 1}` }));
   assert.equal(printingByNumber(holos, { number: 'H01', total: 32 }, new Map([['ecard2', 169]])), 0);
+});
+
+test('an exact set total names the one card with that number', () => {
+  const tied = [
+    { setCode: 'base1', number: '63' },
+    { setCode: 'hgss4', number: '63' },
+  ];
+  assert.equal(printingByExactTotal([{ setCode: 'base1', number: '63' }], { number: '63', total: 102 }, new Map()), 0);
+  assert.equal(printingByExactTotal(tied, { number: '63', total: 102 }, new Map()), null);
+  assert.equal(printingByExactTotal(tied, { number: '63', total: 112 }, new Map()), null);
+  assert.deepEqual(exactTotalHits(
+    [{ setCode: 'gym1', number: '14' }, { setCode: 'gym2', number: '14' }],
+    { number: '14', total: 132 },
+    new Map(),
+  ), [0, 1]);
+});
+
+test('a black-star promo number is the bare number at the right, not a set total', () => {
+  assert.equal(promoCollectorNumber('83 | 29'), '29');
+  assert.equal(promoCollectorNumber('2000 Wiards | 22'), '22');
+  assert.equal(promoCollectorNumber('8 | 00Wizards'), '8');
+  assert.equal(promoCollectorNumber('0Wizards. | 23'), '23');
+  assert.equal(promoCollectorNumber('#149 | 43 | W'), '43');
+  assert.equal(promoCollectorNumber('4/64'), null);
+  assert.equal(promoCollectorNumber('19/64 ★'), null);
+  assert.equal(promoCollectorNumber(''), null);
+  const promos = [
+    { id: 'basep-29', setCode: 'basep', number: '29', name: 'Marill' },
+    { id: 'basep-8', setCode: 'basep', number: '8', name: 'Mew' },
+    { id: 'base2-29', setCode: 'base2', number: '29', name: 'Oddish' },
+  ];
+  assert.equal(blackStarPromo(promos, '29')?.id, 'basep-29');
+  assert.equal(blackStarPromo(promos, '8')?.id, 'basep-8');
+  assert.equal(blackStarPromo(promos.concat([{ id: 'basep-29b', setCode: 'basep', number: '29', name: 'Marill' }]), '29'), null);
+  assert.equal(blackStarPromo(promos, null), null);
 });
 
 test('an impossible total is ignored when only one printing has the number', () => {

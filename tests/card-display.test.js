@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   ageLabel,
   detectedVariant,
+  editionNote,
   isPrintingConfirmed,
   lotTotal,
   printingNote,
@@ -68,6 +69,30 @@ test('a card with the 1st Edition stamp starts on its 1st Edition price', () => 
   assert.equal(detectedVariant({ ...charizard, firstEdition: true }), '1stEditionHolofoil');
   const jungle = { firstEdition: true, price_grid: { variants: { unlimited: {}, '1stEditionNormal': {} } } };
   assert.equal(detectedVariant(jungle), '1stEditionNormal');
+});
+
+test('the trained model picks the reverse holo price', () => {
+  const card = {
+    variant: { edition: 'standard', finish: 'reverse', stamp: 'none' },
+    price_grid: { variants: { holofoil: {}, reverseHolofoil: {}, normal: {} } },
+  };
+  assert.equal(detectedVariant(card), 'reverseHolofoil');
+});
+
+test('a Shadowless border is named even when the price grid has no Shadowless row', () => {
+  assert.equal(editionNote({ variant: { edition: 'shadowless', finish: 'normal', stamp: 'none' } }), 'Shadowless border');
+  assert.equal(editionNote({ variant: { edition: 'standard', finish: 'holofoil', stamp: 'none' } }), null);
+  assert.equal(editionNote({}), null);
+});
+
+test('a Base Set card with a drop shadow starts on its non-1st-Edition price', () => {
+  const card = { shadow: true, price_grid: { variants: { holofoil: {}, '1stEditionHolofoil': {} } } };
+  assert.equal(detectedVariant(card), 'holofoil');
+});
+
+test('a drop shadow does not choose between two non-1st-Edition prices', () => {
+  const card = { shadow: true, price_grid: { variants: { holofoil: {}, normal: {} } } };
+  assert.equal(detectedVariant(card), null);
 });
 
 test('no stamp, or no 1st Edition price, leaves the variant to the user', () => {
@@ -138,4 +163,13 @@ test('scan failures are explained without service-worker jargon', () => {
   assert.match(explainScanError('Could not establish connection. Receiving end does not exist.'), /Reload the Card Scanner extension/);
   assert.match(explainScanError('Models not loaded'), /downloading/);
   assert.equal(explainScanError('No scannable tab — open a webpage first'), 'No scannable tab — open a webpage first');
+});
+
+test('a Shadowless border is shown but never picks the higher Shadowless price', () => {
+  const card = {
+    variant: { edition: 'shadowless', finish: 'holofoil', stamp: 'none' },
+    price_grid: { variants: { holofoil: {}, shadowlessHolofoil: {}, '1stEditionHolofoil': {} } },
+  };
+  assert.equal(detectedVariant(card), null);
+  assert.equal(editionNote(card), 'Shadowless border');
 });

@@ -119,18 +119,74 @@ function readNumberToken(token) {
   if (!match) return null;
   const [, numPrefix, numDigits, totalPrefix, totalDigits] = match;
   if (numPrefix !== totalPrefix) return null;
-  return { number: `${numPrefix}${numDigits}`, total: Number(totalDigits) };
+  return knownTotal({ number: `${numPrefix}${numDigits}`, total: Number(totalDigits) });
+}
+
+const KNOWN_TOTALS = new Set(Object.values(SET_TOTALS));
+
+/**
+ * Official totals one digit longer than a truncated read, such as 13 for 132.
+ * A total that is already a real set size is left alone.
+ */
+export function prefixTotals(printed) {
+  const digits = String(printed);
+  if (digits.length < 2 || KNOWN_TOTALS.has(Number(printed))) return [];
+  const totals = [];
+  for (const total of KNOWN_TOTALS) {
+    const text = String(total);
+    if (text.length === digits.length + 1 && text.startsWith(digits)) totals.push(total);
+  }
+  return totals.sort((a, b) => a - b);
+}
+
+// "55/64" photographed as "55/640". A third digit that is not a real set size
+// is dropped when the first two digits are.
+function knownTotal(read) {
+  if (!read || KNOWN_TOTALS.has(read.total)) return read;
+  const shorter = Math.floor(read.total / 10);
+  const value = Number(read.number);
+  if (read.total >= 100 && KNOWN_TOTALS.has(shorter) && value >= 1 && value <= shorter) {
+    return { number: read.number, total: shorter };
+  }
+  return read;
+}
+
+// On Jungle, Fossil, and Base Set photos the "/" is often recognized as a 1,
+// so "63/102" ends in 631102. The middle 1 is the slash, not part of either number.
+function readSlashAsOne(line) {
+  // A digit just before the match means the run is longer than a number and a total.
+  const patterns = [
+    [/(?<!\d)(\d{1,3})1(64|62|82|102)(?!\d)/g, 1, 2],
+    // "11/62" with the slash dropped and one extra digit: "11624".
+    [/(?<!\d)(\d{2})(64|62|82|102)\d(?!\d)/g, 1, 2],
+  ];
+  for (const [pattern, numberAt, totalAt] of patterns) {
+    let best = null;
+    for (const match of line.matchAll(pattern)) {
+      const number = Number(match[numberAt]);
+      const total = Number(match[totalAt]);
+      if (number >= 1 && number <= total) best = { number: match[numberAt], total };
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 /** First "number/total" in the read lines, as {number, total}, or null. */
 export function parseCardNumber(lines) {
-  for (const line of lines) {
-    const fixed = line.replace(/[Oo](?=[\d/])|(?<=[\d/])[Oo]/g, "0");
+  const fixedLines = lines.map((line) => line
+    .replace(/[Oo](?=[\d/])|(?<=[\d/])[Oo]/g, "0")
+    .replace(/[Il|](?=[\d/])|(?<=[\d/])[Il|]/g, "1"));
+  for (const fixed of fixedLines) {
     const tokens = fixed.split(/\s+/).filter(Boolean);
     for (const token of [...tokens, fixed.replace(/\s+/g, "")]) {
       const read = readNumberToken(token);
       if (read) return read;
     }
+  }
+  for (const fixed of fixedLines) {
+    const read = readSlashAsOne(fixed);
+    if (read) return read;
   }
   return null;
 }
@@ -153,6 +209,47 @@ export function printingByNumber(rows, read, sizes) {
   if (asRead != null) return asRead;
   const digits = read.number.replace(/[A-Z]/g, (letter) => DIGIT_LOOKALIKES[letter] ?? letter);
   return digits === read.number ? null : printingByExactNumber(rows, { ...read, number: digits }, sizes);
+}
+
+/** Indexes whose official set size is exactly the printed total. */
+export function exactTotalHits(rows, read, sizes) {
+  const wanted = plainNumber(read.number);
+  const hits = [];
+  for (let index = 0; index < rows.length; index++) {
+    if (plainNumber(rows[index].number) !== wanted) continue;
+    if (printedTotal(rows[index].setCode, sizes) !== Number(read.total)) continue;
+    hits.push(index);
+  }
+  return hits;
+}
+
+/** The one card whose official set size is exactly the printed total, or null. */
+export function printingByExactTotal(rows, read, sizes) {
+  const hits = exactTotalHits(rows, read, sizes);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+const PROMO_NUMBER_MAX = 53;
+
+/**
+ * The bare collector number printed at the right of a Wizards promo, or null.
+ * A "4/64" set number is not a promo number.
+ */
+export function promoCollectorNumber(text, max = PROMO_NUMBER_MAX) {
+  const matches = String(text || "").matchAll(/(?:^|[^0-9/])([1-9]\d?)(?![0-9/])/g);
+  let found = null;
+  for (const match of matches) {
+    const value = Number(match[1]);
+    if (value >= 1 && value <= max) found = String(value);
+  }
+  return found;
+}
+
+/** The one Wizards Black Star promo with this collector number, or null. */
+export function blackStarPromo(cards, number) {
+  if (!number || !Array.isArray(cards)) return null;
+  const hits = cards.filter((card) => card?.setCode === "basep" && plainNumber(card.number) === String(number));
+  return hits.length === 1 ? hits[0] : null;
 }
 
 const DIGIT_LOOKALIKES = { B: "8", O: "0", D: "0", S: "5", I: "1", Z: "2", G: "6" };

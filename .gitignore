@@ -12,6 +12,7 @@ tools/vellum-ai/models/**/*.onnx
 tools/vellum-ai/models/*.onnx
 tools/vellum-ai/models/card_detect/
 tools/vellum-ai/yolo11n.pt
+tools/extension-wasm/models/*.onnx
 tools/vellum-ai/dist-py/
 tools/vellum-ai/build-py/
 runs/

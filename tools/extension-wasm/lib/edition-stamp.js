@@ -8,10 +8,53 @@ const FIRST_EDITION_SETS = new Set(['base1', 'base2', 'base3', 'base5', 'gym1', 
 // The stamp sits left of the stat bar, under the art. Crops from the card finder are loose,
 // so the window and sizes are wide. Fractions of the card's width and height.
 const AREA = { x1: 0, x2: 0.35, y1: 0.36, y2: 0.62 };
+// Gym trainer stamps sit under the text box. A single taller window lets a lower
+// mark win the coarse search and hides a real stamp that was already found above.
+const LOWER_AREA = { x1: 0, x2: 0.35, y1: 0.58, y2: 0.92 };
 const STAMP_SIZES = [30, 36, 42, 48, 56, 64, 72, 80].map((px) => px / 750);
 
 export function hasFirstEdition(setCode) {
   return FIRST_EDITION_SETS.has(setCode);
+}
+
+/** A stamp match is 1st Edition. A miss keeps the edition the model already gave. */
+export function editionAfterStamp(modelEdition, score) {
+  if (score >= FIRST_EDITION_MIN_SCORE) return "first";
+  return modelEdition ?? null;
+}
+
+/** 1st Edition is priced only from the stamp. A model guess without it is not priced. */
+export function pricedEdition(modelEdition, score) {
+  if (score >= FIRST_EDITION_MIN_SCORE) return "first";
+  if (modelEdition === "first") return "standard";
+  return modelEdition ?? null;
+}
+
+/** The 1st Edition stamp sits where a set stamp would. A template match is not a second stamp. */
+export function stampAfterFirst(modelStamp, stampIsFirst) {
+  if (stampIsFirst && modelStamp === "setstamp") return "none";
+  return modelStamp || "none";
+}
+
+/** Expedition through Skyridge print an "ID:B-81-#" line. Those sets have no 1st Edition. */
+export function editionAfterEreader(edition, text) {
+  if (edition === "first" && /[I1]D:\s*[A-Z]/i.test(String(text || ""))) return "standard";
+  return edition ?? null;
+}
+
+/** A Wizards black-star promo was never printed in 1st Edition. */
+export function editionAfterPromo(edition, promoStar) {
+  if (promoStar && edition === "first") return "standard";
+  return edition ?? null;
+}
+
+/** Drop 1st Edition when every candidate set was never printed that way. */
+export function editionForSets(modelEdition, setCodes) {
+  const known = (setCodes || []).filter(Boolean);
+  if (modelEdition === "first" && known.length > 0 && !known.some((code) => hasFirstEdition(code))) {
+    return "standard";
+  }
+  return modelEdition ?? null;
 }
 
 export function grayFromRgba(rgba, width, height) {
@@ -23,13 +66,23 @@ export function grayFromRgba(rgba, width, height) {
 }
 
 /** Best match of the 1st Edition stamp in the stamp area of a grayscale card, 0..1. */
-export function stampScore(gray, width, height) {
-  const x1 = Math.round(AREA.x1 * width);
-  const x2 = Math.round(AREA.x2 * width);
-  const y1 = Math.round(AREA.y1 * height);
-  const y2 = Math.round(AREA.y2 * height);
+export function stampScore(gray, width, height, sizes = STAMP_SIZES, lowerArea = false) {
+  const upper = matchStamp(gray, width, height, AREA, sizes);
+  return lowerArea ? Math.max(upper, matchStamp(gray, width, height, LOWER_AREA, sizes)) : upper;
+}
+
+/** Only Gym Heroes and Gym Challenge trainers print the stamp under the text box. */
+export function stampBelowText(setCodes) {
+  return (setCodes || []).some((code) => code === "gym1" || code === "gym2");
+}
+
+function matchStamp(gray, width, height, area, sizes) {
+  const x1 = Math.round(area.x1 * width);
+  const x2 = Math.round(area.x2 * width);
+  const y1 = Math.round(area.y1 * height);
+  const y2 = Math.round(area.y2 * height);
   let best = 0;
-  for (const size of STAMP_SIZES) {
+  for (const size of sizes) {
     const t = templateAt(Math.round(size * width), width);
     if (!t) continue;
     const xMax = x2 - t.width;

@@ -1,6 +1,8 @@
 // What the popup and page overlay are allowed to show as a price.
 // A card with several printings is not quoted until the user picks one.
 
+import { variantChoice } from './variant.js';
+
 const SOURCE_NAMES = {
   backend: 'JustTCG',
   ppt: 'Price Tracker',
@@ -20,10 +22,24 @@ export function isPrintingConfirmed(grid, choice) {
   return typeof choice === 'string' && names.includes(choice);
 }
 
+/** Shown when the border says Shadowless, including when that price is not in the grid. */
+export function editionNote(card) {
+  if (card?.variant?.edition === "shadowless") return "Shadowless border";
+  return null;
+}
+
 /** The variant the scan saw on the card itself, or null when the user has to pick. */
 export function detectedVariant(card) {
-  if (card?.firstEdition !== true) return null;
-  return listPrintings(card.price_grid).find((name) => /^1stEdition/.test(name)) ?? null;
+  const names = listPrintings(card?.price_grid);
+  const seen = card?.variant ? variantChoice(card.variant, card.price_grid?.variants).key : null;
+  // No drop shadow can also be blur or glare, so Shadowless is named but not priced.
+  if (seen && names.includes(seen) && !/shadowless/i.test(seen)) return seen;
+  if (card?.firstEdition === true) return names.find((name) => /^1stEdition/.test(name)) ?? null;
+  // A drop shadow means this Base Set card is not Shadowless. Pick Unlimited
+  // only when that is the one remaining price.
+  if (card?.shadow !== true) return null;
+  const rest = names.filter((name) => !/^1stEdition/.test(name));
+  return rest.length === 1 ? rest[0] : null;
 }
 
 export function marketRange(grid) {

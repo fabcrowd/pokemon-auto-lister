@@ -101,6 +101,65 @@ function parsePosition(position = "50% 50%") {
   return fx === null || fy === null ? null : [fx, fy];
 }
 
+function rowKind(pixels, width, x1, x2, y) {
+  const left = Math.max(0, Math.round(x1 + (x2 - x1) * 0.3));
+  const right = Math.min(width - 1, Math.round(x1 + (x2 - x1) * 0.7));
+  let yellow = 0;
+  let white = 0;
+  let count = 0;
+  for (let x = left; x <= right; x++) {
+    const i = (y * width + x) * 4;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    count++;
+    if (r > 170 && g > 150 && b < 150 && r > b + 40) yellow++;
+    else if (r > 200 && g > 200 && b > 200) white++;
+  }
+  if (!count) return "other";
+  if (yellow / count >= 0.6) return "yellow";
+  if (white / count >= 0.6) return "white";
+  return "other";
+}
+
+/**
+ * A box that stops inside the yellow border clips the collector number and
+ * stretches the stamp. Follow that border, and only a thin white edge after it.
+ */
+export function extendClippedBottom(pixels, width, height, box) {
+  if (!pixels || width <= 0 || height <= 0 || !Array.isArray(box) || box.length !== 4) return box;
+  const [x1, y1, x2, y2] = box;
+  const bottom = Math.min(height - 1, Math.round(y2) - 1);
+  if (!(y2 > y1) || bottom < 1 || rowKind(pixels, width, x1, x2, bottom) !== "yellow") return box;
+  const limit = Math.min(height - 1, bottom + Math.round((y2 - y1) * 0.08));
+  const maxWhite = Math.max(1, Math.round((y2 - y1) * 0.025));
+  let edge = bottom;
+  let whiteRun = 0;
+  let blend = 0;
+  for (let y = bottom + 1; y <= limit; y++) {
+    const kind = rowKind(pixels, width, x1, x2, y);
+    if (kind === "yellow") {
+      whiteRun = 0;
+      blend = 0;
+      edge = y;
+      continue;
+    }
+    if (kind === "white" && whiteRun < maxWhite) {
+      whiteRun += 1;
+      blend = 0;
+      edge = y;
+      continue;
+    }
+    // The yellow border fades into the white edge across a couple of rows.
+    if (kind === "other" && whiteRun === 0 && blend < 3) {
+      blend += 1;
+      continue;
+    }
+    break;
+  }
+  return edge === bottom ? box : [x1, y1, x2, edge + 1];
+}
+
 export function filterPhotoDetections(detections, imageWidth, imageHeight) {
   if (!Array.isArray(detections) || imageWidth <= 0 || imageHeight <= 0) return [];
 
