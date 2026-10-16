@@ -1,8 +1,8 @@
 """Train the variant classifier on real card photographs and export ONNX.
 
 Every layer is updated. The pictures are the harvested ShopGoodwill crops.
-A listing is entirely in one split, so a second photo of the same physical
-card cannot leak across. The checkpoint is chosen on a validation slice of the
+A near-duplicate cluster of listings is entirely in one split, so a second
+photo of the same physical card cannot leak across. The checkpoint is chosen on a validation slice of the
 training listings; the holdout is scored once, after training ends.
 """
 
@@ -19,12 +19,15 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
 
+from vellum_ai.dhash import listing_clusters
 from vellum_ai.variant_labels import EDITIONS, FINISHES, STAMPS
 from vellum_ai.variant_photos import CROP_DIR, MANIFEST, relabel_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
 ONNX_PATH = ROOT / "tools" / "extension-wasm" / "models" / "variant.onnx"
 REPORT_PATH = ROOT / "data" / "variant-photos" / "holdout-report.json"
+DHASH_CACHE = ROOT / "data" / "variant-photos" / "dhash-py-cache.json"
+MIN_SUPPORT = 30
 FULL = 224
 ZOOM = 112
 IMAGE_W = 224
@@ -48,13 +51,27 @@ def _is_validation(listing: str) -> bool:
     return int(digest[2:4], 16) < 43
 
 
-def split_rows(rows: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
-    """Train, validation, and holdout rows, split by listing."""
+def cluster_map(rows: list[dict]) -> dict[str, str]:
+    """Listing -> id of its near-duplicate cluster, from the crops on disk."""
+    return listing_clusters(rows, CROP_DIR, DHASH_CACHE)
+
+
+def split_rows(
+    rows: list[dict], clusters: dict[str, str] | None = None
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Train, validation, and holdout rows, split by near-duplicate cluster.
+
+    The cluster id is hashed in place of the listing id, so relistings of one
+    card with a new photo stay together.
+    """
+    if clusters is None:
+        clusters = cluster_map(rows)
     train_rows, val_rows, holdout_rows = [], [], []
     for row in rows:
-        if is_holdout(row["listing"]):
+        unit = clusters.get(row["listing"], row["listing"])
+        if is_holdout(unit):
             holdout_rows.append(row)
-        elif _is_validation(row["listing"]):
+        elif _is_validation(unit):
             val_rows.append(row)
         else:
             train_rows.append(row)
@@ -200,7 +217,30 @@ def _accuracy(logits: torch.Tensor, target: torch.Tensor) -> tuple[int, int]:
     return int((pred[labeled] == target[labeled]).sum()), int(labeled.sum())
 
 
-def holdout_report(model: VariantNet, rows: list[dict], device: torch.device) -> dict:
+def class_entry(support: int, correct: int, predicted: int, min_support: int = MIN_SUPPORT) -> dict:
+    """Counts for one class. Below ``min_support`` the rates are noise, so they are null."""
+    if support < min_support:
+        return {"support": support, "correct": correct, "recall": None, "precision": None, "tooFew": True}
+    return {
+        "support": support,
+        "correct": correct,
+        "recall": None if support == 0 else round(correct / support, 3),
+        "precision": None if predicted == 0 else round(correct / predicted, 3),
+    }
+
+
+def too_few_classes(report: dict) -> list[str]:
+    return [
+        f"{head}/{name}"
+        for head, body in report["heads"].items()
+        for name, cls in body["classes"].items()
+        if cls.get("tooFew")
+    ]
+
+
+def holdout_report(
+    model: VariantNet, rows: list[dict], device: torch.device, min_support: int = MIN_SUPPORT
+) -> dict:
     """Per-class counts on listings the training loop never saw."""
     model.eval()
     names = (EDITIONS, FINISHES, STAMPS)
@@ -223,12 +263,7 @@ def holdout_report(model: VariantNet, rows: list[dict], device: torch.device) ->
             support = int(matrix[index].sum())
             correct = int(matrix[index, index])
             predicted = int(matrix[:, index].sum())
-            classes[name] = {
-                "support": support,
-                "correct": correct,
-                "recall": None if support == 0 else round(correct / support, 3),
-                "precision": None if predicted == 0 else round(correct / predicted, 3),
-            }
+            classes[name] = class_entry(support, correct, predicted, min_support)
         labeled = int(matrix.sum())
         report["heads"][key] = {
             "accuracy": None if labeled == 0 else round(float(matrix.trace()) / labeled, 3),
@@ -270,7 +305,7 @@ def train(epochs: int = 30, patience: int = 6) -> dict:
             loss.backward()
             optimizer.step()
             total += float(loss.detach())
-        report = holdout_report(model, val_rows, device)
+        report = holdout_report(model, val_rows, device, min_support=0)
         recalls = [
             cls["recall"]
             for head in report["heads"].values()
@@ -307,5 +342,8 @@ def train(epochs: int = 30, patience: int = 6) -> dict:
         dynamo=False,
     )
     print("wrote", ONNX_PATH)
+    small = too_few_classes(report)
+    if small:
+        print(f"support under {MIN_SUPPORT}, rates withheld: {', '.join(small)}")
     print(json.dumps(report, indent=2))
     return report

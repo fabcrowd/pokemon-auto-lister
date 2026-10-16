@@ -18,7 +18,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from vellum_ai.variant_photos import CROP_DIR, MANIFEST
-from vellum_ai.variant_train import is_holdout
+from vellum_ai.variant_train import MIN_SUPPORT, class_entry, cluster_map, is_holdout
 
 # Fractions of a rectified card. Tall enough for the Jungle flower, which sits
 # lower than the Fossil claw, and still on the right of the species line.
@@ -164,9 +164,20 @@ class SymbolNet(nn.Module):
         return self.net(images)
 
 
+def split_symbol_rows(rows: list[dict], clusters: dict[str, str] | None = None) -> tuple[list[dict], list[dict]]:
+    """Train and holdout rows, split by near-duplicate cluster of listings."""
+    if clusters is None:
+        clusters = cluster_map(rows)
+    train_rows, holdout_rows = [], []
+    for row in rows:
+        unit = clusters.get(row["listing"], row["listing"])
+        (holdout_rows if is_holdout(unit) else train_rows).append(row)
+    return train_rows, holdout_rows
+
+
 def _report(model: SymbolNet, rows: list[dict]) -> dict:
     model.eval()
-    counts = {name: {"support": 0, "correct": 0} for name in CLASSES}
+    counts = {name: {"support": 0, "correct": 0, "predicted": 0} for name in CLASSES}
     loader = DataLoader(SymbolDataset(rows), batch_size=32)
     with torch.no_grad():
         for images, target in loader:
@@ -175,16 +186,20 @@ def _report(model: SymbolNet, rows: list[dict]) -> dict:
                 name = CLASSES[int(target[i])]
                 counts[name]["support"] += 1
                 counts[name]["correct"] += int(int(pred[i]) == int(target[i]))
+                counts[CLASSES[int(pred[i])]]["predicted"] += 1
     # Totals only. A list of missed holdout cards invites fixing them one by one.
-    return {"classes": counts}
+    return {
+        "classes": {
+            name: class_entry(c["support"], c["correct"], c["predicted"]) for name, c in counts.items()
+        }
+    }
 
 
 def train(epochs: int = 25) -> dict:
     """Fit on real photos and write the holdout counts. Returns that report."""
     torch.manual_seed(0)
     rows = symbol_rows()
-    train_rows = [row for row in rows if not is_holdout(row["listing"])]
-    holdout_rows = [row for row in rows if is_holdout(row["listing"])]
+    train_rows, holdout_rows = split_symbol_rows(rows)
     model = SymbolNet()
     counts = np.array([sum(row["label"] == name for row in train_rows) for name in CLASSES], dtype=np.float32)
     weight = torch.tensor(counts.sum() / np.maximum(counts, 1.0), dtype=torch.float32)
