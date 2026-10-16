@@ -250,6 +250,29 @@ referencesToggle.addEventListener("change", async () => {
   showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
 });
 
+/* ─── Look-alike matches ─── */
+
+const lookalikeToggle = document.getElementById("reduce-lookalikes");
+const lookalikeNote   = document.getElementById("lookalike-note");
+
+async function loadLookalikeToggle() {
+  const { reduceLookalikes } = await chrome.storage.local.get("reduceLookalikes").catch(() => ({}));
+  lookalikeToggle.checked = reduceLookalikes === true;
+  // The list of look-alikes is built for one catalog and ships with the extension; a build without it has nothing to apply.
+  const present = await fetch(chrome.runtime.getURL("data/hub-penalty.bin")).then((res) => res.ok).catch(() => false);
+  if (!present) {
+    lookalikeToggle.disabled = true;
+    lookalikeNote.textContent = "This build does not include the look-alike list, so the setting has no effect.";
+    lookalikeNote.className = "test-result info";
+  }
+}
+
+lookalikeToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ reduceLookalikes: lookalikeToggle.checked }).catch(() => {});
+  lookalikeNote.textContent = lookalikeToggle.checked ? "Scans will steer away from look-alike cards." : "Scans match on picture similarity alone.";
+  lookalikeNote.className = "test-result ok";
+});
+
 // dev-only:start
 /* ─── Test photos ─── */
 
@@ -325,6 +348,7 @@ btnClearPhotos.addEventListener("click", async () => {
 refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
+loadLookalikeToggle();
 // dev-only:start
 refreshPhotoCount();
 loadCollectionToggle();

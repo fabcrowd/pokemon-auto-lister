@@ -13,6 +13,8 @@ tools/vellum-ai/models/*.onnx
 tools/vellum-ai/models/card_detect/
 tools/vellum-ai/yolo11n.pt
 tools/extension-wasm/models/*.onnx
+# Built locally for one catalog by scripts/build-hub-penalty.py (optional look-alike penalty)
+tools/extension-wasm/data/
 tools/vellum-ai/dist-py/
 tools/vellum-ai/build-py/
 runs/

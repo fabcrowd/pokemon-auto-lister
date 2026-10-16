@@ -17,8 +17,8 @@ import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDete
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
-import { loadCatalog, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
-import { capHeightFor, capSmallSource, fuseResults, informationHeight } from "./lib/fusion.js";
+import { loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
+import { capHeightFor, capSmallSource, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
@@ -201,6 +201,7 @@ async function loadModels() {
     ]);
 
     _ready = true;
+    _loadHubPenalty();
     _loadNumberReader();
     _loadVariantModel();
     embedPendingReferences();
@@ -211,6 +212,15 @@ async function loadModels() {
     _loading = false;
     _loadPromise = null;
   }
+}
+
+// The look-alike penalty file ships inside the extension when it was built for this catalog. Scanning
+// and the setting work without it: the setting only takes effect where the file is present.
+function _loadHubPenalty() {
+  fetch(chrome.runtime.getURL(HUB_PENALTY_PATH))
+    .then((res) => (res.ok ? res.arrayBuffer() : null))
+    .then((buffer) => { if (buffer) loadHubPenalty(buffer); })
+    .catch((err) => console.log("[BG] hub penalty not available", err?.message || err));
 }
 
 let _numberReader = null;
@@ -555,6 +565,7 @@ async function handleScanPage(sendResponse, era) {
         console.log("[BG]   splitting", boxes.length, "cards");
         if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
         const photoPixels = readBitmap(photoBitmap);
+        const photoFirst = cards.length;
         for (const { box, score } of boxes) {
           const [bx1, by1, bx2, by2] = box;
           if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
@@ -591,6 +602,13 @@ async function handleScanPage(sendResponse, era) {
           // The framing was a guess, so the name is a suggestion for the picker, not an answer.
           if (heroStrict && !read.abstain) read = { ...read, unsure: true };
           pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo" }, cardCanvas);
+        }
+        const photoReads = cards.slice(photoFirst);
+        const checked = markRepeatedNames(photoReads);
+        const repeated = checked.filter((card, i) => card !== photoReads[i]);
+        if (repeated.length) {
+          console.log("[BG]   ", repeated.length, "boxes named", JSON.stringify(repeated[0].identity?.name), "- marked unsure");
+          cards.splice(photoFirst, checked.length, ...checked);
         }
       } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
       finally { photoBitmap?.close?.(); }
@@ -851,6 +869,17 @@ async function loadedReferences() {
   return rows;
 }
 
+const HUB_PENALTY_PATH = "data/hub-penalty.bin";
+
+// "Experimental: reduce look-alike matches" in the options page. Off until a sealed-set score shows a gain.
+async function lookalikePenaltyInUse() {
+  try {
+    return (await chrome.storage.local.get("reduceLookalikes")).reduceLookalikes === true;
+  } catch {
+    return false;
+  }
+}
+
 async function referencesInUse() {
   try {
     return (await chrome.storage.local.get("useReferences")).useReferences === true;
@@ -962,7 +991,7 @@ async function handleDetect(imageB64, sendResponse) {
     for (const { box, score } of rawBoxes) {
       const cardCanvas = rectifyCard(bitmap, box);
       const embedding  = await embedSerial(cardCanvas);
-      const catalogHits = physicalHits(searchCatalog(embedding, 20), _meta);
+      const catalogHits = physicalHits(searchCatalog(embedding, 20, { penalty: await lookalikePenaltyInUse() }), _meta);
       if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
@@ -1268,7 +1297,7 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
 
 async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   const embedding = await embedSerial(cardCanvas);
-  const catalogHits = physicalHits(searchCatalog(embedding, 20), _meta);
+  const catalogHits = physicalHits(searchCatalog(embedding, 20, { penalty: await lookalikePenaltyInUse() }), _meta);
   seen.catalogTop = catalogHits[0]?.score ?? null;
   if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };

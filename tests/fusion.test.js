@@ -51,3 +51,27 @@ test('a tie between different names still abstains', () => {
   assert.equal(result.abstain, true);
   assert.equal(result.reason, 'ambiguous');
 });
+
+test('rank decides who leads and how far ahead; the reported similarity still sets confidence and thresholds', () => {
+  const meta = [{ name: 'Onix' }, { name: 'Seel' }];
+  // Onix has the higher cosine but a hub penalty put Seel first: the gap is measured on rank.
+  const clear = fuseResults([
+    { index: 1, score: 0.78, rank: 0.8 },
+    { index: 0, score: 0.79, rank: 0.7 },
+  ], null, meta, []);
+  assert.equal(clear.identity.name, 'Seel');
+  assert.equal(clear.reason, 'clear_gap');
+  assert.equal(clear.confidence, 0.78);
+
+  const tooClose = fuseResults([
+    { index: 1, score: 0.78, rank: 0.8 },
+    { index: 0, score: 0.79, rank: 0.79 },
+  ], null, meta, []);
+  assert.equal(tooClose.abstain, true);
+
+  const low = fuseResults([
+    { index: 1, score: 0.7, rank: 0.9 },
+    { index: 0, score: 0.5, rank: 0.5 },
+  ], null, meta, []);
+  assert.equal(low.reason, 'low_sim');
+});

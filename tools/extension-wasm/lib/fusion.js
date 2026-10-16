@@ -23,6 +23,10 @@ const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much 
  *
  * @returns {{ identity: object|null, confidence: number, abstain: boolean, reason?: string }}
  */
+// Hits from a hub-penalised search carry `rank` (cosine minus penalty) beside `score` (the cosine itself).
+// Order and the distance between neighbours are judged on rank; what a similarity means, on score.
+const rankOf = (hit) => hit.rank ?? hit.score;
+
 export function fuseResults(clipHits, _ocrText, meta, _idMap) {
   if (!clipHits || clipHits.length === 0) {
     return { identity: null, confidence: 0, abstain: true, reason: "no_hits" };
@@ -38,8 +42,7 @@ export function fuseResults(clipHits, _ocrText, meta, _idMap) {
   }
 
   const topSim    = top.score;
-  const secondSim = second ? second.score : 0;
-  const gap       = topSim - secondSim;
+  const gap       = second ? rankOf(top) - rankOf(second) : topSim;
 
   if (topSim < MIN_ACCEPT_SIM) {
     return { identity: null, confidence: topSim, abstain: true, reason: "low_sim" };
@@ -73,10 +76,10 @@ export function fuseResults(clipHits, _ocrText, meta, _idMap) {
 const NEAR_BAND = 0.02;
 
 function leadingName(clipHits, meta) {
-  const best = clipHits[0].score;
+  const best = rankOf(clipHits[0]);
   const near = [];
   for (const hit of clipHits) {
-    if (best - hit.score > NEAR_BAND) break;
+    if (best - rankOf(hit) > NEAR_BAND) break;
     near.push(hit);
     if (near.length === 3) break;
   }
@@ -101,6 +104,35 @@ function leadingName(clipHits, meta) {
   }
   if (!winner || tied || winner.count < 2) return null;
   return winner.hit;
+}
+
+// Three copies of one card in a single photo is usually the matcher's favourite look-alike winning
+// several boxes, not three real copies. The rows stay, with the name, but the scanner stops vouching for them.
+export const REPEATED_NAME_MIN = 3;
+
+const nameKey = (card) => (card?.abstain ? "" : String(card?.identity?.name || "").trim().toLowerCase());
+
+/**
+ * Reads of one photo's boxes. When REPEATED_NAME_MIN or more carry the same card name, each of those is
+ * marked unsure (the picker is offered) and held below the "high" confidence tier. Names, ids and the
+ * number of rows never change. Returns a new list; reads that are not repeated are the same objects.
+ */
+export function markRepeatedNames(reads) {
+  const counts = new Map();
+  for (const read of reads) {
+    const key = nameKey(read);
+    if (key) counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return reads.map((read) => {
+    const key = nameKey(read);
+    if (!key || counts.get(key) < REPEATED_NAME_MIN) return read;
+    return {
+      ...read,
+      confidence: Math.min(read.confidence, SMALL_SOURCE_CONFIDENCE_CAP),
+      unsure: true,
+      repeatedName: true,
+    };
+  });
 }
 
 // A card read from a crop shorter than this is a few hundred blurry pixels, and CLIP matches look-alike

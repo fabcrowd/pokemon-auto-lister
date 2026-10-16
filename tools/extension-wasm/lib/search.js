@@ -6,6 +6,33 @@ const DIM = 512;
 let _catalog = null; // Float32Array (N × 512)
 let _n       = 0;
 
+// Optional per-row penalty for look-alike "hub" cards that real photos match for the wrong reasons.
+// One signed byte per catalog row, in thousandths of cosine (scripts/build-hub-penalty.py).
+const PENALTY_UNIT = 0.001;
+let _penalty = null; // Int8Array, one per catalog row
+let _penaltyWarned = false;
+
+/** Keep the penalty file's bytes (ArrayBuffer or typed array) for searches that ask for it; null clears. */
+export function loadHubPenalty(bytes) {
+  _penaltyWarned = false;
+  if (!bytes) {
+    _penalty = null;
+    return;
+  }
+  _penalty = bytes instanceof ArrayBuffer ? new Int8Array(bytes) : new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+// A penalty built for another catalog would move the wrong rows, so a size mismatch turns it off.
+function usablePenalty() {
+  if (!_penalty) return null;
+  if (_penalty.length === _n) return _penalty;
+  if (!_penaltyWarned) {
+    _penaltyWarned = true;
+    console.warn(`[search] hub penalty has ${_penalty.length} rows but the catalog has ${_n}; ignoring it`);
+  }
+  return null;
+}
+
 /**
  * Load and decompress catalog.bin.gz (ArrayBuffer).
  * Must be called once before searchCatalog().
@@ -42,8 +69,13 @@ export async function loadCatalog(gzBuffer) {
  * Return top-K nearest neighbours for a query embedding (Float32Array 512).
  * Embeddings must already be L2-normalised.
  * Returns [{ index, score }] sorted by descending score.
+ *
+ * With { penalty: true } and a matching penalty loaded, rows are ranked by cosine minus their penalty and
+ * returned as [{ index, score, rank }] best rank first. `score` stays the row's own cosine, so every
+ * threshold that reads it (confidence, card-back check) means the same as without the penalty; `rank` is
+ * only for order and for gaps between neighbours.
  */
-export function searchCatalog(query, topK = 20) {
+export function searchCatalog(query, topK = 20, { penalty = false } = {}) {
   if (!_catalog) throw new Error("Catalog not loaded");
 
   const scores = new Float32Array(_n);
@@ -55,6 +87,13 @@ export function searchCatalog(query, topK = 20) {
       dot += query[d] * _catalog[base + d];
     }
     scores[i] = dot;
+  }
+
+  const offsets = penalty ? usablePenalty() : null;
+  if (offsets) {
+    const ranks = new Float32Array(_n);
+    for (let i = 0; i < _n; i++) ranks[i] = scores[i] - offsets[i] * PENALTY_UNIT;
+    return topKIndices(ranks, topK).map((idx) => ({ index: idx, score: scores[idx], rank: ranks[idx] }));
   }
 
   // Partial sort: find top-K without sorting everything
