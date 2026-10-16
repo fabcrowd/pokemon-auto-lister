@@ -1,0 +1,161 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  applyTitlePrior,
+  cleanListingTitle,
+  listingTitles,
+  nameFromTitle,
+  parseListingTitle,
+  rerankByTitle,
+} from '../tools/extension-wasm/lib/title-prior.js';
+
+const base = { id: 'base1-4', name: 'Charizard', set: 'Base', setCode: 'base1', number: '4' };
+const blast = { id: 'base1-2', name: 'Blastoise', set: 'Base', setCode: 'base1', number: '2' };
+const venu = { id: 'base1-15', name: 'Venusaur', set: 'Base', setCode: 'base1', number: '15' };
+const ids = (rows) => rows.map((row) => row.id);
+
+test('a title naming the 2nd candidate moves it first, rest stay in order', () => {
+  const out = rerankByTitle([blast, base, venu], parseListingTitle('Charizard 4/102 Base Set Holo PSA 9'));
+  assert.deepEqual(ids(out), ['base1-4', 'base1-2', 'base1-15']);
+});
+
+test('candidates are only reordered: same objects, same confidence fields', () => {
+  const input = [{ ...blast, confidence: 0.4 }, { ...base, confidence: 0.3 }];
+  const out = rerankByTitle(input, parseListingTitle('Charizard holo'));
+  assert.equal(out.length, 2);
+  assert.equal(out[0], input[1]);
+  assert.equal(out[0].confidence, 0.3);
+  assert.deepEqual(ids(input), ['base1-2', 'base1-4']);
+});
+
+test('a title naming a card not among the candidates changes nothing', () => {
+  const rows = [blast, venu];
+  assert.deepEqual(ids(rerankByTitle(rows, parseListingTitle('Charizard 4/102 Base Set'))), ['base1-2', 'base1-15']);
+});
+
+test('a lot title naming several cards changes nothing', () => {
+  const rows = [blast, base, venu];
+  const parsed = parseListingTitle('Lot of 50 Base Set Charizard Blastoise Venusaur');
+  assert.deepEqual(ids(rerankByTitle(rows, parsed)), ['base1-2', 'base1-4', 'base1-15']);
+});
+
+test('a lot title naming one candidate still changes nothing', () => {
+  const rows = [blast, base];
+  assert.deepEqual(ids(rerankByTitle(rows, parseListingTitle('Lot of 20 Pokemon cards incl Charizard'))), ['base1-2', 'base1-4']);
+});
+
+test('two cards named in the title (one outside the candidates) changes nothing when known names are given', () => {
+  const rows = [blast, base];
+  const out = rerankByTitle(rows, parseListingTitle('Charizard and Mewtwo holo pair'), ['Mewtwo', 'Charizard']);
+  assert.deepEqual(ids(out), ['base1-2', 'base1-4']);
+});
+
+test('number disambiguates two printings of the same name', () => {
+  const a = { id: 'a', name: 'Charizard', set: 'Base Set 2', setCode: 'base4', number: '4' };
+  const b = { id: 'b', name: 'Charizard', set: 'Legendary Collection', setCode: 'base6', number: '3' };
+  assert.deepEqual(ids(rerankByTitle([a, b], parseListingTitle('Charizard 3/110 Holo'))), ['b', 'a']);
+  assert.deepEqual(ids(rerankByTitle([b, a], parseListingTitle('Charizard #4 Holo'))), ['a', 'b']);
+  assert.deepEqual(ids(rerankByTitle([b, a], parseListingTitle('Charizard 004/130'))), ['a', 'b']);
+});
+
+test('promo codes and leading zeros compare as numbers', () => {
+  const a = { id: 'a', name: 'Pikachu', set: 'Sword & Shield Promos', number: 'SWSH161' };
+  const b = { id: 'b', name: 'Pikachu', set: 'Sword & Shield Promos', number: 'SWSH039' };
+  assert.deepEqual(ids(rerankByTitle([b, a], parseListingTitle('Pikachu SWSH161 promo'))), ['a', 'b']);
+  assert.equal(parseListingTitle('Pikachu SWSH161 promo').number, 'swsh161');
+});
+
+test('set name breaks a tie when the number does not', () => {
+  const a = { id: 'a', name: 'Charizard', set: 'Jungle', number: '4' };
+  const b = { id: 'b', name: 'Charizard', set: 'Base', number: '4' };
+  assert.deepEqual(ids(rerankByTitle([a, b], parseListingTitle('Charizard Base Set holo'))), ['b', 'a']);
+});
+
+test('a name inside a longer word or another card name does not count', () => {
+  const ex = { id: 'ex', name: 'Charizard ex', set: 'X', number: '1' };
+  const plain = { id: 'plain', name: 'Charizard', set: 'X', number: '2' };
+  assert.deepEqual(ids(rerankByTitle([plain, ex], parseListingTitle('Charizard ex 1/10'))), ['ex', 'plain']);
+  assert.deepEqual(ids(rerankByTitle([blast, { ...venu, name: 'Mew' }], parseListingTitle('Mewtwo card'))), ['base1-2', 'base1-15']);
+});
+
+test('site suffixes and banner headings are cleaned away', () => {
+  assert.equal(cleanListingTitle('Charizard 4/102 Base Set Holo PSA 9 | eBay'), 'Charizard 4/102 Base Set Holo PSA 9');
+  assert.equal(cleanListingTitle('Charizard 4/102 for sale online | eBay'), 'Charizard 4/102');
+  assert.equal(cleanListingTitle('Charizard 4/102 - Mercari'), 'Charizard 4/102');
+  assert.equal(cleanListingTitle('Privacy settings'), '');
+  assert.equal(cleanListingTitle('We use cookies'), '');
+  assert.equal(cleanListingTitle(null), '');
+  assert.deepEqual(
+    listingTitles({ h1: 'Privacy settings', ogTitle: 'Blastoise PSA 8 | eBay', title: 'Blastoise PSA 8 | eBay' }),
+    ['Blastoise PSA 8'],
+  );
+  assert.deepEqual(parseListingTitle('Charizard 4/102 | eBay').tokens, ['charizard', '4', '102']);
+});
+
+test('parse reads number and total', () => {
+  const p = parseListingTitle('Charizard 4/102 Base Set Holo PSA 9');
+  assert.equal(p.number, '4');
+  assert.equal(p.total, '102');
+  assert.equal(p.lot, false);
+  assert.equal(parseListingTitle('Lot of 50 Base Set cards').lot, true);
+});
+
+test('Japanese titles with no English name match change nothing', () => {
+  const rows = [blast, base];
+  assert.deepEqual(ids(rerankByTitle(rows, parseListingTitle('リザードン 4/102 旧裏 初版'))), ['base1-2', 'base1-4']);
+  assert.deepEqual(ids(rerankByTitle(rows, parseListingTitle('リザードン Charizard 4/102 旧裏'))), ['base1-4', 'base1-2']);
+});
+
+test('nameFromTitle finds the one longest catalog name', () => {
+  const names = ['Charizard', 'Charizard ex', 'Mew', 'Blastoise'];
+  assert.equal(nameFromTitle(parseListingTitle('Charizard ex 4/102'), names), 'Charizard ex');
+  assert.equal(nameFromTitle(parseListingTitle('Charizard Blastoise lot'), names), null);
+  assert.equal(nameFromTitle(parseListingTitle('Mewtwo'), names), null);
+});
+
+test('applyTitlePrior only acts on listing pages', () => {
+  const card = { identity: { name: 'Charizard' }, confidence: 0.4, setChoices: [blast, base] };
+  const page = { title: 'Charizard 4/102 | eBay' };
+  for (const kind of ['grid', 'unknown', undefined]) {
+    const logs = [];
+    const out = applyTitlePrior([card], { kind, page, log: (m) => logs.push(m) });
+    assert.equal(out[0], card, String(kind));
+    assert.equal(logs.length, 0);
+  }
+});
+
+test('applyTitlePrior reorders setChoices without touching confidence or identity, and logs', () => {
+  const card = { identity: { name: 'Charizard' }, confidence: 0.4, abstain: false, setChoices: [blast, base, venu] };
+  const logs = [];
+  const [out] = applyTitlePrior([card], { kind: 'listing', page: { h1: 'Privacy settings', title: 'Charizard 4/102 | eBay' }, log: (m) => logs.push(m) });
+  assert.deepEqual(ids(out.setChoices), ['base1-4', 'base1-2', 'base1-15']);
+  assert.equal(out.confidence, 0.4);
+  assert.equal(out.abstain, false);
+  assert.equal(out.identity, card.identity);
+  assert.equal(out.setConfirmed, undefined);
+  assert.deepEqual(logs, ['title prior: moved Charizard to front']);
+});
+
+test('applyTitlePrior leaves a sure single-printing row alone', () => {
+  const card = { identity: base, confidence: 0.9 };
+  const [out] = applyTitlePrior([card], { kind: 'listing', page: { title: 'Charizard 4/102' }, log: () => {} });
+  assert.equal(out, card);
+});
+
+test('applyTitlePrior prefills the search box only for unsure rows', () => {
+  const unsure = { identity: { name: 'Charizard' }, confidence: 0.3, setChoices: [blast, base] };
+  const sure = { identity: base, confidence: 0.95 };
+  const [u, s] = applyTitlePrior([unsure, sure], {
+    kind: 'listing', page: { title: 'Charizard 4/102 Base Set' }, knownNames: ['Charizard', 'Blastoise'], log: () => {},
+  });
+  assert.equal(u.titleQuery, 'Charizard 4/102');
+  assert.equal(s.titleQuery, undefined);
+});
+
+test('applyTitlePrior leaves a lot page alone, prefill included', () => {
+  const card = { identity: { name: 'Charizard' }, confidence: 0.3, setChoices: [blast, base] };
+  const [out] = applyTitlePrior([card], {
+    kind: 'listing', page: { title: 'Lot of 50 Base Set Charizard Blastoise Venusaur' }, knownNames: ['Charizard', 'Blastoise', 'Venusaur'], log: () => {},
+  });
+  assert.equal(out, card);
+});

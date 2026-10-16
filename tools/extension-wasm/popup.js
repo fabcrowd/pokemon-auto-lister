@@ -528,9 +528,11 @@ function renderSearchPanel(idx) {
 function openSearch(idx, via) {
   const open = _picker.get(idx);
   if (open) open.via = via;
-  else _picker.set(idx, { via, query: "", results: null });
+  else _picker.set(idx, { via, query: _lastResult?.cards?.[idx]?.titleQuery ?? "", results: null });
   renderResults();
-  resultsEl.querySelector(`.picker-input[data-idx="${idx}"]`)?.focus();
+  const input = resultsEl.querySelector(`.picker-input[data-idx="${idx}"]`);
+  input?.focus();
+  if (!open && input?.value) onSearchInput(idx, input.value);
 }
 
 // Re-rendering drops the focused element, so keyboard users land back on a button in the same card.

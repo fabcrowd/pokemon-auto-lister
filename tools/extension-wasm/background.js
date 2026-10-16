@@ -21,6 +21,7 @@ import { loadCatalog, searchCatalog, physicalHits, scoreIndices } from "./lib/se
 import { capHeightFor, capSmallSource, fuseResults, informationHeight } from "./lib/fusion.js";
 import { setChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
+import { applyTitlePrior } from "./lib/title-prior.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
@@ -667,7 +668,13 @@ async function handleScanPage(sendResponse, era) {
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
-    const asked = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta) } : card));
+    const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta) } : card));
+    const asked = applyTitlePrior(withCandidates, {
+      kind: focus.kind,
+      page: domResp?.page,
+      knownNames: catalogNames(),
+      log: (message) => console.log("[BG]", message),
+    });
 
     sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed });
   } catch (err) {
@@ -783,7 +790,7 @@ const _ownPageActions = {
     const rows = (Array.isArray(msg.references) ? msg.references : []).flatMap((ref) => {
       const embedding = decodeEmbedding(ref?.embedding);
       return embedding && typeof ref.id === "string" && typeof ref.cardId === "string" && ref.cardId
-        ? [{ id: `import:${ref.id}`, cardId: ref.cardId, ts: null, embedding }]
+        ? [{ id: `import:${ref.id}`, cardId: ref.cardId, ts: null, v: Number(ref.embeddingVersion) || 1, embedding }]
         : [];
     });
     await _corrections.replaceReferences(rows, { clearCorrections: msg.clearCorrections === true });
@@ -1318,6 +1325,13 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
     };
   }
   return { identity, confidence, abstain, ocrText, ...(await priceIdentity(identity)) };
+}
+
+let _catalogNames = null;
+/** Each card name in the catalog once, as printed. */
+function catalogNames() {
+  if (!_catalogNames) _catalogNames = [...new Set(_meta.map((card) => card.name).filter(Boolean))];
+  return _catalogNames;
 }
 
 let _indicesByName = null;
