@@ -4,7 +4,9 @@ import {
   extendClippedBottom,
   filterPhotoDetections,
   imageToViewportTransform,
+  isCardShaped,
   mapPhotoBoxToViewport,
+  planHeroCard,
 } from '../tools/extension-wasm/photo-detection.js';
 
 function painted(width, height, paint) {
@@ -113,4 +115,26 @@ test('declines source mapping for unsupported CSS background sizes', () => {
     { x: 0, y: 0, w: 400, h: 300 }, 800, 400,
     { fit: 'background', size: 'calc(100% - 10px)', position: 'center' },
   ), null);
+});
+
+test('isCardShaped is one window from upright through tilted to sideways', () => {
+  for (const ratio of [0.55, 0.72, 0.95, 1.0, 1.4, 1.82]) assert.equal(isCardShaped(ratio), true, String(ratio));
+  for (const ratio of [0.5, 1.83, 2, 3]) assert.equal(isCardShaped(ratio), false, String(ratio));
+});
+
+test('keeps a tilted (1.0) and a sideways (1.4) card, rejects a 2:1 strip', () => {
+  const sideways = { box: [100, 100, 380, 300], score: 0.8 }; // 1.4
+  const tilted = { box: [500, 100, 700, 300], score: 0.8 }; // 1.0
+  const strip = { box: [10, 10, 410, 210], score: 0.8 }; // 2.0
+  assert.deepEqual(filterPhotoDetections([sideways, tilted, strip], 1000, 800), [sideways, tilted]);
+});
+
+test('the area rule still drops a wide box that fills the photo', () => {
+  assert.deepEqual(filterPhotoDetections([{ box: [0, 0, 700, 500], score: 0.9 }], 800, 600), []);
+});
+
+test('a sideways large box is a hero card; whole-image ratio branches are unchanged', () => {
+  const plan = planHeroCard({ imageW: 800, imageH: 600, detections: [{ box: [0, 0, 700, 500], score: 0.9 }] });
+  assert.equal(plan.kind, 'large-box');
+  assert.equal(planHeroCard({ imageW: 800, imageH: 600, detections: [] }).kind, 'none');
 });

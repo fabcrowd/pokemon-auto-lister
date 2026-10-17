@@ -57,7 +57,7 @@ Measured in Chrome on 67 reviewed HiBid lot photos, HEAD `c583710` vs this commi
 
 ### Next
 
-Popup simplification is done. Next: detection learning (cards tilted 15–40° are most of the missed lot cards).
+Popup simplification is done and the shape filter is widened (this commit). Next: detector retraining for the ~18 unseen tilted cards (see the todo item).
 
 ## Product and branch state
 
@@ -200,6 +200,6 @@ Known weak spots (held-out):
 
 ## Next step
 
-Popup simplification is done; detection learning is next. Set confirmation on lots is done (see the today section).
+Popup simplification is done and the shape filter is widened (this commit); detector retraining for the ~18 unseen tilted cards is next. Set confirmation on lots is done (see the today section).
 
 Self-learning steps 2–4 are already in `1f42193` and live as of `c583710`. Do not start them again.

@@ -12,6 +12,7 @@ Branch `feat/card-picker-sealed-test`.
 - Collector number read from the source photo's bottom corners for open-set cards at least 400 source px tall (`lib/corner-read.js`, `lib/set-codes.js` for printed Scarlet & Violet codes).
 
 ### Changed
+- Detector boxes up to 1.82 wide/tall are kept (cards tilted to 45° or lying sideways). On 67 HiBid lot photos: +9 cards found, +6 right names, wrong names 13→14, no losses, 0 extra boxes on sealed-product negatives.
 - Popup shows one price per card and one est. value in the action bar; the era picker sits there too.
 - Filter chips moved to Settings > Prices; the popup reads them from `chrome.storage.sync` and updates live.
 - Harness scripts updated for the new popup.

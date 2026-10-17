@@ -1,6 +1,15 @@
 const CARD_RATIO_MIN = 0.55;
 const CARD_RATIO_MAX = 0.95;
+const BOX_RATIO_MAX = 1.82;
 const MAX_PHOTO_AREA_FRACTION = 0.65;
+
+/**
+ * One window: an upright card, or one tilted up to 45 degrees or lying sideways, whose box is up to
+ * 1/0.55 wide. Boxes near 1.0 are tilted cards, so there is no gap there.
+ */
+export function isCardShaped(ratio) {
+  return ratio >= CARD_RATIO_MIN && ratio <= BOX_RATIO_MAX;
+}
 
 export function imageToViewportTransform(rect, imageWidth, imageHeight, render = {}) {
   if (!rect || imageWidth <= 0 || imageHeight <= 0) return null;
@@ -183,8 +192,7 @@ export function filterPhotoDetections(detections, imageWidth, imageHeight) {
 
     const ratio = width / height;
     const areaFraction = (width * height) / imageArea;
-    return ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX &&
-      areaFraction <= MAX_PHOTO_AREA_FRACTION;
+    return isCardShaped(ratio) && areaFraction <= MAX_PHOTO_AREA_FRACTION;
   });
 }
 
@@ -215,7 +223,7 @@ export function planHeroCard({ imageW, imageH, detections }) {
     const height = box[3] - box[1];
     if (width <= 0 || height <= 0) continue;
     const ratio = width / height;
-    if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX) continue;
+    if (!isCardShaped(ratio)) continue;
     if (!best || score > best.score) best = { box, score };
   }
   if (best) return { kind: 'large-box', box: best.box, score: best.score };

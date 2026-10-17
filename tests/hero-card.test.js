@@ -32,7 +32,7 @@ test('the most confident large box wins', () => {
 });
 
 test('a large box that is not card-shaped is not a card', () => {
-  const plan = planHeroCard({ imageW: 1200, imageH: 1000, detections: [{ box: [0, 0, 1200, 1000], score: 0.9 }] });
+  const plan = planHeroCard({ imageW: 1200, imageH: 1000, detections: [{ box: [0, 0, 1200, 500], score: 0.9 }] });
   assert.equal(plan.kind, 'none');
 });
 

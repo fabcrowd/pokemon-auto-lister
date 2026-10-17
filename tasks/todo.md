@@ -251,5 +251,6 @@ Plan: `docs/plans/launch.md`. Nothing is pushed (branch `feat/card-picker-sealed
 - [x] Popup simplification
   - Review: popup shows one price per card (in the row head) and one est. value; filters come only from Settings.
   - Pills, API-key hint, ms/cards stats, condition grid and warning sentences are gone (tooltips instead). Verified: npm test, eslint, popup e2e 5 of 5.
-- [ ] Detection learning (tilted cards 15–40° are most of the missed lot cards)
+- [~] Detection learning: shape-filter part done (boxes up to 1.82 wide/tall kept; on 67 HiBid lot photos +9 cards found, +6 right names, wrong names 13→14, no losses, 0 extra boxes on sealed-product negatives)
+- [ ] Detector misses ~18 heavily tilted cards entirely (box aspect 1.04–1.37, 135–235 px; offline `.tmp/lots/detmiss.py`): retrain with tilted synthetic pages behind the real-photo gate (`detect/eval_real.py`)
 
