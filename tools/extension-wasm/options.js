@@ -1,4 +1,5 @@
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
+import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
 import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
 // dev-only:start
 import { LIMITS, describeSize } from "./lib/test-photos.js";
@@ -306,6 +307,35 @@ shareToggle.addEventListener("change", async () => {
   showShareStatus(status.enabled ? "On. Thank you." : "Off. Your install id and anything waiting to be sent were deleted.", "ok");
 });
 
+/* ─── Prices ─── */
+
+const conditionSelect = document.getElementById("price-condition");
+const graderBoxes = [...document.querySelectorAll("input[data-grader]")];
+
+async function readFilters() {
+  const { filters } = await chrome.storage.sync.get("filters").catch(() => ({}));
+  return mergeFilters(filters ?? DEFAULT_FILTERS);
+}
+
+async function loadPrices() {
+  const filters = await readFilters();
+  conditionSelect.value = primaryCondition(filters);
+  for (const box of graderBoxes) box.checked = filters.graded[box.dataset.grader];
+}
+
+// Re-read before each write so the popup or another options tab cannot be overwritten with a stale copy.
+conditionSelect.addEventListener("change", async () => {
+  const next = withCondition(await readFilters(), conditionSelect.value);
+  await chrome.storage.sync.set({ filters: next }).catch(() => {});
+});
+
+for (const box of graderBoxes) {
+  box.addEventListener("change", async () => {
+    const next = withGrader(await readFilters(), box.dataset.grader, box.checked);
+    await chrome.storage.sync.set({ filters: next }).catch(() => {});
+  });
+}
+
 /* ─── Look-alike matches ─── */
 
 const lookalikeToggle = document.getElementById("reduce-lookalikes");
@@ -405,6 +435,7 @@ refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
 loadLookalikeToggle();
+loadPrices();
 loadShareToggle();
 // dev-only:start
 refreshPhotoCount();

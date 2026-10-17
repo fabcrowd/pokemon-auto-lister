@@ -1,6 +1,7 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotEstimateLine, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { hasAllSites, requestAllSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
@@ -8,14 +9,6 @@ const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
 const btnLabel     = document.getElementById("btn-label");
 const btnOptions   = document.getElementById("open-options");
-const modelPill    = document.getElementById("model-pill");
-const mdot         = document.getElementById("mdot");
-const mtext        = document.getElementById("mtext");
-const sourcePill   = document.getElementById("source-pill");
-const sourceText   = document.getElementById("source-text");
-const hintStrip    = document.getElementById("hint-strip");
-const hintLink     = document.getElementById("hint-link");
-const hintDismiss  = document.getElementById("hint-dismiss");
 const examStrip    = document.getElementById("exam-strip");
 const examYes      = document.getElementById("exam-yes");
 const examDismiss  = document.getElementById("exam-dismiss");
@@ -26,10 +19,8 @@ const btnWizAccess  = document.getElementById("btn-wiz-access");
 const btnWizAccessSkip = document.getElementById("btn-wiz-access-skip");
 const btnWizUpgrade = document.getElementById("btn-wiz-upgrade");
 const btnWizSkip    = document.getElementById("btn-wiz-skip");
-const sDetected    = document.getElementById("s-detected");
 const sValue       = document.getElementById("s-value");
-const lotEstimateEl = document.getElementById("lot-estimate");
-const sMs          = document.getElementById("s-ms");
+const statValue    = document.getElementById("stat-value");
 const resultsEl    = document.getElementById("results");
 const emptyHint    = document.getElementById("empty-hint");
 const msgBar       = document.getElementById("msg-bar");
@@ -46,29 +37,17 @@ const accessSkip    = document.getElementById("access-skip");
 const accessRescan  = document.getElementById("access-rescan");
 
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
-const DEFAULT_FILTERS = {
-  raw:    { NM: true, LP: false, MP: false, HP: false, DMG: false },
-  graded: { PSA: false, BGS: false, CGC: false, SGC: false },
-};
 
 let isScanning = false;
 let _lastResult = null;
 let _scanSeq = 0;
-let _filters   = JSON.parse(JSON.stringify(DEFAULT_FILTERS));
+let _filters   = mergeFilters(DEFAULT_FILTERS);
 let _variantChoice = new Map(); // card index -> printing chosen this scan
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _searchTimer = null;
 let _pickSeq = 0;
 const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
-
-/* ─── Model status pill ─── */
-
-function setModelStatus(state, label) {
-  modelPill.className = "model-pill " + state;
-  mdot.className      = "mdot " + state;
-  mtext.textContent   = label;
-}
 
 function showMessage(text, isError = false) {
   msgBar.textContent = text;
@@ -80,7 +59,6 @@ function showMessage(text, isError = false) {
 async function checkReady() {
   const resp = await chrome.runtime.sendMessage({ action: "checkReady" });
   const ready = Boolean(resp?.ready);
-  setModelStatus(ready ? "ok" : "err", ready ? "AI ready" : "setup needed");
   btnScan.disabled = !ready;
   await maybeStartWizard(ready);
   return ready;
@@ -141,7 +119,6 @@ btnSetup.addEventListener("click", async () => {
   const resp = await chrome.runtime.sendMessage({ action: "startSetup" });
   chrome.runtime.onMessage.removeListener(onSetupProgress);
   if (resp?.ok) {
-    setModelStatus("ok", "AI ready");
     btnScan.disabled = false;
     // Move the wizard forward: site access, then the PPT upsell (each skipped when already settled)
     await setOnboarding({ step: "access" });
@@ -205,45 +182,6 @@ function onSetupProgress(msg) {
 /* ─── Options page ─── */
 
 btnOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
-sourcePill.addEventListener("click", () => chrome.runtime.openOptionsPage());
-hintLink.addEventListener("click", () => chrome.runtime.openOptionsPage());
-hintDismiss.addEventListener("click", () => {
-  chrome.storage.sync.set({ hintDismissed: true });
-  hintStrip.classList.remove("visible");
-});
-
-/* ─── Pricing source pill + hint strip ─── */
-
-function dominantSource(cards) {
-  const counts = {};
-  for (const c of cards || []) {
-    const s = c?.price_grid?.source || (c?.market_price != null ? "pokemontcg" : null);
-    if (!s) continue;
-    counts[s] = (counts[s] || 0) + 1;
-  }
-  let best = null, bestN = 0;
-  for (const [s, n] of Object.entries(counts)) if (n > bestN) { best = s; bestN = n; }
-  return best;
-}
-
-async function refreshSourceIndicators(cards) {
-  const src = dominantSource(cards);
-  if (!src) {
-    sourcePill.classList.remove("visible");
-    hintStrip.classList.remove("visible");
-    return;
-  }
-  const marketOnly = src === "pokemontcg" || src === "tcgdex";
-  sourcePill.className = `source-pill visible ${marketOnly ? "pokemontcg" : src}`;
-  sourceText.textContent = sourceName({ source: src }) || src;
-
-  // Hint strip: show only when on pokemontcg fallback AND not previously dismissed
-  const { hintDismissed } = await new Promise((r) =>
-    chrome.storage.sync.get("hintDismissed", (res) => r(res || {})),
-  );
-  if (marketOnly && !hintDismissed) hintStrip.classList.add("visible");
-  else hintStrip.classList.remove("visible");
-}
 
 /* ─── Scan page ─── */
 
@@ -282,7 +220,6 @@ async function scanPage() {
   accessNotice.hidden = true;
   showMessage("Capturing page and running detection…");
 
-  const t0 = performance.now();
   let data;
   try {
     data = await chrome.runtime.sendMessage({ action: "scanPage", era: eraSelect.value || null });
@@ -306,30 +243,18 @@ async function scanPage() {
   _lastResult.cards.forEach(seedVariant);
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
-  updateStats(_lastResult.cards, Math.round(performance.now() - t0));
+  updateStats(_lastResult.cards);
   renderResults();
-  refreshSourceIndicators(_lastResult.cards);
   finishScan();
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
 
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
   } else {
-    const unconfirmed = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions()).unconfirmed;
-    const needSet = cards.filter((c) => !isSetConfirmed(c)).length;
-    const needPrinting = unconfirmed - needSet;
-    const found = `${scanStatus(cards)}.`;
-    const asks = [
-      needSet ? `a set on ${needSet}` : "",
-      needPrinting ? `a variant on ${needPrinting}` : "",
-    ].filter(Boolean).join(" and ");
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
       : "";
-    const eraTip = needSet >= 2 && !eraSelect.value ? " Choosing the era below narrows the sets." : "";
-    showMessage((asks
-      ? `${found} Choose ${asks} before the total includes them.${eraTip}`
-      : found) + stillLoading);
+    showMessage(`${scanStatus(cards)}.${stillLoading}`);
   }
 
   // Push the overlay snapshot with current filter state baked in
@@ -390,58 +315,37 @@ function finishScan() {
 function loadFilters() {
   return new Promise((resolve) => {
     chrome.storage.sync.get("filters", (res) => {
-      if (res?.filters) _filters = mergeFilters(DEFAULT_FILTERS, res.filters);
+      _filters = mergeFilters(res?.filters);
       resolve();
     });
   });
 }
 
-function saveFilters() {
-  chrome.storage.sync.set({ filters: _filters });
-}
-
-function mergeFilters(base, saved) {
-  const out = JSON.parse(JSON.stringify(base));
-  for (const group of Object.keys(base)) {
-    if (!saved[group]) continue;
-    for (const key of Object.keys(base[group])) {
-      if (typeof saved[group][key] === "boolean") out[group][key] = saved[group][key];
-    }
-  }
-  return out;
-}
-
-function wireFilterChips() {
-  document.querySelectorAll(".chip[data-filter]").forEach((el) => {
-    const [group, key] = el.dataset.filter.split(".");
-    const on = Boolean(_filters[group]?.[key]);
-    el.classList.toggle("on", on);
-    el.setAttribute("aria-pressed", String(on));
-    el.addEventListener("click", () => {
-      _filters[group][key] = !_filters[group][key];
-      el.classList.toggle("on", _filters[group][key]);
-      el.setAttribute("aria-pressed", String(_filters[group][key]));
-      saveFilters();
-      renderResults();
-      if (_lastResult) updateStats(_lastResult.cards, Number(sMs.textContent) || 0);
-      pushOverlay();
-    });
-  });
-}
+// Filters are edited on the Settings page; a change there shows up here without a rescan.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "sync" || !changes.filters) return;
+  _filters = mergeFilters(changes.filters.newValue);
+  if (!_lastResult) return;
+  renderResults();
+  updateStats(_lastResult.cards);
+  pushOverlay();
+});
 
 function enabledConditions() { return CONDITIONS.filter((c) => _filters.raw[c]); }
 function enabledGraders()    { return Object.keys(_filters.graded).filter((g) => _filters.graded[g]); }
 
 /* ─── Stats + results ─── */
 
-function updateStats(cards, ms) {
-  const lot = lotTotal(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
-  sDetected.textContent = cards.length > 0 ? String(cards.length) : "—";
-  sValue.textContent    = lot.total > 0 ? "$" + lot.total.toFixed(2) : "—";
-  sMs.textContent       = String(ms);
-  const line = lotEstimateLine(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
-  lotEstimateEl.textContent = line || "";
-  lotEstimateEl.hidden = !line;
+function updateStats(cards) {
+  const lot = lotValue(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
+  sValue.textContent = lot.value ?? "—";
+  setStatDetail(lot.detail);
+}
+
+function setStatDetail(detail) {
+  sValue.title = detail;
+  if (detail) statValue.setAttribute("aria-label", detail);
+  else statValue.removeAttribute("aria-label");
 }
 
 // For the "total" stat, use first enabled condition price (NM-first). Falls back
@@ -454,10 +358,8 @@ function chosenPrinting(card, idx) {
 }
 
 function resetResults() {
-  sDetected.textContent = "—";
   sValue.textContent    = "—";
-  sMs.textContent       = "—";
-  lotEstimateEl.hidden  = true;
+  setStatDetail("");
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
@@ -496,7 +398,7 @@ function renderResults() {
       else _variantChoice.delete(idx);
       renderResults();
       pushOverlay();
-      updateStats(cards, Number(sMs.textContent) || 0);
+      updateStats(cards);
     });
   });
 }
@@ -509,8 +411,6 @@ function renderCardRow(card, idx) {
   const num  = id.number  || "";
   const tier = card.abstain ? "abstain" : confTier(card.confidence);
   const grid = card.price_grid;
-  const printing = chosenPrinting(card, idx);
-  const source   = grid?.source || "pokemontcg";
   const setKnown = isSetConfirmed(card);
 
   const setHtml = code ? `<span class="set-chip">${escHtml(code)}</span>` : "";
@@ -519,19 +419,15 @@ function renderCardRow(card, idx) {
     : "Set not sure";
 
   const askRow     = renderAskRow(card, idx);
-  const lone       = (card.setChoices?.length || 0) <= 1;
-  const pricingRow = lone && card.pricing ? `<div class="no-price">Getting price…</div>`
-    : lone && card.priceError ? `<div class="spread-warn">${escHtml(card.priceError)}</div>` : "";
   // The candidates already include the set choices; a second menu would ask the same question twice.
   const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
-  const rangeNote  = !setKnown ? setRangeNote(card.setRange, enabledConditions()) : null;
-  const rangeRow   = rangeNote ? `<div class="spread-warn set-range">${escHtml(rangeNote)} · best guess, pick the set for one price</div>` : "";
-  const repeatRow  = card.repeatedName ? `<div class="spread-warn repeat-note">Same name found several times in this photo. Check it.</div>` : "";
   const versionRow = renderVersionRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
-  const condRow    = setKnown ? renderConditionGrid(card, printing) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
-  const srcClass   = source === "backend" ? "backend" : (source === "ppt" ? "ppt" : "pokemontcg");
+  const loneEdition = setKnown && Object.keys(grid?.variants || {}).length <= 1 ? editionNote(card) : null;
+  const repeatMark = card.repeatedName
+    ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
+    : "";
 
   const thumb = id.name ? null : cropThumb(card);
   return `<div class="card-row" data-idx="${idx}">
@@ -539,22 +435,42 @@ function renderCardRow(card, idx) {
       <div class="conf-stripe ${tier}"></div>
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
-        <div class="card-name">${escHtml(name)}${guessMark(card, idx)}</div>
+        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
         <div class="card-sub">${subHtml}</div>
       </div>
-      ${grid ? `<div class="src-badge ${srcClass}" title="pricing source">${escHtml(sourceName({ source }) || source)}</div>` : ""}
+      ${renderPrice(card, idx)}
       <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
     ${askRow}
-    ${pricingRow}
-    ${rangeRow}
-    ${repeatRow}
     ${setRow}
     ${versionRow}
     ${variantRow}
-    ${condRow}
     ${gradedRow}
   </div>`;
+}
+
+const REPEAT_NOTE = "Same name found several times in this photo. Check it.";
+
+// One price per card, always in the head: a quote, a range while the set is open, or a dash that says why.
+function renderPrice(card, idx) {
+  const cell = (text, title) => `<div class="card-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
+  if (card.pricing) return cell("…", "Getting price…");
+  if (card.priceError) return cell("—", card.priceError);
+  if (card.cardBack) return cell("—", "Turn it over to identify it");
+  const conditions = enabledConditions();
+  const printing = chosenPrinting(card, idx);
+  const quote = quotedPrice(card, printing, conditions);
+  if (quote) {
+    const others = Object.entries(card.price_grid?.variants?.[quote.printing]?.conditions || {})
+      .filter(([cond, price]) => cond !== quote.condition && price != null)
+      .map(([cond, price]) => `${cond} $${Number(price).toFixed(2)}`);
+    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), ...others]
+      .filter(Boolean).join(" · ");
+    return cell("$" + Number(quote.price).toFixed(2), title);
+  }
+  const span = isSetConfirmed(card) ? null : setRangeSpan(card.setRange, conditions);
+  if (span) return cell(span, "Set not sure — pick the set for one price");
+  return cell("—", "No price data");
 }
 
 // Nothing is known about this card, so no name, price or picker: just a way to look it up.
@@ -772,12 +688,9 @@ function renderSetRow(card, idx) {
     const label = `${c.set || c.setCode || "Unknown set"}${c.number ? " #" + c.number : ""}`;
     return `<option value="${escHtml(c.id)}" ${c.id === picked ? "selected" : ""}>${escHtml(label)}</option>`;
   }).join("");
-  const status = card.pricing ? `<span class="spread-warn">Getting price…</span>`
-    : card.priceError ? `<span class="spread-warn">${escHtml(card.priceError)}</span>` : "";
   return `<div class="variant-select-row set-select-row">
     <span class="lbl">Set?</span>
     <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
-    ${status}
   </div>`;
 }
 
@@ -800,7 +713,7 @@ function replaceCard(idx, next) {
   seedVariant(next, idx);
   renderResults();
   if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);
-  updateStats(cards, Number(sMs.textContent) || 0);
+  updateStats(cards);
   pushOverlay();
 }
 
@@ -863,8 +776,7 @@ function seedVariant(card, idx) {
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
   const printings = Object.keys(grid?.variants || {});
-  const shadowless = editionNote(card);
-  if (printings.length <= 1) return shadowless ? `<div class="spread-warn">${escHtml(shadowless)}</div>` : "";
+  if (printings.length <= 1) return "";
   const picked = _variantChoice.get(idx) || "";
   const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
   const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
@@ -880,37 +792,8 @@ function renderVariantRow(card, idx) {
     : (editionNote(card) || printingNote(grid));
   return `<div class="variant-select-row">
     <span class="lbl">Variant</span>
-    <select data-idx="${idx}" aria-label="Variant">${blank}${options}</select>
-    ${note ? `<span class="spread-warn">${escHtml(note)}</span>` : ""}
+    <select data-idx="${idx}" aria-label="Variant${note ? `. ${escHtml(note)}` : ""}"${note ? ` title="${escHtml(note)}"` : ""}>${blank}${options}</select>
   </div>`;
-}
-
-function renderConditionGrid(card, printing) {
-  if (card.cardBack) return `<div class="no-price">turn the card over to identify it</div>`;
-  const grid = card.price_grid;
-  const printings = Object.keys(grid?.variants || {});
-  // The printing row already shows the range. Don't repeat it under the menu.
-  if (printings.length > 1 && !printing) return "";
-  if (!grid || !printing || !grid.variants[printing]) {
-    const legacy = card.market_price;
-    if (legacy == null) return `<div class="no-price">no price data</div>`;
-    return `<div class="price-grid">
-      <div class="price-cell highlight"><div class="lbl">NM</div><div class="val">$${legacy.toFixed(2)}</div></div>
-      ${CONDITIONS.slice(1).map((c) => `<div class="price-cell na"><div class="lbl">${c}</div><div class="val">—</div></div>`).join("")}
-    </div>`;
-  }
-  const conds = grid.variants[printing].conditions;
-  const enabled = new Set(enabledConditions());
-  const anyEnabled = enabled.size > 0;
-  return `<div class="price-grid">${CONDITIONS.map((c) => {
-    const v = conds[c];
-    const na = v == null;
-    const hi = anyEnabled && enabled.has(c);
-    return `<div class="price-cell ${na ? "na" : ""} ${hi ? "highlight" : ""}">
-      <div class="lbl">${c}</div>
-      <div class="val">${na ? "—" : "$" + v.toFixed(2)}</div>
-    </div>`;
-  }).join("")}</div>`;
 }
 
 function renderGradedGrid(card, grid) {
@@ -986,10 +869,8 @@ function computeDisplayForOverlay(card, idx) {
 
 (async () => {
   await loadFilters();
-  wireFilterChips();
   try { await checkReady(); }
   catch (err) {
-    setModelStatus("err", "not running");
     setupOverlay.style.display = "flex";
     setupStatus.textContent = explainScanError(err.message);
   }

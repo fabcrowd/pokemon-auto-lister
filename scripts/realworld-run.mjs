@@ -92,16 +92,15 @@ listing.on('console', (msg) => { if (msg.type() === 'error') pageErrors.push(`co
 // First popup tab: finish model setup if needed, as live-scan does.
 async function readyPopup(popup) {
   await popup.waitForFunction(() => {
-    const text = document.getElementById('mtext')?.textContent || '';
-    return text && !text.includes('checking');
+    const overlay = document.getElementById('setup-overlay');
+    return !document.getElementById('btn-scan')?.disabled || (overlay && overlay.style.display === 'flex');
   });
   if (await popup.locator('#setup-overlay').isVisible() && await popup.locator('#btn-setup').isVisible()) {
     console.log('downloading models...');
     await popup.locator('#btn-setup').click();
     await popup.waitForFunction(() => {
-      const status = document.getElementById('mtext')?.textContent || '';
       const setup = document.getElementById('setup-status')?.textContent || '';
-      return status.includes('AI ready') || setup.includes('download stopped');
+      return !document.getElementById('btn-scan')?.disabled || setup.includes('download stopped');
     }, null, { timeout: 8 * 60_000 });
   }
   for (const id of ['#btn-wiz-skip', '#btn-wiz-access-skip']) {
@@ -243,15 +242,15 @@ async function main() {
           setNotSure: /Set not sure/i.test(text(row.querySelector('.card-sub'))),
           setRange: text(row.querySelector('.set-range')),
           repeatNote: Boolean(row.querySelector('.repeat-note')),
-          prices: [...row.querySelectorAll('.price-cell:not(.na) .val, .g-val')].map((v) => text(v)),
+          prices: [...row.querySelectorAll('.card-price, .g-val')].map((v) => text(v)).filter((v) => v.startsWith('$')),
           priceNote: [...row.querySelectorAll('.spread-warn, .no-price')].map((v) => text(v)).join(' | '),
         }));
         const mem = performance.memory ? { usedMB: Math.round(performance.memory.usedJSHeapSize / 1048576), totalMB: Math.round(performance.memory.totalJSHeapSize / 1048576) } : null;
         return {
           message: text(document.getElementById('msg-bar')),
-          detectedStat: text(document.getElementById('s-detected')),
+          detectedStat: String(rows.length),
           totalStat: text(document.getElementById('s-value')),
-          msStat: text(document.getElementById('s-ms')),
+          totalDetail: document.getElementById('s-value')?.title || '',
           rows,
           popupMemory: mem,
           scanDisabled: document.getElementById('btn-scan').disabled,
@@ -287,7 +286,8 @@ async function main() {
       rec.useful = ui.rows.filter((r) => known(r) && (r.prices.some((p) => p.startsWith('$')) || r.setRange)).length;
       rec.cardNames = ui.rows.map((r) => r.name);
       rec.totalStat = ui.totalStat;
-      rec.scanMsStat = ui.msStat;
+      rec.totalDetail = ui.totalDetail;
+      rec.scanMsStat = null;
       const title = norm(rec.h1 || rec.pageTitle);
       rec.titleContainsName = rec.detected === 1 && known(ui.rows[0]) ? title.includes(norm(ui.rows[0].name)) : null;
 

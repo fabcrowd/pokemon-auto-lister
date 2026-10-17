@@ -248,6 +248,8 @@ Plan: `docs/plans/launch.md`. Nothing is pushed (branch `feat/card-picker-sealed
 - The page prior also applies across grid tiles of a search page, which are separate listings. Not measured.
 
 ## Open
-- [ ] Popup simplification
+- [x] Popup simplification
+  - Review: popup shows one price per card (in the row head) and one est. value; filters come only from Settings.
+  - Pills, API-key hint, ms/cards stats, condition grid and warning sentences are gone (tooltips instead). Verified: npm test, eslint, popup e2e 5 of 5.
 - [ ] Detection learning (tilted cards 15–40° are most of the missed lot cards)
 

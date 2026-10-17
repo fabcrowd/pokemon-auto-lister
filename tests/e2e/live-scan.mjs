@@ -142,8 +142,8 @@ popup.on('console', (msg) => {
 });
 await popup.goto(`chrome-extension://${extensionId}/popup.html`);
 await popup.waitForFunction(() => {
-  const text = document.getElementById('mtext')?.textContent || '';
-  return text && !text.includes('checking');
+  const overlay = document.getElementById('setup-overlay');
+  return getComputedStyle(overlay).display !== 'none' || !document.getElementById('btn-scan').disabled;
 });
 
 const overlay = popup.locator('#setup-overlay');
@@ -151,9 +151,8 @@ if (await overlay.isVisible() && await popup.locator('#btn-setup').isVisible()) 
   console.log('downloading models…');
   await popup.locator('#btn-setup').click();
   await popup.waitForFunction(() => {
-    const status = document.getElementById('mtext')?.textContent || '';
     const setup = document.getElementById('setup-status')?.textContent || '';
-    return status.includes('AI ready') || setup.includes('download stopped');
+    return !document.getElementById('btn-scan').disabled || setup.includes('download stopped');
   }, null, { timeout: 8 * 60_000 });
 }
 
@@ -162,7 +161,7 @@ if (await popup.locator('#btn-wiz-skip').isVisible()) {
 }
 
 const scanEnabled = await popup.locator('#btn-scan').isEnabled();
-console.log('scan enabled', scanEnabled, 'status', await popup.locator('#mtext').textContent(), 'setup', await popup.locator('#setup-status').textContent());
+console.log('scan enabled', scanEnabled, 'setup', await popup.locator('#setup-status').textContent());
 await popup.close();
 await listing.bringToFront();
 
@@ -181,8 +180,8 @@ await worker.evaluate(async () => {
 });
 const scanner = await scannerPromise;
 await scanner.waitForFunction(() => {
-  const text = document.getElementById('mtext')?.textContent || '';
-  return text && !text.includes('checking');
+  const overlay = document.getElementById('setup-overlay');
+  return getComputedStyle(overlay).display !== 'none' || !document.getElementById('btn-scan').disabled;
 });
 if (await scanner.locator('#btn-wiz-skip').isVisible()) {
   await scanner.locator('#btn-wiz-skip').click();
@@ -205,9 +204,8 @@ await scanner.waitForFunction(() => {
 
 const outcome = await scanner.evaluate(() => ({
   message: document.getElementById('msg-bar')?.textContent || '',
-  detected: document.getElementById('s-detected')?.textContent || '',
+  detected: String(document.querySelectorAll('#results .card-row').length),
   total: document.getElementById('s-value')?.textContent || '',
-  ms: document.getElementById('s-ms')?.textContent || '',
   results: document.getElementById('results')?.innerText?.slice(0, 6000) || '',
   scanDisabled: document.getElementById('btn-scan').disabled,
 }));

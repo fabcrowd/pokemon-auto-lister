@@ -147,17 +147,16 @@ try {
   await worker.evaluate(() => chrome.windows.create({ url: chrome.runtime.getURL('popup.html'), type: 'popup', width: 500, height: 720, focused: false }));
   const scanner = await scannerPromise;
   const settled = () => scanner.waitForFunction(() => {
-    const text = document.getElementById('mtext')?.textContent || '';
-    return text && !text.includes('checking');
+    const overlay = document.getElementById('setup-overlay');
+    return !document.getElementById('btn-scan')?.disabled || (overlay && overlay.style.display === 'flex');
   }, null, { timeout: 60_000 });
   await settled();
   if (await scanner.locator('#setup-overlay').isVisible() && await scanner.locator('#btn-setup').isVisible()) {
     console.log('First run in this profile: downloading the models. This can take several minutes.');
     await scanner.locator('#btn-setup').click();
     await scanner.waitForFunction(() => {
-      const status = document.getElementById('mtext')?.textContent || '';
       const setup = document.getElementById('setup-status')?.textContent || '';
-      return status.includes('AI ready') || setup.includes('download stopped');
+      return !document.getElementById('btn-scan')?.disabled || setup.includes('download stopped');
     }, null, { timeout: 15 * 60_000 });
   }
   if (await scanner.locator('#btn-wiz-skip').isVisible()) await scanner.locator('#btn-wiz-skip').click();

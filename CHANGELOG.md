@@ -5,15 +5,22 @@
 Branch `feat/card-picker-sealed-test`.
 
 ### Added
+- `lotValue` (one est. value for the popup) and `setRangeSpan` in `lib/card-display.js`.
 - Lot value estimate for 3 or more cards: "Estimated lot value $X–$Y · N of M cards identified · K still to identify". Unpicked and unpriced cards count $0.
 - Every unrecognised card (except card backs) asks "Which card is this?" with its 5 closest matches and search.
 - Best guess for a card whose set is still open: the set the page's settled cards share, otherwise the printing the picture matched best. It is priced as that printing, never shown as high, keeps the Set? menu, and a "?" next to the name confirms it (reason in the tooltip). Confirming it, or picking from the Set? menu, is saved as a correction.
 - Collector number read from the source photo's bottom corners for open-set cards at least 400 source px tall (`lib/corner-read.js`, `lib/set-codes.js` for printed Scarlet & Violet codes).
 
 ### Changed
+- Popup shows one price per card and one est. value in the action bar; the era picker sits there too.
+- Filter chips moved to Settings > Prices; the popup reads them from `chrome.storage.sync` and updates live.
+- Harness scripts updated for the new popup.
 - The extension points at the live relay and the live signed community bundle.
 - The photo adapter only ranks matches; accept, abstain and high still use the raw similarity. The bundle gate scores what users see.
 - On 67 reviewed HiBid lot photos (186 matched cards, used for tuning before): rows with the set open 94 -> 0; exact card 48 -> 100 (51 settled by evidence, 49 best guesses right, 43 wrong); wrong confirmed set 3 -> 3; wrong name 13 -> 13. Page-prior guesses right 6 of 6, picture guesses 43 of 93. On 48 synthetic binder pages across all eras (432 cards): exact 155 -> 391, page-prior guesses right 38 of 42, picture guesses 86 of 117, wrong confirmed set 0 -> 0. Scan time on the 67 HiBid photos: median 3.4 s -> 3.8 s, total 310 s -> 401 s.
+
+### Removed
+- Model and source pills, API-key hint, ms/cards stats, condition grid and warning sentences from the popup; explanations are in tooltips instead.
 
 ## 2026-10-16
 

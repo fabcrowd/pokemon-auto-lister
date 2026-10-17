@@ -127,7 +127,7 @@
       color: #50566e;
       margin: 10px 0 6px;
     }
-    input[type="text"], input[type="password"] {
+    input[type="text"], input[type="password"], select {
       width: 100%;
       padding: 10px 12px;
       border-radius: 6px;
@@ -137,7 +137,7 @@
       font-size: 13px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    input:focus { outline: none; border-color: #6366f1; }
+    input:focus, select:focus { outline: none; border-color: #6366f1; }
 
     .btn-row {
       display: flex;
@@ -297,6 +297,29 @@
         <button class="btn secondary" id="change-ppt">Change key</button>
         <button class="btn danger" id="clear-ppt">Disconnect</button>
       </div>
+    </div>
+  </div>
+
+  <div class="source-card" id="prices-card">
+    <div class="source-head">
+      <div class="source-name">Prices</div>
+    </div>
+    <div class="source-desc">The price shown for each card.</div>
+    <div class="source-body">
+      <label for="price-condition">Condition</label>
+      <select id="price-condition">
+        <option value="NM">Near Mint (NM)</option>
+        <option value="LP">Lightly Played (LP)</option>
+        <option value="MP">Moderately Played (MP)</option>
+        <option value="HP">Heavily Played (HP)</option>
+        <option value="DMG">Damaged (DMG)</option>
+      </select>
+      <label>Graded prices</label>
+      <label class="toggle" for="graded-PSA"><input type="checkbox" id="graded-PSA" data-grader="PSA"> PSA</label>
+      <label class="toggle" for="graded-BGS"><input type="checkbox" id="graded-BGS" data-grader="BGS"> BGS</label>
+      <label class="toggle" for="graded-CGC"><input type="checkbox" id="graded-CGC" data-grader="CGC"> CGC</label>
+      <label class="toggle" for="graded-SGC"><input type="checkbox" id="graded-SGC" data-grader="SGC"> SGC</label>
+      <div class="source-desc">Shown when your price source has them (needs a PokemonPriceTracker key).</div>
     </div>
   </div>
 

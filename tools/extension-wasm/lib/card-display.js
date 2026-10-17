@@ -127,8 +127,16 @@ export function setRangeSummary(items) {
 
 const priceSpan = (range) => (range.low === range.high ? formatUsd(range.high) : `${formatUsd(range.low)}–${formatUsd(range.high)}`);
 
+const rangeAt = (range, enabledConditions) => (enabledConditions && range?.byCondition ? range.byCondition[enabledConditions[0] || 'NM'] : range);
+
+/** "$4.00–$20.00" (or one price) for a set range at the first enabled condition; null when it has none. */
+export function setRangeSpan(range, enabledConditions = null) {
+  const shown = rangeAt(range, enabledConditions);
+  return shown ? priceSpan(shown) : null;
+}
+
 export function setRangeNote(range, enabledConditions = null) {
-  const shown = enabledConditions && range?.byCondition ? range.byCondition[enabledConditions[0] || 'NM'] : range;
+  const shown = rangeAt(range, enabledConditions);
   if (!shown) return null;
   const total = shown.total ?? shown.count;
   const sets = total > shown.count
@@ -292,24 +300,6 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   return null;
 }
 
-export function lotTotal(cards, choiceFor, enabledConditions = ['NM']) {
-  let total = 0;
-  let unconfirmed = 0;
-  for (const card of cards || []) {
-    if (isOnlyAGuess(card)) continue;
-    const choice = choiceFor(card);
-    if (!isSetConfirmed(card) || !isPrintingConfirmed(card?.price_grid, choice)) {
-      unconfirmed += 1;
-      continue;
-    }
-    const quote = quotedPrice(card, choice, enabledConditions);
-    if (quote) total += quote.price;
-  }
-  return { total, unconfirmed };
-}
-
-const MIN_LOT_CARDS = 3;
-
 // A range that already exists on the row for the condition being shown, or null.
 function rowRange(card, condition) {
   const range = card?.setRange;
@@ -350,13 +340,12 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
   return out;
 }
 
-/** "Estimated lot value $14.00–$30.00 · 3 of 6 cards identified · 3 still to identify"; null under 3 cards. */
-export function lotEstimateLine(cards, choiceFor, enabledConditions = ['NM']) {
+/** The lot's value as "$12.50" or "$14.00–$30.00", with the "2 of 3 cards identified" detail; value is null while no card is identified. */
+export function lotValue(cards, choiceFor, enabledConditions = ['NM']) {
   const lot = lotEstimate(cards, choiceFor, enabledConditions);
-  if (lot.total < MIN_LOT_CARDS) return null;
-  const value = priceSpan(lot);
+  if (lot.total === 0) return { value: null, detail: '' };
   const pick = lot.toIdentify ? ` · ${lot.toIdentify} still to identify` : '';
-  return `Estimated lot value ${value} · ${lot.identified} of ${lot.total} cards identified${pick}`;
+  return { value: lot.identified ? priceSpan(lot) : null, detail: `${lot.identified} of ${lot.total} cards identified${pick}` };
 }
 
 const MODEL_FILE_LABELS = {

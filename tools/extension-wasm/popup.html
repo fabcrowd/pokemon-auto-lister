@@ -53,90 +53,6 @@
     }
     #open-options:hover { color: #c5cadc; border-color: #2d3352; }
 
-    .model-pill {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 11px 4px 8px;
-      border-radius: 20px;
-      background: #13151f;
-      border: 1px solid #1e2130;
-      font-size: 11px;
-      color: #50566e;
-      transition: border-color 0.3s;
-    }
-    .model-pill.ok      { border-color: #10b98133; }
-    .model-pill.err     { border-color: #ef444433; }
-    .model-pill.loading { border-color: #6366f133; }
-
-    .mdot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #2a2e40;
-      flex-shrink: 0;
-      transition: background 0.4s, box-shadow 0.4s;
-    }
-    .mdot.ok      { background: #10b981; box-shadow: 0 0 7px #10b98166; }
-    .mdot.err     { background: #ef4444; box-shadow: 0 0 7px #ef444466; }
-    .mdot.loading { background: #6366f1; box-shadow: 0 0 7px #6366f166; animation: dot-pulse 1.2s ease-in-out infinite; }
-
-    @keyframes dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-    #mtext { transition: color 0.3s; }
-    .model-pill.ok      #mtext { color: #10b981; }
-    .model-pill.err     #mtext { color: #ef4444; }
-    .model-pill.loading #mtext { color: #6366f1; }
-
-    /* SOURCE PILL — shows the current pricing source for the last scan */
-    .source-pill {
-      display: none;                 /* hidden until first scan */
-      align-items: center;
-      gap: 6px;
-      padding: 4px 11px 4px 8px;
-      border-radius: 20px;
-      background: #13151f;
-      border: 1px solid #1e2130;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      cursor: pointer;
-      transition: border-color 0.2s;
-    }
-    .source-pill.visible { display: flex; }
-    .source-pill:hover { border-color: #2d3352; }
-    .sdot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #2a2e40;
-      flex-shrink: 0;
-    }
-    .source-pill.pokemontcg { border-color: #f59e0b33; color: #f59e0b; }
-    .source-pill.pokemontcg .sdot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b66; }
-    .source-pill.ppt { border-color: #6366f133; color: #6366f1; }
-    .source-pill.ppt .sdot { background: #6366f1; box-shadow: 0 0 6px #6366f166; }
-    .source-pill.backend { border-color: #10b98133; color: #10b981; }
-    .source-pill.backend .sdot { background: #10b981; box-shadow: 0 0 6px #10b98166; }
-
-    /* HINT STRIP — appears below the results when on the weakest source and not dismissed */
-    .hint-strip {
-      display: none;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      background: #0e1018;
-      border-top: 1px solid #1a1d2a;
-      font-size: 11px;
-      color: #8b92ab;
-    }
-    .hint-strip.visible { display: flex; }
-    .hint-strip .hint-text { flex: 1; min-width: 0; }
-    .hint-strip a {
-      color: #6366f1;
-      text-decoration: none;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .hint-strip a:hover { text-decoration: underline; }
     .hint-dismiss {
       background: transparent;
       border: none;
@@ -223,65 +139,21 @@
     }
     #btn-clear:hover { color: #c5cadc; border-color: #2d3352; }
 
-    .stats-row {
-      display: flex;
-      gap: 14px;
-      margin-left: auto;
-    }
-    .stat-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+    .stat-block { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
     .stat-block .val { font-size: 15px; font-weight: 700; line-height: 1; color: #8b92ab; }
     .stat-block .val.green { color: #10b981; }
-    .stat-block .val.amber { color: #f59e0b; }
-    .lot-estimate { padding: 6px 14px; font-size: 12px; font-weight: 600; color: #10b981; border-bottom: 1px solid #2a2f45; }
-    .lot-estimate[hidden] { display: none; }
     .picker-sub { font-size: 11px; color: #8b92ab; margin: 0 0 4px; }
     .stat-block .lbl { font-size: 9px; font-weight: 600; letter-spacing: 0.7px; text-transform: uppercase; color: #8b92ab; }
 
-    /* FILTER BAR */
-    .filter-bar {
-      padding: 4px 16px 10px;
-      background: #0b0c12;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .filter-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .filter-group-label {
-      font-size: 9px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.7px;
-      color: #8b92ab;
-      width: 44px;
-      flex-shrink: 0;
-    }
-    .chip {
-      font-family: inherit;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.4px;
-      padding: 3px 8px;
-      border-radius: 10px;
-      border: 1px solid #1e2130;
-      background: #0e1018;
-      color: #50566e;
-      cursor: pointer;
-      transition: all 0.12s;
-      user-select: none;
-    }
-    .chip:hover { color: #c5cadc; border-color: #2d3352; }
-    .chip.on { color: #6366f1; border-color: #6366f1; background: #6366f118; }
     .era-select {
       font-family: inherit;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
-      padding: 3px 6px;
-      border-radius: 10px;
+      height: 42px;
+      min-width: 0;
+      max-width: 96px;
+      padding: 0 6px;
+      border-radius: 8px;
       border: 1px solid #1e2130;
       background: #0e1018;
       color: #c5cadc;
@@ -377,6 +249,8 @@
 
     .card-meta { flex: 1; min-width: 0; }
     .card-name { font-size: 13px; font-weight: 700; color: #c5cadc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-price { font-size: 14px; font-weight: 700; color: #10b981; white-space: nowrap; text-align: right; flex-shrink: 0; }
+    .repeat-mark { color: #f59e0b; margin-left: 4px; cursor: help; }
     .card-sub { font-size: 11px; color: #3d4460; margin-top: 2px; }
     .set-chip {
       display: inline-block;
@@ -395,52 +269,7 @@
       color: #8b92ab;
       margin-left: 2px;
     }
-    .src-badge {
-      font-size: 9px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      color: #50566e;
-      flex-shrink: 0;
-    }
-    .src-badge.backend { color: #10b981; }
-    .src-badge.ppt     { color: #6366f1; }
-    .src-badge.pokemontcg { color: #f59e0b; }
-
     .no-price { font-size: 11px; color: #8b92ab; text-align: center; padding: 4px; }
-
-    /* PRICE GRID */
-    .price-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 4px;
-      margin-left: 13px;
-    }
-    .price-cell {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      padding: 6px 4px;
-      background: #0b0c12;
-      border-radius: 4px;
-      border: 1px solid #0e1018;
-      min-width: 0;
-    }
-    .price-cell .lbl {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      color: #8b92ab;
-    }
-    .price-cell .val {
-      font-size: 12px;
-      font-weight: 700;
-      color: #10b981;
-      white-space: nowrap;
-    }
-    .price-cell.na .val { color: #8b92ab; font-weight: 400; }
-    .price-cell.highlight { background: #10b98112; border-color: #10b98133; }
 
     /* GRADED GRID */
     .graded-grid {
@@ -476,14 +305,6 @@
       letter-spacing: 0.6px;
       text-transform: uppercase;
       color: #8b92ab;
-    }
-    .spread-warn {
-      font-size: 10px;
-      color: #f59e0b;
-      padding: 2px 6px;
-      border-radius: 8px;
-      background: #f59e0b18;
-      font-weight: 700;
     }
 
     /* CARD PICKER */
@@ -678,52 +499,17 @@
       Card Scanner
     </div>
     <div class="header-actions">
-      <div class="source-pill" id="source-pill" title="Pricing source — click for settings">
-        <div class="sdot"></div>
-        <span id="source-text">—</span>
-      </div>
       <button id="open-options" title="Settings">⚙</button>
-      <div class="model-pill" id="model-pill">
-        <div class="mdot" id="mdot"></div>
-        <span id="mtext">checking…</span>
-      </div>
     </div>
   </div>
 
   <div class="action-bar">
     <button id="btn-scan" disabled><span id="btn-label">SCAN PAGE</span></button>
     <button id="btn-clear">CLEAR</button>
-    <div class="stats-row">
-      <div class="stat-block"><div class="val" id="s-detected">—</div><div class="lbl">cards</div></div>
-      <div class="stat-block"><div class="val green" id="s-value">—</div><div class="lbl">confirmed total</div></div>
-      <div class="stat-block"><div class="val amber" id="s-ms">—</div><div class="lbl">ms</div></div>
-    </div>
-  </div>
-
-  <div class="lot-estimate" id="lot-estimate" role="status" hidden></div>
-
-  <div class="filter-bar">
-    <div class="filter-group">
-      <span class="filter-group-label">Raw</span>
-      <button type="button" class="chip" data-filter="raw.NM">NM</button>
-      <button type="button" class="chip" data-filter="raw.LP">LP</button>
-      <button type="button" class="chip" data-filter="raw.MP">MP</button>
-      <button type="button" class="chip" data-filter="raw.HP">HP</button>
-      <button type="button" class="chip" data-filter="raw.DMG">DMG</button>
-    </div>
-    <div class="filter-group">
-      <span class="filter-group-label">Graded</span>
-      <button type="button" class="chip" data-filter="graded.PSA">PSA</button>
-      <button type="button" class="chip" data-filter="graded.BGS">BGS</button>
-      <button type="button" class="chip" data-filter="graded.CGC">CGC</button>
-      <button type="button" class="chip" data-filter="graded.SGC">SGC</button>
-    </div>
-    <div class="filter-group">
-      <label class="filter-group-label" for="era-select">Era</label>
-      <select id="era-select" class="era-select" title="When the cards are from. Picking an era makes sets much more accurate.">
-        <option value="">Any era</option>
-      </select>
-    </div>
+    <select id="era-select" class="era-select" aria-label="Era" title="When the cards are from. Picking an era makes sets much more accurate.">
+      <option value="">Any era</option>
+    </select>
+    <div class="stat-block" id="stat-value" role="group"><div class="val green" id="s-value">—</div><div class="lbl">est. value</div></div>
   </div>
 
   <div class="access-notice" id="access-notice" hidden>
@@ -747,11 +533,6 @@
       Open a page with Pokémon cards, then press <b>Scan Page</b>.<br>
       Detections and prices appear here and overlay on the page.
     </div>
-  </div>
-
-  <div class="hint-strip" id="hint-strip">
-    <span class="hint-text">💡 Add a free API key to see NM/LP/MP/HP/DMG prices · <a id="hint-link">Settings</a></span>
-    <button class="hint-dismiss" id="hint-dismiss" title="Dismiss">✕</button>
   </div>
 
   <div class="setup-overlay" id="setup-overlay">

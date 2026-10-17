@@ -40,7 +40,7 @@ test.describe('Consumer extension popup', () => {
     await context?.close();
   });
 
-  test('popup opens with a scan button and a model status', async () => {
+  test('popup opens with a scan button and an era picker', async () => {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (err) => errors.push(err.message));
@@ -48,17 +48,15 @@ test.describe('Consumer extension popup', () => {
 
     await expect(page.locator('.logo')).toContainText('Card Scanner');
     await expect(page.locator('#btn-label')).toHaveText('SCAN PAGE');
-    await expect(page.locator('#model-pill')).toBeVisible();
-    await expect(page.locator('button.chip[data-filter="raw.NM"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#mtext')).toHaveText(/AI ready|setup needed|not running/);
-    const status = (await page.locator('#mtext').textContent())?.trim();
-    if (status === 'AI ready') await expect(page.locator('#btn-scan')).toBeEnabled();
-    else await expect(page.locator('#btn-scan')).toBeDisabled();
+    await expect(page.locator('.action-bar #era-select')).toBeVisible();
+    // The scan button follows readiness: the setup overlay is shown exactly when it is disabled.
+    const setupShown = await page.locator('#setup-overlay').isVisible();
+    if (setupShown) await expect(page.locator('#btn-scan')).toBeDisabled();
+    else await expect(page.locator('#btn-scan')).toBeEnabled();
 
     const paint = await page.evaluate(() => ({
       background: getComputedStyle(document.body).backgroundColor,
       wizard: getComputedStyle(document.getElementById('setup-overlay')).display,
-      status: document.getElementById('mtext').textContent,
       wizardText: document.getElementById('setup-overlay').innerText.slice(0, 180),
     }));
     expect(paint.background).toBe('rgb(8, 9, 13)');
@@ -67,20 +65,20 @@ test.describe('Consumer extension popup', () => {
     }
     expect(errors, errors.join('\n')).toEqual([]);
 
-    // The real window is a narrow popup. The status and scan button have to fit.
+    // The real window is a narrow popup. The era picker and scan button have to fit.
     await page.setViewportSize({ width: 420, height: 640 });
     const fit = await page.evaluate(() => {
-      const pill = document.getElementById('model-pill').getBoundingClientRect();
+      const era = document.getElementById('era-select').getBoundingClientRect();
       const scan = document.getElementById('btn-scan').getBoundingClientRect();
       return {
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
-        pillRight: pill.right,
+        eraRight: era.right,
         scanRight: scan.right,
       };
     });
     expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth + 1);
-    expect(fit.pillRight).toBeLessThanOrEqual(420);
+    expect(fit.eraRight).toBeLessThanOrEqual(420);
     expect(fit.scanRight).toBeLessThanOrEqual(420);
 
     await page.screenshot({
@@ -195,8 +193,10 @@ test.describe('Consumer extension popup', () => {
       chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanPage' ? { cards, scanId: 'y', srcWidth: 10, srcHeight: 10, pending: 0 } : real(msg));
     });
     await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
-    await expect(page.locator('#lot-estimate')).toHaveText('Estimated lot value $12.50 · 2 of 3 cards identified · 1 still to identify');
     await expect(page.locator('#s-value')).toHaveText('$12.50');
+    await expect(page.locator('#s-value')).toHaveAttribute('title', '2 of 3 cards identified · 1 still to identify');
+    await expect(page.locator('#stat-value')).toHaveAttribute('aria-label', '2 of 3 cards identified · 1 still to identify');
+    await expect(page.locator('.card-price')).toHaveText(['$5.00', '$7.50', '—']);
     await expect(page.locator('.card-row .picker-title')).toHaveText('Which card is this?');
     await expect(page.locator('.picker-sub')).toHaveText('Closest matches');
     await expect(page.locator('.pick-card')).toHaveCount(2);
@@ -235,6 +235,7 @@ test.describe('Consumer extension popup', () => {
     await expect(mark).toHaveAttribute('title', 'likely Paldea Evolved: 2 other cards on this page are from it');
     await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
     await expect(page.locator('#s-value')).toHaveText('$3.00');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
 
     await mark.evaluate((b) => b.click());
     await expect(page.locator('.card-row .guess-mark')).toHaveCount(0);

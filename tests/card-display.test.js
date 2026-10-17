@@ -8,7 +8,8 @@ import {
   isPrintingConfirmed,
   swapVersion,
   versionLabel,
-  lotTotal,
+  lotValue,
+  setRangeSpan,
   printingNote,
   quotedPrice,
   sourceFooter,
@@ -48,8 +49,6 @@ test('one printing is quoted and counted', () => {
   assert.equal(isPrintingConfirmed(card.price_grid, null), true);
   assert.equal(printingNote(card.price_grid), null);
   assert.equal(quotedPrice(card, null).price, 4.5);
-  assert.equal(lotTotal([card], () => null).total, 4.5);
-  assert.equal(lotTotal([card], () => null).unconfirmed, 0);
 });
 
 test('several printings are not quoted until the user picks one', () => {
@@ -58,17 +57,12 @@ test('several printings are not quoted until the user picks one', () => {
   assert.match(printingNote(charizard.price_grid), /3 variants/);
   assert.match(printingNote(charizard.price_grid), /\$928\.00/);
   assert.match(printingNote(charizard.price_grid), /\$38,?000\.00|\$38000\.00/);
-  const lot = lotTotal([charizard], () => null);
-  assert.equal(lot.total, 0);
-  assert.equal(lot.unconfirmed, 1);
 });
 
 test('a chosen printing is the only price that counts', () => {
   const quote = quotedPrice(charizard, '1stEditionHolofoil');
   assert.equal(quote.price, 38000);
   assert.equal(quote.printing, '1stEditionHolofoil');
-  assert.equal(lotTotal([charizard], () => '1stEditionHolofoil').total, 38000);
-  assert.equal(lotTotal([charizard], () => '1stEditionHolofoil').unconfirmed, 0);
 });
 
 test('a card with the 1st Edition stamp starts on its 1st Edition price', () => {
@@ -111,7 +105,6 @@ test('no stamp, or no 1st Edition price, leaves the variant to the user', () => 
 test('a legacy price with no printing map still counts', () => {
   const card = { market_price: 12, price_grid: null };
   assert.equal(quotedPrice(card, null).price, 12);
-  assert.equal(lotTotal([card], () => null).total, 12);
 });
 
 test('a card whose set is not chosen is not quoted or counted', () => {
@@ -123,24 +116,21 @@ test('a card whose set is not chosen is not quoted or counted', () => {
   };
   assert.equal(isSetConfirmed(unsure), false);
   assert.equal(quotedPrice(unsure, null), null);
-  const lot = lotTotal([unsure], () => null);
-  assert.equal(lot.total, 0);
-  assert.equal(lot.unconfirmed, 1);
 
   const picked = { ...unsure, setConfirmed: true, market_price: 8.85 };
   assert.equal(isSetConfirmed(picked), true);
-  assert.equal(lotTotal([picked], () => null).total, 8.85);
+  assert.equal(quotedPrice(picked, null).price, 8.85);
 });
 
-test('the lot total follows the enabled condition', () => {
+test('the quoted price follows the enabled condition', () => {
   const card = {
     market_price: 400,
     price_grid: {
       variants: { normal: { conditions: { NM: 400, LP: 250, MP: null, HP: null, DMG: null } } },
     },
   };
-  assert.equal(lotTotal([card], () => null, ['LP']).total, 250);
-  assert.equal(lotTotal([card], () => null, ['HP']).total, 0);
+  assert.equal(quotedPrice(card, null, ['LP']).price, 250);
+  assert.equal(quotedPrice(card, null, ['HP']), null);
 });
 
 test('a card with one possible set needs no set choice', () => {
@@ -187,7 +177,7 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
   assert.equal(editionNote(card), 'Shadowless border');
 });
 
-import { classifyCard, isIdentified, lotEstimate, lotEstimateLine, lotTotal as lotTotalForUnsure, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
+import { classifyCard, isIdentified, lotEstimate, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
 
 const named = (extra = {}) => ({ identity: { id: 'a-1', name: 'Pikachu' }, confidence: 0.9, abstain: false, ...extra });
 const blank = (extra = {}) => ({ identity: {}, confidence: 0, abstain: true, candidates: [], ...extra });
@@ -238,16 +228,6 @@ test('scanStatus words every count and drops empty parts', () => {
   assert.equal(scanStatus([named(), { cardBack: true, abstain: true }]), 'Found 2 cards: 1 identified, 1 not recognised');
 });
 
-test('lotTotal leaves out cards that are only a guess', () => {
-  const priced = (extra) => ({ ...named(extra), market_price: 5, price_grid: { variants: { normal: { market: 5, conditions: { NM: 5 } } } } });
-  const choose = () => null;
-  assert.equal(lotTotalForUnsure([priced()], choose).total, 5);
-  assert.equal(lotTotalForUnsure([priced({ confidence: 0.2 })], choose).total, 0);
-  assert.equal(lotTotalForUnsure([priced({ abstain: true })], choose).total, 0);
-  assert.equal(lotTotalForUnsure([priced({ unsure: true })], choose).total, 0);
-  assert.equal(lotTotalForUnsure([priced({ abstain: true, setConfirmed: true })], choose).total, 5);
-});
-
 const grid = (nm) => ({ variants: { normal: { market: nm, conditions: { NM: nm, LP: null, MP: null, HP: null, DMG: null } } } });
 const setNamed = (extra = {}) => ({ identity: { name: 'Blastoise' }, confidence: 0.79, abstain: false, setChoices: [{ id: 'base1-2' }, { id: 'base4-2' }], ...extra });
 
@@ -277,8 +257,6 @@ test('a name with several possible sets and a price range is shown, not asked ab
   assert.equal(classifyCard(ranged), 'identified');
   assert.equal(isSetConfirmed(ranged), false, 'the set is still open, so no single price is quoted');
   assert.equal(quotedPrice(ranged, null), null);
-  assert.equal(lotTotal([ranged], () => null).total, 0);
-  assert.equal(lotTotal([ranged], () => null).unconfirmed, 1);
   assert.match(scanStatus([ranged]), /1 identified/);
 });
 
@@ -354,7 +332,6 @@ test('a version printed in several sets stays set-unconfirmed with its own range
   assert.equal(out.price_grid, null);
   assert.equal(isSetConfirmed(out), false);
   assert.equal(quotedPrice(out, null), null);
-  assert.deepEqual(lotTotal([out], () => null), { total: 0, unconfirmed: 1 });
   assert.equal(isUnsure(out), false, 'a range is on offer');
   assert.equal(out.confidence, 0.79);
 });
@@ -485,9 +462,42 @@ test('lotEstimate: an unchosen printing contributes its price range', () => {
   assert.equal(lotEstimate([multi], () => 'holo').low, 8);
 });
 
-test('lotEstimateLine needs 3 cards and wording drops "still to identify" at zero', () => {
-  assert.equal(lotEstimateLine([priceAt(5), priceAt(5)], () => null), null);
-  assert.equal(lotEstimateLine([priceAt(5), priceAt(5), priceAt(5)], () => null), 'Estimated lot value $15.00 · 3 of 3 cards identified');
+test('lotValue: a single value, or a span, whenever one real card is there', () => {
+  assert.deepEqual(lotValue([priceAt(5), priceAt(7.5), blank()], () => null), {
+    value: '$12.50',
+    detail: '2 of 3 cards identified · 1 still to identify',
+  });
+  assert.deepEqual(lotValue([priceAt(5)], () => null), { value: '$5.00', detail: '1 of 1 cards identified' });
   const mixed = [priceAt(5), setNamed({ setRange: { low: 1, high: 3, count: 2, total: 2 } }), blank(), blank()];
-  assert.equal(lotEstimateLine(mixed, () => null), 'Estimated lot value $6.00–$8.00 · 2 of 4 cards identified · 2 still to identify');
+  assert.deepEqual(lotValue(mixed, () => null), {
+    value: '$6.00–$8.00',
+    detail: '2 of 4 cards identified · 2 still to identify',
+  });
+});
+
+test('lotValue: no value when only card backs or nothing was found', () => {
+  assert.deepEqual(lotValue([], () => null), { value: null, detail: '' });
+  assert.deepEqual(lotValue([{ cardBack: true, abstain: true }], () => null), { value: null, detail: '' });
+});
+
+test('lotValue: no value while nothing is identified, but the detail stays', () => {
+  assert.deepEqual(lotValue([blank()], () => null), { value: null, detail: '0 of 1 cards identified · 1 still to identify' });
+});
+
+test('lotValue: a card that is only a guess adds $0 and is still to identify', () => {
+  for (const extra of [{ abstain: true }, { unsure: true }, { confidence: 0.2 }]) {
+    const lot = lotValue([priceAt(5), priceAt(9, extra)], () => null);
+    assert.deepEqual(lot, { value: '$5.00', detail: '1 of 2 cards identified · 1 still to identify' });
+  }
+  assert.equal(lotValue([priceAt(9, { abstain: true, setConfirmed: true })], () => null).value, '$9.00');
+});
+
+test('setRangeSpan: the span for the first enabled condition, null when there is none', () => {
+  const byCondition = { NM: { low: 4, high: 20, count: 2, total: 2 }, LP: { low: 3, high: 3, count: 1, total: 2 } };
+  const range = { ...byCondition.NM, byCondition };
+  assert.equal(setRangeSpan(range, ['NM']), '$4.00–$20.00');
+  assert.equal(setRangeSpan(range, ['LP']), '$3.00');
+  assert.equal(setRangeSpan(range, ['HP']), null);
+  assert.equal(setRangeSpan({ low: 2, high: 9, count: 2 }, ['NM']), '$2.00–$9.00');
+  assert.equal(setRangeSpan(undefined, ['NM']), null);
 });
