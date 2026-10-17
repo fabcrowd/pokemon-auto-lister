@@ -6,9 +6,7 @@ Three pieces live in this repo:
 
 1. **Node dashboard + API** (project root) — upload a photo (single card or a multi-card spread) and get identity + price grid per card. Bind is LAN-wide, so it works from a phone on the same Wi‑Fi.
 2. **VellumAI** ([`tools/vellum-ai/`](tools/vellum-ai/README.md)) — local Python detect + identify sidecar (YOLO detector, CLIP/FAISS catalog retrieval, OCR).
-3. **Chrome extensions**
-   - `dist/extension-wasm/` — standalone end-user build that overlays prices on any webpage. **Not in git** (`dist/` is gitignored); install steps in its `INSTALL.md`. When the dashboard is running it uses `GET /api/price-grid` for per-condition JustTCG pricing.
-   - [`tools/chrome-extension/`](tools/chrome-extension/) — dev extension that talks to the VellumAI extension sidecar (`tools/vellum-ai/server.py`, port 7331).
+3. **Chrome extension** — [`tools/extension-wasm/`](tools/extension-wasm/) is the product: it finds Pokémon cards in the photos on a page and overlays name, set and price. Recognition runs in the browser (CLIP + YOLO via onnxruntime-web). It is built into `dist/` (gitignored; install steps in `tools/extension-wasm/INSTALL.md`). When the dashboard is running the dev build uses `GET /api/price-grid` for per-condition JustTCG pricing. [`tools/chrome-extension/`](tools/chrome-extension/) is the older dev extension that talks to the VellumAI extension sidecar (`tools/vellum-ai/server.py`, port 7331).
 
 ```text
 Photo (single or multi-card spread)
@@ -113,15 +111,30 @@ When the PokeGrade free-tier quota is exhausted, the app opens a **quota circuit
 | `GET /api/scan-photo` | Serve a saved scan crop |
 | `GET /health`, `GET /api/health` | Liveness |
 
-## Browser listing-photo detection
+## Browser extension
 
-The standalone `dist/extension-wasm/` scanner uses the tracked source in `tools/extension-wasm/`. Its content script collects large page-image candidates, including CSS background images, and records each image URL and rendering geometry. The service worker attempts detection against the original HTTPS image when browser access permits; unsupported CSS mappings, inaccessible sources, or failed fetches fall back to a crop from the visible-tab screenshot. Detected source-image boxes are mapped back to viewport coordinates for the overlay. Screenshot scale is measured from the captured bitmap and page viewport rather than relying only on `devicePixelRatio`.
-
-Rebuild the generated extension files after changing these sources:
+Source is `tools/extension-wasm/`; `dist/` holds generated builds, so rebuild after changing source and never edit `dist/` by hand.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1
+powershell -ExecutionPolicy Bypass -File scripts/setup_vendor.ps1      # once: fetch onnxruntime-web into tools/extension-wasm/vendor
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1          # dev build -> dist/extension-wasm
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1 -Sealed  # dist/extension-wasm-sealed (scorer only)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1 -Store   # dist/extension-wasm-store + .zip
 ```
+
+The dev build keeps the localhost dashboard host permissions, test-photo collection and test hooks. The store build drops all of those, requests `<all_urls>` only as an optional permission, and its permission and host list is pinned by `tests/store-build.test.js`.
+
+What it does on a page:
+
+- **Listing-photo focus.** It scans the listing's own photo, not recommendation carousels or thumbnail strips: related-item sections are found from their headings, and a single hero card that fills its photo is read directly. Square photos with no detections are tiled for lots, and sealed product gives no cards.
+- **Full-size photo upgrade.** It looks for the largest rendition of the photo (srcset, zoom/original attributes, image links, `og:image`, known size markers) and detects on that. Without site access it falls back to a screenshot crop. After a screenshot-only scan the popup offers site access once ("Not now" hides it for 14 days); the options page has the same toggle, "Read full-size photos on sites you scan (more accurate)". Photos are fetched without cookies and only from hosts the page already loaded images from.
+- **Picker, set and version choices.** When unsure it shows close matches and remembers the pick. When only the set is open it keeps the name and shows a price range with a "Set?" menu; when look-alike versions (ex / V / VSTAR / Dark) are close it shows an "Other version?" menu with each version's price. The listing title only reorders choices. "High" confidence needs similarity >= 0.82 and a clear lead; three or more boxes with the same name in one photo go to the picker.
+- **Optional shared learning** ("Help improve recognition for everyone", off by default, inert until the owner fills `lib/shared-config.js`). Opted-in picks upload as small card crops plus the chosen card through a relay to a public data repo, and a signed community pack comes back. See `docs/plans/shared-learning.md`, `docs/plans/self-learning.md` and `tools/shared-data/README.md`.
+- **Experimental look-alike penalty** is off; it needs a locally built penalty file (`scripts/build-hub-penalty.py`).
+
+Tests: `npm test` (Node unit tests, including the store-build and extension tests; 955 pass), `npx playwright test tests/e2e/extension-wasm-popup.spec.js --project=extension` (popup, needs real Chrome and a fresh dev build), and `scripts/realworld-run.mjs <pages.json>` for the real-world harness (see `HANDOFF.md`).
+
+The scanner's content script collects large page-image candidates, including CSS background images, and records each image URL and rendering geometry. The service worker attempts detection against the original HTTPS image when browser access permits; unsupported CSS mappings, inaccessible sources, or failed fetches fall back to a crop from the visible-tab screenshot. Detected source-image boxes are mapped back to viewport coordinates for the overlay. Screenshot scale is measured from the captured bitmap and page viewport rather than relying only on `devicePixelRatio`.
 
 **Model quality:** the detector was retrained on 2026-10-10 with binder, flat-lay and single-card composites plus reviewed sealed-product negatives. On the reviewed real-photo set it scores precision 0.91 / recall 1.00 at the shipped threshold (the previous model scored 0.17 / 0.14). That set is small (5 positive photos, 12 sealed lots), so see `HANDOFF.md` for caveats. Score a model with:
 
@@ -176,7 +189,10 @@ data/                # runtime state + card catalog (gitignored)
 tests/               # node --test suites; tests/e2e/ = Playwright
 scripts/             # benchmarks, sidecar launchers, debug reports
 tools/vellum-ai/     # local detect + ID sidecar (Python 3.12)
-tools/chrome-extension/  # dev Chrome extension
+tools/extension-wasm/    # the Chrome extension (source; built into dist/)
+tools/chrome-extension/  # older dev extension (sidecar)
+tools/relay/, tools/shared-data/  # shared-learning templates the owner deploys
+docs/plans/              # launch, shared-learning, self-learning plans
 docs/autopilot/      # architecture notes, CURSOR.md
 HANDOFF.md           # next-session brief
 ```

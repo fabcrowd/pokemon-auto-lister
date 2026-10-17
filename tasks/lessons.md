@@ -63,3 +63,40 @@ The 31-lot blind set went 0.462 → 0.723 as I inspected its misses and fixed ea
 Every JustTCG/pokemontcg.io lookup was a search (name + set + number) that had to be matched back to the card, and most pricing bugs this session were matching bugs (substring sets, era prefixes, promo names). The catalog ids *are* TCGdex ids, and TCGdex serves TCGplayer + Cardmarket prices per card with no key or quota — so `GET /cards/{id}` prices the exact product with no matching at all. test2 price accuracy went from unmeasurable (quota) to 0.964, equal to find accuracy.
 
 **Gotchas:** TCGdex has no TCGplayer row for Trainer/Galarian Gallery, Radiant Collection and many promos — use Cardmarket EUR × an ECB rate and mark `basis: 'cardmarket-eur'`. Its Cardmarket `-holo` fields are the reverse-holo variant, not the card (Meowstic XY48: trend 7.03 vs trend-holo 2.25). Vintage prices differ by edition (1st Edition vs Unlimited) — same id, different product; identification cannot see the stamp yet.
+
+## Measure on held-out real pages, not per-photo fixes (2026-10-16)
+
+A Cursor run tuned the extension to individual photos and the numbers looked fine on those photos only. Fixes now have to move a number on pages and crops nobody tuned against: HiBid reviewed boxes, the 28 dev pages, and the 30-page held-out set (`fresh-pages.json`, used once at a56c0e9 and no longer blind). Never fix against a held-out miss.
+
+## Check train/serve preprocessing parity first (2026-10-16)
+
+`cropArt` stretched the top 45% strip of a card into a square while the catalog (`embed_all.py`) took the centre square of that strip. Clean catalog images matched themselves at #1 only 54.7% of the time (96.7% with the matching crop), and real crops collapsed onto a few hub cards. Fixing the crop moved HiBid exact 26.3% -> 43.2% and right name 57.4% -> 70.5%, more than any threshold work. **Rule:** when recognition is poor, replay the query path against the catalog's own images before touching thresholds.
+
+## A score rise means the confidence tiers must be refit (2026-10-16)
+
+After the crop fix similarities rose, and the old "high" rule (confidence >= 0.80) produced 22 high rows on 28 real pages, several wrong. Tiers were refit on labelled non-sealed data (high needs similarity >= 0.82 and a lead >= 0.025): wrong names among high 5/164 -> 0/84. **Rule:** any change to model, crop or catalog needs the thresholds in `lib/fusion.js` refit.
+
+## "Identified with no picker" was the wrong success metric (2026-10-16)
+
+It rewarded blocking pickers over useful output. Real users want a name and a price. The metric is now "useful": a row showing a name and a price or price range. When only the set or version is ambiguous, show a range instead of blocking (the row keeps the top card's price; "Set?" and "Other version?" menus let the user choose).
+
+## Heredocs in agent shells dropped regex backslashes (2026-10-16)
+
+A regex edited through a shell heredoc lost its backslashes without any error. After any scripted edit of a regex, re-read the changed line and run the tests that exercise it.
+
+## Piping test output through tail hides the exit code (2026-10-16)
+
+`npm test | tail` reports tail's status, not the test run's. Capture the real summary (tests / pass / fail lines) or the exit code separately.
+
+## Always pass the pages file to the real-world harness (2026-10-16)
+
+`scripts/realworld-run.mjs` can pick up the held-out file when an agent starts it without a pages file. Pass the file explicitly every time, and keep the held-out file out of tuning runs.
+
+## Keep running fresh-context reviews (2026-10-16)
+
+Fresh-context reviews found real bugs every time: wrong-price version swaps (a1606f2), an unbounded photo fetch and private-host redirects (a1606f2), and the security holes fixed in 87f2d0e and 58a9c93. Review every package before it merges.
+
+## A public relay with a write token must not reach code that runs with the signing key (2026-10-16)
+
+The relay's GitHub token can write to the data repo. If it could write to `main`, a leaked token could change the code the nightly job runs with the signing key. Fix (58a9c93): the relay writes only to an `inbox` branch, `main` is limited to admins by a ruleset, the nightly job reads `inbox` as data, and a build job with no secrets is separate from the sign job.
+

@@ -202,3 +202,34 @@ Extension (tools/extension-wasm)
 - [ ] Offscreen boxes counted and pinned to the top; lazy-load auto-rescan ignores era and overwrites the enriched overlay.
 - [x] The lot total follows the enabled condition. A missing condition is not filled with the NM price. Empty graded cells are skipped.
 - [ ] Price cache in extension storage still has no eviction.
+
+# Chrome Web Store launch and listing-photo focus (2026-10-16)
+
+Plan: `docs/plans/launch.md`. Nothing is pushed (branch `feat/card-picker-sealed-test`, 22 commits ahead of `main`).
+
+## Done
+- [x] Store package: minimal permissions, optional site access, pinned downloads, store vs dev build (ef11ec4)
+- [x] Privacy policy, listing copy, original icon (5d4d99c)
+- [x] Scan the listing's own photo, not carousels; related-section headings; largest rendition of the photo (6830ccb, 7278b5f, 2c8678b)
+- [x] Crop card art the way the catalog was embedded (34bc430)
+- [x] Picker ordered by listing title; repeat-name guard; optional look-alike penalty, off (be75912, f1366ba)
+- [x] Name and price when only the set is open; "high" earned honestly (a56c0e9)
+- [x] Offer full-size photo access after a screenshot-only scan (25adc7e)
+- [x] Lookalike versions (ex / V / VSTAR / Dark) with price ranges (ac3d08e)
+- [x] Fixes from fresh-context review (a1606f2)
+- [x] Shared learning: relay, data-repo template, signed community pack (508e616)
+- [x] Security fixes for shared learning (87f2d0e, 58a9c93)
+- [x] Real-world runs on 28 dev pages and 30 held-out pages (results in HANDOFF.md)
+
+## Open
+- [ ] Sealed test set has no labels yet; collect exam photos from real use
+- [ ] Owner: manual store-zip test, contact email, privacy-policy hosting, Chrome Web Store developer account, name and icon approval, push and publish, deploy the relay and data repo (`tools/shared-data/README.md`)
+
+# Self-learning (next) — plan: `docs/plans/self-learning.md`
+
+- [x] 1. Security fixes (87f2d0e, 58a9c93)
+- [ ] 2. Signed bundle replaces the pack-only manifest (catalog, memory, adapter, check; per-part sha256; hot-load)
+- [ ] 3. Seed data, the three add-ons (memory, photo adapter, "is this a card?" check), one gate, nightly `STATUS.md`
+- [ ] 4. New sets added automatically
+- [ ] Report a measured gain on the HiBid regression set before anything ships
+
