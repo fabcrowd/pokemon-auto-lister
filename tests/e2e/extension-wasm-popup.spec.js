@@ -178,4 +178,29 @@ test.describe('Consumer extension popup', () => {
     await expect(notice).toBeHidden();
     await page.close();
   });
+
+  test('a lot of 3+ cards shows an estimate, and an unrecognised card asks with its closest matches', async () => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 640 });
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.evaluate(() => {
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+      const near = [{ id: 'a-1', name: 'Pidgey', set: 'Set A', setCode: 'a', number: '1' }, { id: 'b-2', name: 'Rattata', set: 'Set B', setCode: 'b', number: '2' }];
+      const cards = [
+        { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
+        { identity: { id: 'x-2', name: 'Raichu', set: 'Base', setCode: 'base1', number: '14' }, confidence: 0.9, abstain: false, market_price: 7.5, price_grid: grid(7.5), box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.3, abstain: true, candidates: near, box: [0, 0, 1, 1] },
+      ];
+      chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanPage' ? { cards, scanId: 'y', srcWidth: 10, srcHeight: 10, pending: 0 } : real(msg));
+    });
+    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    await expect(page.locator('#lot-estimate')).toHaveText('Estimated lot value $12.50 · 2 of 3 cards identified · 1 still to identify');
+    await expect(page.locator('#s-value')).toHaveText('$12.50');
+    await expect(page.locator('.card-row .picker-title')).toHaveText('Which card is this?');
+    await expect(page.locator('.picker-sub')).toHaveText('Closest matches');
+    await expect(page.locator('.pick-card')).toHaveCount(2);
+    await expect(page.locator('.unrec-toggle')).toHaveCount(0);
+    await page.close();
+  });
 });

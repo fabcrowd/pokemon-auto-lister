@@ -23,7 +23,7 @@ import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedB
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
-import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
+import { candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
@@ -1529,6 +1529,8 @@ function cardGrayFull(cardCanvas) {
  * Recognize one rectified card. When close matches come from more than one set,
  * the card is not priced: the user picks the set and the popup asks "priceCard".
  */
+const closestIds = (hits) => closestMatches(hits, _meta).map((row) => row.id);
+
 async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
   const seen = {};
   const result = await recognizeWith(cardCanvas, era, sourceHeight, seen);
@@ -1565,13 +1567,15 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
       ocrText,
       numberRead: numbered?.read,
       agreedFinish: numbered?.finish || null,
+      // Kept so a card nothing could name still asks the user, with what the search found closest.
+      nearest: closestIds(hits),
       ...unpriced,
     };
   }
 
   const eraRows = era ? eraPrintingsOf(identity.name, era) : null;
   // The user said when these cards are from; a name never printed then was misread.
-  if (eraRows && !eraRows.length) return { identity: null, confidence, abstain: true, ocrText, ...unpriced };
+  if (eraRows && !eraRows.length) return { identity: null, confidence, abstain: true, ocrText, nearest: closestIds(hits), ...unpriced };
   const inPeriod = eraRows ? eraPrintings(scoreIndices(embedding, eraRows)) : null;
   if (inPeriod?.pick != null) {
     const picked = _meta[inPeriod.pick];

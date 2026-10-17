@@ -187,7 +187,7 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
   assert.equal(editionNote(card), 'Shadowless border');
 });
 
-import { classifyCard, isIdentified, lotTotal as lotTotalForUnsure, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
+import { classifyCard, isIdentified, lotEstimate, lotEstimateLine, lotTotal as lotTotalForUnsure, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
 
 const named = (extra = {}) => ({ identity: { id: 'a-1', name: 'Pikachu' }, confidence: 0.9, abstain: false, ...extra });
 const blank = (extra = {}) => ({ identity: {}, confidence: 0, abstain: true, candidates: [], ...extra });
@@ -207,8 +207,8 @@ test('isIdentified needs an identity, no doubt about it, and a confirmed set', (
 test('classifyCard sorts into identified, pick and unrecognised', () => {
   assert.equal(classifyCard(named()), 'identified');
   assert.equal(classifyCard(unsure()), 'pick');
-  assert.equal(classifyCard(blank()), 'unrecognised');
-  assert.equal(classifyCard(blank({ candidates: undefined })), 'unrecognised');
+  assert.equal(classifyCard(blank()), 'pick');
+  assert.equal(classifyCard(blank({ candidates: undefined })), 'pick');
   assert.equal(classifyCard(blank({ candidates: [{ id: 'z' }] })), 'pick');
   assert.equal(classifyCard({ cardBack: true, abstain: true }), 'unrecognised');
   assert.equal(classifyCard(named({ confidence: 0.1, abstain: false })), 'pick');
@@ -217,8 +217,9 @@ test('classifyCard sorts into identified, pick and unrecognised', () => {
 test('splitByRecognition keeps page order and original indexes', () => {
   const cards = [blank(), named(), unsure(), blank()];
   const { shown, hidden } = splitByRecognition(cards);
-  assert.deepEqual(shown, [1, 2]);
-  assert.deepEqual(hidden, [0, 3]);
+  assert.deepEqual(shown, [0, 1, 2, 3]);
+  assert.deepEqual(hidden, []);
+  assert.deepEqual(splitByRecognition([named(), { cardBack: true, abstain: true }]).hidden, [1]);
 });
 
 test('scanStatus words every count and drops empty parts', () => {
@@ -231,10 +232,10 @@ test('scanStatus words every count and drops empty parts', () => {
   );
   assert.equal(
     scanStatus([named(), unsure(), ...Array.from({ length: 12 }, () => blank())]),
-    'Found 14 cards: 1 identified, 1 needs your pick, 12 not recognised',
+    'Found 14 cards: 1 identified, 13 need your pick',
   );
-  assert.equal(scanStatus([blank()]), 'Found 1 card: 1 not recognised');
-  assert.equal(scanStatus([blank(), blank()]), 'Found 2 cards: 2 not recognised');
+  assert.equal(scanStatus([blank()]), 'Found 1 card: 1 needs your pick');
+  assert.equal(scanStatus([named(), { cardBack: true, abstain: true }]), 'Found 2 cards: 1 identified, 1 not recognised');
 });
 
 test('lotTotal leaves out cards that are only a guess', () => {
@@ -441,4 +442,52 @@ test('range wording: singular, a single price, and how many printings were price
   assert.equal(setRangeNote({ low: 9, high: 9, count: 1, total: 4 }), '1 of 4 sets priced · $9.00');
   assert.equal(setRangeNote({ low: 3, high: 8, count: 3, total: 5 }), '3 of 5 sets priced · $3.00–$8.00');
   assert.equal(setRangeNote({ low: 3, high: 8, count: 2 }), '2 sets · $3.00–$8.00');
+});
+
+const priceAt = (nm, extra = {}) => ({ ...named(extra), market_price: nm, price_grid: grid(nm) });
+
+test('lotEstimate: confirmed prices count at both ends, nothing else is invented', () => {
+  const lot = lotEstimate([priceAt(5), priceAt(7.5), priceAt(2)], () => null);
+  assert.deepEqual(lot, { low: 14.5, high: 14.5, identified: 3, total: 3, toIdentify: 0 });
+});
+
+test('lotEstimate: a mixed lot spans set ranges and counts guesses, unrecognised and unpriced rows as $0', () => {
+  const ranged = setNamed({ setRange: { low: 4, high: 20, count: 2, total: 2 } });
+  const cards = [
+    priceAt(10),
+    ranged,
+    blank(),
+    unsure({ market_price: 99, price_grid: grid(99) }),
+    named(),
+    { cardBack: true, abstain: true },
+  ];
+  const lot = lotEstimate(cards, () => null);
+  assert.equal(lot.low, 14);
+  assert.equal(lot.high, 30);
+  assert.equal(lot.total, 5);
+  assert.equal(lot.identified, 3);
+  assert.equal(lot.toIdentify, 2);
+});
+
+test('lotEstimate follows the first enabled condition for ranges and prices', () => {
+  const byCondition = { NM: { low: 4, high: 20, count: 2, total: 2 }, LP: { low: 3, high: 12, count: 2, total: 2 } };
+  const ranged = setNamed({ setRange: { ...byCondition.NM, byCondition } });
+  const lp = { ...named(), price_grid: { variants: { normal: { market: 9, conditions: { NM: 9, LP: 6 } } } } };
+  const lot = lotEstimate([ranged, lp], () => null, ['LP']);
+  assert.equal(lot.low, 9);
+  assert.equal(lot.high, 18);
+});
+
+test('lotEstimate: an unchosen printing contributes its price range', () => {
+  const multi = { ...named(), price_grid: { variants: { holo: { conditions: { NM: 8 } }, reverse: { conditions: { NM: 3 } } } } };
+  assert.equal(lotEstimate([multi], () => null).low, 3);
+  assert.equal(lotEstimate([multi], () => null).high, 8);
+  assert.equal(lotEstimate([multi], () => 'holo').low, 8);
+});
+
+test('lotEstimateLine needs 3 cards and wording drops "still to identify" at zero', () => {
+  assert.equal(lotEstimateLine([priceAt(5), priceAt(5)], () => null), null);
+  assert.equal(lotEstimateLine([priceAt(5), priceAt(5), priceAt(5)], () => null), 'Estimated lot value $15.00 · 3 of 3 cards identified');
+  const mixed = [priceAt(5), setNamed({ setRange: { low: 1, high: 3, count: 2, total: 2 } }), blank(), blank()];
+  assert.equal(lotEstimateLine(mixed, () => null), 'Estimated lot value $6.00–$8.00 · 2 of 4 cards identified · 2 still to identify');
 });

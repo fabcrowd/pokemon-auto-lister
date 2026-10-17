@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   candidatesFor,
+  closestMatches,
   correctionRecord,
   escHtml,
   findCards,
@@ -347,4 +348,18 @@ test('cropThumb accepts only JPEG data URLs', () => {
   assert.equal(cropThumb({ crop: 'data:image/jpeg;base64,"><script>' }), null);
   assert.equal(cropThumb({}), null);
   assert.equal(cropThumb(null), null);
+});
+
+test('closestMatches: five distinct printings from the search hits, best first, skipping repeats', () => {
+  const hits = [0, 0, 1, 2, 1, 3, 4, 5].map((index) => ({ index }));
+  const rows = [row('a-1', 'A', 'a', '1'), row('b-2', 'B', 'b', '2'), row('c-3', 'C', 'c', '3'), row('d-4', 'D', 'd', '4'), row('e-5', 'E', 'e', '5'), row('f-6', 'F', 'f', '6')];
+  assert.deepEqual(closestMatches(hits, rows).map((r) => r.id), ['a-1', 'b-2', 'c-3', 'd-4', 'e-5']);
+  assert.deepEqual(closestMatches([], rows), []);
+  assert.deepEqual(closestMatches([{ index: 99 }], rows), []);
+});
+
+test('candidatesFor: an abstained row with no name offers its closest matches', () => {
+  const card = { identity: null, abstain: true, nearest: ['base1-4', 'base1-5'] };
+  assert.deepEqual(candidatesFor(card, META).map((c) => c.id), ['base1-4', 'base1-5']);
+  assert.deepEqual(candidatesFor({ abstain: true, cardBack: true }, META), []);
 });

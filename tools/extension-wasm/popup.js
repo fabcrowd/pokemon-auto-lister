@@ -1,4 +1,4 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotEstimateLine, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -28,6 +28,7 @@ const btnWizUpgrade = document.getElementById("btn-wiz-upgrade");
 const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sDetected    = document.getElementById("s-detected");
 const sValue       = document.getElementById("s-value");
+const lotEstimateEl = document.getElementById("lot-estimate");
 const sMs          = document.getElementById("s-ms");
 const resultsEl    = document.getElementById("results");
 const emptyHint    = document.getElementById("empty-hint");
@@ -422,6 +423,7 @@ function wireFilterChips() {
       el.setAttribute("aria-pressed", String(_filters[group][key]));
       saveFilters();
       renderResults();
+      if (_lastResult) updateStats(_lastResult.cards, Number(sMs.textContent) || 0);
       pushOverlay();
     });
   });
@@ -437,6 +439,9 @@ function updateStats(cards, ms) {
   sDetected.textContent = cards.length > 0 ? String(cards.length) : "—";
   sValue.textContent    = lot.total > 0 ? "$" + lot.total.toFixed(2) : "—";
   sMs.textContent       = String(ms);
+  const line = lotEstimateLine(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
+  lotEstimateEl.textContent = line || "";
+  lotEstimateEl.hidden = !line;
 }
 
 // For the "total" stat, use first enabled condition price (NM-first). Falls back
@@ -452,6 +457,7 @@ function resetResults() {
   sDetected.textContent = "—";
   sValue.textContent    = "—";
   sMs.textContent       = "—";
+  lotEstimateEl.hidden  = true;
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
@@ -523,9 +529,11 @@ function renderCardRow(card, idx) {
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
   const srcClass   = source === "backend" ? "backend" : (source === "ppt" ? "ppt" : "pokemontcg");
 
+  const thumb = id.name ? null : cropThumb(card);
   return `<div class="card-row" data-idx="${idx}">
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
+      ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
         <div class="card-name">${escHtml(name)}</div>
         <div class="card-sub">${subHtml}</div>
@@ -573,6 +581,7 @@ function renderAskRow(card, idx) {
   const ask = isUnsure(card) && !card.pricing
     ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
         <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
+        ${card.identity?.name || !card.candidates?.length ? "" : `<div class="picker-sub">Closest matches</div>`}
         <div class="pick-row">${renderPickList(card.candidates, idx)}</div>
         ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
       </div>`

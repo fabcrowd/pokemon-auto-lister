@@ -232,6 +232,9 @@
     .stat-block .val { font-size: 15px; font-weight: 700; line-height: 1; color: #8b92ab; }
     .stat-block .val.green { color: #10b981; }
     .stat-block .val.amber { color: #f59e0b; }
+    .lot-estimate { padding: 6px 14px; font-size: 12px; font-weight: 600; color: #10b981; border-bottom: 1px solid #2a2f45; }
+    .lot-estimate[hidden] { display: none; }
+    .picker-sub { font-size: 11px; color: #8b92ab; margin: 0 0 4px; }
     .stat-block .lbl { font-size: 9px; font-weight: 600; letter-spacing: 0.7px; text-transform: uppercase; color: #8b92ab; }
 
     /* FILTER BAR */
@@ -689,10 +692,12 @@
     <button id="btn-clear">CLEAR</button>
     <div class="stats-row">
       <div class="stat-block"><div class="val" id="s-detected">—</div><div class="lbl">cards</div></div>
-      <div class="stat-block"><div class="val green" id="s-value">—</div><div class="lbl">total</div></div>
+      <div class="stat-block"><div class="val green" id="s-value">—</div><div class="lbl">confirmed total</div></div>
       <div class="stat-block"><div class="val amber" id="s-ms">—</div><div class="lbl">ms</div></div>
     </div>
   </div>
+
+  <div class="lot-estimate" id="lot-estimate" role="status" hidden></div>
 
   <div class="filter-bar">
     <div class="filter-group">

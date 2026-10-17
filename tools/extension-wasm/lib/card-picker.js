@@ -11,6 +11,20 @@ const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
 
 export { isUnsure };
 
+/** Up to `limit` distinct catalog rows from a crop's search hits, best first, even when none was good enough to name. */
+export function closestMatches(hits, meta, limit = 5) {
+  const out = [];
+  const seen = new Set();
+  for (const hit of hits || []) {
+    const row = Array.isArray(meta) ? meta[hit?.index] : null;
+    if (!row?.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
 export function candidatesFor(card, meta, limit = 5) {
   if (!card) return [];
@@ -33,6 +47,10 @@ export function candidatesFor(card, meta, limit = 5) {
       if (out.length >= limit) break;
       if (choiceName(row.name) === name) add(row);
     }
+  }
+  if (!card.cardBack && card.nearest?.length) {
+    const rows = new Map(catalog.map((row) => [row.id, row]));
+    for (const id of card.nearest) add(rows.get(id));
   }
   return out;
 }

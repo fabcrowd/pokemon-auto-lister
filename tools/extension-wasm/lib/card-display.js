@@ -220,14 +220,12 @@ export function isIdentified(card) {
 }
 
 /**
- * identified: named and settled. pick: shown with a "Which card is this?" menu.
- * unrecognised: nothing to name and nothing to offer, so there is nothing to pick from.
+ * identified: named and settled. pick: the user is asked "Which card is this?", with the closest matches
+ * when there are any. unrecognised: only a card back, which is not a card to identify.
  */
 export function classifyCard(card) {
   if (isIdentified(card)) return 'identified';
   if (card?.cardBack) return 'unrecognised';
-  const named = Boolean(card?.identity?.name || card?.identity?.id);
-  if (!named && !(card?.candidates?.length > 0)) return 'unrecognised';
   return 'pick';
 }
 
@@ -299,6 +297,57 @@ export function lotTotal(cards, choiceFor, enabledConditions = ['NM']) {
     if (quote) total += quote.price;
   }
   return { total, unconfirmed };
+}
+
+const MIN_LOT_CARDS = 3;
+
+// A range that already exists on the row for the condition being shown, or null.
+function rowRange(card, condition) {
+  const range = card?.setRange;
+  if (!(range?.high > 0)) return null;
+  return range.byCondition?.[condition] ?? (condition === 'NM' || !range.byCondition ? range : null);
+}
+
+/**
+ * What the whole lot could be worth, for one condition: a confirmed price counts at both ends, a name whose
+ * set or printing is still open counts as its price range, and everything else (a guess, an unrecognised
+ * card, a card with no price) counts $0 until the user picks. Card backs are not cards and are left out.
+ */
+export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
+  const condition = enabledConditions?.[0] || 'NM';
+  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0 };
+  for (const card of cards || []) {
+    if (card?.cardBack) continue;
+    out.total += 1;
+    const named = Boolean(card?.identity?.name || card?.identity?.id);
+    if (!named || isOnlyAGuess(card)) {
+      out.toIdentify += 1;
+      continue;
+    }
+    out.identified += 1;
+    const choice = choiceFor(card);
+    const quote = quotedPrice(card, choice, enabledConditions);
+    if (quote) {
+      out.low += quote.price;
+      out.high += quote.price;
+      continue;
+    }
+    const range = !isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]);
+    if (range) {
+      out.low += range.low;
+      out.high += range.high;
+    }
+  }
+  return out;
+}
+
+/** "Estimated lot value $14.00–$30.00 · 3 of 6 cards identified · 3 still to identify"; null under 3 cards. */
+export function lotEstimateLine(cards, choiceFor, enabledConditions = ['NM']) {
+  const lot = lotEstimate(cards, choiceFor, enabledConditions);
+  if (lot.total < MIN_LOT_CARDS) return null;
+  const value = priceSpan(lot);
+  const pick = lot.toIdentify ? ` · ${lot.toIdentify} still to identify` : '';
+  return `Estimated lot value ${value} · ${lot.identified} of ${lot.total} cards identified${pick}`;
 }
 
 const MODEL_FILE_LABELS = {
