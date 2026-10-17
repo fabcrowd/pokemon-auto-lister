@@ -126,7 +126,8 @@ test("stored form: hashed install and a server receipt time replace the raw inst
   assert.equal(validateContribution(stored, { stored: true }).ok, true);
   assert.equal(validateContribution(contribution(), { stored: true }).ok, false);
   assert.equal(validateContribution({ ...stored, received: "yesterday" }, { stored: true }).ok, false);
-  const { received: _r, ...noReceipt } = stored;
+  const noReceipt = { ...stored };
+  delete noReceipt.received;
   assert.equal(validateContribution(noReceipt, { stored: true }).ok, false);
   assert.equal(validateContribution(stored).ok, false); // client form refuses both
 });

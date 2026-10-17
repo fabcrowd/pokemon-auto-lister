@@ -15,7 +15,12 @@
 //     "crop": <EMBEDDING_VERSION int>,  "entries": <int>,  "dim": 512,
 //     "sha256": "<64 hex of the pack file>",  "url": "<pack file address>",
 //     "exam": { "before": <score>, "after": <score>, "n": <exam cards> },
-//     "improved": <true only when exam.after beat exam.before> }
+//     "improved": <true only when exam.after beat exam.before>,
+//     "seq": <int, the pipeline run number; only goes up>,  "issuedAt": "<UTC YYYY-MM-DDTHH:MM:SSZ>" }
+//   The pipeline also adds "regression" (a no-drop check on a fixed set); it is covered by the signature and
+//   not read here. A manifest with a lower seq than the highest this device has accepted, or issued more than
+//   30 days ago (or more than a day in the future), is stale and refused, so an old signed manifest cannot be replayed.
+//   Downloads are cut off at MAX_PACK_BYTES (manifest and signature: MAX_SMALL_BYTES), while reading.
 //
 // PACK FILE (all integers little-endian)
 //   offset 0      uint32  H, the byte length of the header JSON
@@ -27,6 +32,11 @@ import { EMBEDDING_DIM } from "./references.js";
 import { sha256Hex } from "./setup.js";
 
 const DAY_MS = 24 * 3600 * 1000;
+export const MAX_PACK_BYTES = 64 * 1024 * 1024;
+export const MAX_SMALL_BYTES = 64 * 1024;
+const MAX_MANIFEST_AGE_MS = 30 * DAY_MS;
+const MAX_FUTURE_MS = DAY_MS;
+const ISSUED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const INT8_SCALE = 1 / 127;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -78,31 +88,64 @@ const manifestShapeError = (m) => {
   if (typeof m.model !== "string" || typeof m.catalog !== "string" || !Number.isInteger(m.crop)) return "manifest model, catalog or crop is missing";
   if (!Number.isInteger(m.entries) || m.entries < 1 || m.dim !== EMBEDDING_DIM) return "manifest entries or dim is wrong";
   if (typeof m.sha256 !== "string" || !SHA256_HEX.test(m.sha256) || typeof m.url !== "string") return "manifest sha256 or url is missing";
+  if (!Number.isInteger(m.seq) || m.seq < 0) return "manifest seq is missing";
+  if (typeof m.issuedAt !== "string" || !ISSUED_AT.test(m.issuedAt) || Number.isNaN(Date.parse(m.issuedAt))) return "manifest issuedAt is missing";
   return null;
 };
 
 const sameBuild = (m, expected) => m.model === expected.model && m.catalog === expected.catalog && m.crop === expected.crop;
 
-const read = async (fetchFn, url) => {
+const tooLarge = () => Object.assign(new Error("download is too large"), { tooLarge: true });
+
+// Reads at most maxBytes: a declared length over the cap is refused up front, and a stream is cancelled the
+// moment it passes the cap, so a hostile or broken host cannot make the extension buffer gigabytes.
+const read = async (fetchFn, url, maxBytes) => {
   const response = await fetchFn(url, { credentials: "omit", cache: "no-store", redirect: "follow" });
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  if (Number(response.headers?.get?.("content-length")) > maxBytes) throw tooLarge();
+  if (!response.body?.getReader) {
+    const whole = new Uint8Array(await response.arrayBuffer());
+    if (whole.length > maxBytes) throw tooLarge();
+    return whole;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
 };
+
+const readFailure = (err) => (err.tooLarge ? fail("format", err.message) : fail("network", err.message));
 
 /**
  * Fetches and checks the pack. status is "ok" (then `manifest` and `bytes`), or why it must not be used:
  * inert, network, signature, format, mismatch, not-improved, sha.
  * @param expected { model, catalog, crop } of this build
  */
-export async function fetchCommunityPack({ manifestUrl, publicKey, expected, fetchFn = (...args) => fetch(...args) }) {
+export async function fetchCommunityPack({ manifestUrl, publicKey, expected, minSeq = 0, now = Date.now, maxPackBytes = MAX_PACK_BYTES, fetchFn = (...args) => fetch(...args) }) {
   if (!manifestUrl || !publicKey) return fail("inert");
   let manifestBytes;
   let signature;
   try {
-    manifestBytes = await read(fetchFn, manifestUrl);
-    signature = new TextDecoder().decode(await read(fetchFn, signatureUrl(manifestUrl)));
+    manifestBytes = await read(fetchFn, manifestUrl, MAX_SMALL_BYTES);
+    signature = new TextDecoder().decode(await read(fetchFn, signatureUrl(manifestUrl), MAX_SMALL_BYTES));
   } catch (err) {
-    return fail("network", err.message);
+    return readFailure(err);
   }
   if (!(await verifySignature(manifestBytes, signature, publicKey))) return fail("signature");
   let manifest;
@@ -114,6 +157,8 @@ export async function fetchCommunityPack({ manifestUrl, publicKey, expected, fet
   const shape = manifestShapeError(manifest);
   if (shape) return fail("format", shape);
   if (!sameBuild(manifest, expected)) return fail("mismatch");
+  const age = now() - Date.parse(manifest.issuedAt);
+  if (manifest.seq < minSeq || age > MAX_MANIFEST_AGE_MS || age < -MAX_FUTURE_MS) return fail("stale");
   if (manifest.improved !== true) return fail("not-improved");
   let packUrl;
   try {
@@ -124,9 +169,9 @@ export async function fetchCommunityPack({ manifestUrl, publicKey, expected, fet
   if (packUrl.protocol !== "https:" || packUrl.origin !== new URL(manifestUrl).origin) return fail("format", "pack must be on the manifest's https origin");
   let bytes;
   try {
-    bytes = await read(fetchFn, packUrl.href);
+    bytes = await read(fetchFn, packUrl.href, maxPackBytes);
   } catch (err) {
-    return fail("network", err.message);
+    return readFailure(err);
   }
   if ((await sha256Hex(bytes)) !== manifest.sha256) return fail("sha");
   try {
@@ -146,9 +191,11 @@ export async function checkCommunityPack({ store, state, now = Date.now, ...fetc
   if (!fetching.manifestUrl || !fetching.publicKey) return fail("inert");
   const last = await state.get();
   if (last && now() - last.at < DAY_MS) return fail("skipped");
-  await state.set({ at: now() });
-  const result = await fetchCommunityPack(fetching);
+  await state.set({ ...last, at: now() });
+  const result = await fetchCommunityPack({ ...fetching, minSeq: last?.seq ?? 0, now });
   if (result.status === "ok") {
+    // Remembered even if the same pack is already stored: the floor only ever goes up.
+    await state.set({ at: now(), seq: Math.max(last?.seq ?? 0, result.manifest.seq) });
     const stored = await store.getPack();
     if (stored?.sha256 !== result.manifest.sha256) {
       await store.savePack({ sha256: result.manifest.sha256, manifest: result.manifest, bytes: result.bytes.buffer.slice(result.bytes.byteOffset, result.bytes.byteOffset + result.bytes.byteLength) });

@@ -83,11 +83,13 @@ class Scoring(unittest.TestCase):
 
 
 class Improved(unittest.TestCase):
+    REG = {"before": 0.8, "after": 0.8, "n": 10}
+
     def test_needs_a_gain_and_at_least_30_cases(self):
-        self.assertTrue(is_improved({"before": 0.5, "after": 0.6, "n": 30}))
-        self.assertFalse(is_improved({"before": 0.5, "after": 0.6, "n": 29}))
-        self.assertFalse(is_improved({"before": 0.5, "after": 0.5, "n": 100}))
-        self.assertFalse(is_improved({"before": 0.6, "after": 0.5, "n": 100}))
+        self.assertTrue(is_improved({"before": 0.5, "after": 0.6, "n": 30}, self.REG))
+        self.assertFalse(is_improved({"before": 0.5, "after": 0.6, "n": 29}, self.REG))
+        self.assertFalse(is_improved({"before": 0.5, "after": 0.5, "n": 100}, self.REG))
+        self.assertFalse(is_improved({"before": 0.6, "after": 0.5, "n": 100}, self.REG))
 
 
 class ExamNeverEntersThePack(unittest.TestCase):

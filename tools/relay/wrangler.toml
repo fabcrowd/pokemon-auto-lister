@@ -8,16 +8,25 @@ compatibility_date = "2026-10-01"
 [vars]
 # OWNER: the data repo that receives contributions, as owner/name.
 DATA_REPO = "fabcrowd/card-scanner-data"
-DATA_BRANCH = "main"
+# The relay writes ONLY to this branch (created on first use from main). It must never be the branch that holds
+# the pipeline code; the relay refuses "main", "master" and DATA_BASE_BRANCH.
+DATA_BRANCH = "inbox"
+# DATA_BASE_BRANCH = "main"
 # OWNER: your extension's id (chrome://extensions, 32 letters a-p). Comma-separate several (dev + store).
 ALLOWED_EXTENSION_IDS = "abcdefghijklmnopabcdefghijklmnop"
 # Optional limits (defaults shown).
 # CARDS_PER_INSTALL_DAY = "200"
 # REQUESTS_PER_IP_HOUR = "50"
 # MAX_ITEMS_PER_FLUSH = "100"
+# MAX_FLUSH_BYTES = "20000000"   # one commit per this many bytes
+# MAX_PENDING = "5000"           # above this many waiting items the relay answers 503
+# IP_CARDS_PER_DAY = "500"       # cards per IP (IPv6: per /64) per UTC day
 
-# Secret, not a var: `npx wrangler secret put GITHUB_TOKEN`
-# A fine-grained token limited to the data repo with "Contents: Read and write".
+# Secrets, not vars:
+#   `npx wrangler secret put GITHUB_TOKEN`    fine-grained token limited to the data repo, "Contents: Read and write"
+#   `npx wrangler secret put RELAY_ID_SECRET` a long random string (32+ characters). Install ids are stored only as
+#                                             HMAC-SHA256(RELAY_ID_SECRET, install id). Keep it; changing it
+#                                             breaks the link between old files and the ids users quote in deletion requests.
 
 # OWNER: bucket for items waiting for the hourly commit. `npx wrangler r2 bucket create card-scanner-pending`
 [[r2_buckets]]

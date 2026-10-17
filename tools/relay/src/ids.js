@@ -1,5 +1,3 @@
-/* global TextEncoder */
-
 /** HMAC-SHA256(secret, install) as 16 hex digits: what the data repo stores in place of the raw install id. */
 export async function hashInstall(secret, install) {
   const enc = new TextEncoder();

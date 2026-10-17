@@ -10,6 +10,8 @@ import { fakeIndexedDB } from './helpers/fake-idb.js';
 const MANIFEST_URL = 'https://pack.test/pack/manifest.json';
 const DIM = 512;
 const EXPECTED = { model: '77538aade655907f', catalog: '2f3c50cec84937ff', crop: 2 };
+const T0 = Date.parse('2026-10-15T12:00:00Z');
+const DAY = 24 * 3600 * 1000;
 const enc = new TextEncoder();
 const b64 = (bytes) => Buffer.from(bytes).toString('base64');
 
@@ -38,7 +40,7 @@ async function world({ improved = true, manifestOver = {}, packBytes, signWith, 
   const pack = packBytes ?? makePack(['base1-4', 'base1-5'], [3, 9]);
   const manifest = {
     v: 1, ...EXPECTED, entries: 2, dim: DIM, sha256: await sha256Hex(pack), url: 'pack-1.bin',
-    exam: { before: 0.71, after: 0.74, n: 400 }, improved, ...manifestOver,
+    exam: { before: 0.71, after: 0.74, n: 400 }, improved, seq: 5, issuedAt: '2026-10-15T03:17:00Z', ...manifestOver,
   };
   const manifestBytes = enc.encode(JSON.stringify(manifest));
   const files = new Map([
@@ -57,7 +59,7 @@ async function world({ improved = true, manifestOver = {}, packBytes, signWith, 
   return { manifest, fetchFn, requested, files };
 }
 
-const options = (w, over = {}) => ({ manifestUrl: MANIFEST_URL, publicKey, expected: EXPECTED, fetchFn: w.fetchFn, ...over });
+const options = (w, over = {}) => ({ manifestUrl: MANIFEST_URL, publicKey, expected: EXPECTED, fetchFn: w.fetchFn, now: () => T0, ...over });
 
 test('the signature lives next to the manifest', () => {
   assert.equal(signatureUrl('https://pack.test/pack/manifest.json'), 'https://pack.test/pack/manifest.sig');
@@ -199,7 +201,7 @@ test('checkCommunityPack stores a good pack, checks once a day, and loadStoredPa
   const w = await world();
   const store = createShareStore(fakeIndexedDB());
   const checks = state();
-  let clock = 1_000_000;
+  let clock = T0;
   const args = () => ({ ...options(w), store, state: checks, now: () => clock });
   assert.equal((await checkCommunityPack(args())).status, 'ok');
   assert.equal(w.requested.length, 3);
@@ -215,7 +217,7 @@ test('checkCommunityPack stores a good pack, checks once a day, and loadStoredPa
 test('a pack that stops being improved is dropped; one that fails the signature or network is kept', async () => {
   const store = createShareStore(fakeIndexedDB());
   const good = await world();
-  let clock = 0;
+  let clock = T0;
   const run = (w) => checkCommunityPack({ ...options(w), store, state: state(), now: () => clock });
   await run(good);
   assert.equal((await loadStoredPack(store, EXPECTED)).length, 2);
@@ -227,10 +229,81 @@ test('a pack that stops being improved is dropped; one that fails the signature 
   assert.deepEqual(await loadStoredPack(store, EXPECTED), []);
 });
 
+test('a manifest needs seq and issuedAt', async () => {
+  for (const over of [{ seq: undefined }, { seq: -1 }, { seq: 1.5 }, { issuedAt: undefined }, { issuedAt: 'yesterday' }]) {
+    const result = await fetchCommunityPack(options(await world({ manifestOver: over })));
+    assert.equal(result.status, 'format', JSON.stringify(over));
+  }
+});
+
+test('a manifest older than 30 days, or issued in the future, is stale and the pack is never fetched', async () => {
+  const old = await world({ manifestOver: { issuedAt: new Date(T0 - 31 * DAY).toISOString().replace('.000', '') } });
+  assert.equal((await fetchCommunityPack(options(old))).status, 'stale');
+  assert.equal(old.requested.length, 2);
+  const fresh = await world({ manifestOver: { issuedAt: new Date(T0 - 29 * DAY).toISOString().replace('.000', '') } });
+  assert.equal((await fetchCommunityPack(options(fresh))).status, 'ok');
+  const future = await world({ manifestOver: { issuedAt: new Date(T0 + 2 * DAY).toISOString().replace('.000', '') } });
+  assert.equal((await fetchCommunityPack(options(future))).status, 'stale');
+});
+
+test('a lower seq than the highest seen is a replay: refused, and the stored pack is kept', async () => {
+  const store = createShareStore(fakeIndexedDB());
+  const checks = state();
+  let clock = T0;
+  const run = (w) => checkCommunityPack({ ...options(w), store, state: checks, now: () => clock });
+  assert.equal((await run(await world({ manifestOver: { seq: 8 } }))).status, 'ok');
+  assert.equal((await checks.get()).seq, 8);
+  clock += 2 * DAY;
+  const replay = await run(await world({ manifestOver: { seq: 7 } }));
+  assert.equal(replay.status, 'stale');
+  assert.equal((await loadStoredPack(store, EXPECTED)).length, 2);
+  clock += 2 * DAY;
+  assert.equal((await run(await world({ manifestOver: { seq: 8 } }))).status, 'ok');
+  clock += 2 * DAY;
+  assert.equal((await run(await world({ manifestOver: { seq: 9 } }))).status, 'ok');
+  assert.equal((await checks.get()).seq, 9);
+});
+
+function streamingFetch(chunks) {
+  const seen = { read: 0, cancelled: false };
+  const fetchFn = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: {
+      getReader: () => ({
+        read: async () => (seen.read < chunks.length ? { done: false, value: chunks[seen.read++] } : { done: true }),
+        cancel: async () => { seen.cancelled = true; },
+      }),
+    },
+  });
+  return { fetchFn, seen };
+}
+
+test('the download stops as soon as it passes the size cap', async () => {
+  const w = await world();
+  const huge = streamingFetch(Array.from({ length: 50 }, () => new Uint8Array(100)));
+  const fetchFn = async (url, init) => (url.endsWith('pack-1.bin') ? huge.fetchFn() : w.fetchFn(url, init));
+  const result = await fetchCommunityPack(options(w, { fetchFn, maxPackBytes: 1000 }));
+  assert.equal(result.status, 'format');
+  assert.match(result.detail, /too large/);
+  assert.equal(huge.seen.cancelled, true);
+  assert.ok(huge.seen.read <= 11, `read ${huge.seen.read} chunks`);
+});
+
+test('a declared content-length over the cap is refused before reading', async () => {
+  const w = await world();
+  const fetchFn = async (url, init) => {
+    const res = await w.fetchFn(url, init);
+    return url.endsWith('pack-1.bin') ? { ...res, headers: { get: (n) => (n === 'content-length' ? '999999999' : null) } } : res;
+  };
+  assert.equal((await fetchCommunityPack(options(w, { fetchFn }))).status, 'format');
+});
+
 test('a stored pack for another build is not used', async () => {
   const store = createShareStore(fakeIndexedDB());
   const w = await world();
-  await checkCommunityPack({ ...options(w), store, state: state(), now: () => 0 });
+  await checkCommunityPack({ ...options(w), store, state: state(), now: () => T0 });
   assert.deepEqual(await loadStoredPack(store, { ...EXPECTED, crop: 3 }), []);
   assert.deepEqual(await loadStoredPack(store, EXPECTED), []);
 });

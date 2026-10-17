@@ -56,6 +56,6 @@ class ClipEmbedder:
         self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
         self._input = self._session.get_inputs()[0].name
 
-    def __call__(self, jpeg_bytes):
-        v = self._session.run(None, {self._input: preprocess(jpeg_bytes)})[0].reshape(-1).astype(np.float32)
+    def __call__(self, jpeg_bytes, trusted=False):
+        v = self._session.run(None, {self._input: preprocess(jpeg_bytes, trusted)})[0].reshape(-1).astype(np.float32)
         return v / np.linalg.norm(v)
