@@ -29,7 +29,7 @@ beforeEach(async () => {
 test('a raw search ignores the adapter, a normal one uses it', () => {
   configureCatalog({ adapter, adapted: rowsOf(axis(0), axis(1), axis(2)) });
   assert.equal(adapterActive(), true);
-  assert.equal(searchCatalog(axis(1), 1)[0].score.toFixed(3), Math.SQRT1_2.toFixed(3));
+  assert.equal(searchCatalog(axis(1), 1)[0].rank.toFixed(3), Math.SQRT1_2.toFixed(3));
   assert.equal(searchCatalog(axis(1), 1, { raw: true })[0].score, 1);
   configureCatalog({});
   assert.equal(adapterActive(), false);

@@ -43,6 +43,15 @@ class Drift(unittest.TestCase):
         self.assertIn(f"HIGH_TIER_GAP  = {PINS['highTier']['gap']};", text)
         self.assertIn(f"HIGH_TIER_SIM  = {PINS['highTier']['sim']};", text)
 
+    def test_accept_rule_matches_fusion_js(self):
+        from pipeline import gate
+
+        text = source("fusion.js")
+        self.assertEqual((gate.ACCEPT_MIN, gate.CLEAR_GAP, gate.HIGH_SIM), (PINS["accept"]["minSim"], PINS["accept"]["clearGap"], PINS["accept"]["highSim"]))
+        self.assertIn(f"MIN_ACCEPT_SIM = {gate.ACCEPT_MIN};", text)
+        self.assertIn(f"CLEAR_GAP      = {gate.CLEAR_GAP};", text)
+        self.assertIn(f"HIGH_SIM       = {gate.HIGH_SIM};", text)
+
 
 if __name__ == "__main__":
     unittest.main()

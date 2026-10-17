@@ -27,7 +27,7 @@ import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
-import { adaptedRows, cardProbability, checkBundle, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
+import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
@@ -1039,7 +1039,7 @@ async function applyBundleOnce() {
   _catalogNames = _indicesByName = _setSizes = _metaById = null;
   _packRows = stored?.memory ?? [];
   _photoCheck = stored?.check ?? null;
-  console.log("[BG] bundle live:", stored ? Object.entries({ memory: stored.memory, adapter: adapter, check: stored.check, "new cards": merged }).filter(([, v]) => v).map(([k]) => k).join(", ") || "nothing usable" : "none");
+  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
 }
 
 // At most one check a day (lib/bundle.js); nothing about the user is sent.

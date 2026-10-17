@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
 
+import { fuseResults } from '../tools/extension-wasm/lib/fusion.js';
 import { configureCatalog, loadCatalog, loadHubPenalty, scoreIndices, searchCatalog } from '../tools/extension-wasm/lib/search.js';
 
 const DIM = 512;
@@ -36,8 +37,31 @@ test('with an adapter the query is adapted and the adapted catalog rows are sear
   configureCatalog({ adapter, adapted: rowsOf(axis(0), axis(2)) });
   const [best] = searchCatalog(axis(1), 2);
   assert.equal(best.index, 0);
-  assert.ok(Math.abs(best.score - Math.SQRT1_2) < 1e-6);
-  assert.ok(Math.abs(scoreIndices(axis(1), [0])[0].score - Math.SQRT1_2) < 1e-6);
+  assert.ok(Math.abs(best.rank - Math.SQRT1_2) < 1e-6);
+});
+
+// The adapted row 0 sits at adapted cosine 0.5 from the adapted query, while the raw query equals raw row 0.
+const loweredRows = () => {
+  const row0 = new Float32Array(DIM);
+  row0[0] = Math.SQRT1_2;
+  row0[6] = Math.SQRT1_2;
+  return rowsOf(row0, axis(2));
+};
+
+test('an adapter only ranks: each hit keeps the raw cosine of the raw query with the raw row', () => {
+  configureCatalog({ adapter: { rank: 1, u: axis(5), v: axis(0) }, adapted: loweredRows() });
+  const [best] = searchCatalog(axis(0), 2);
+  assert.equal(best.index, 0);
+  assert.equal(best.score, 1);
+  assert.ok(best.rank < 0.6);
+  assert.equal(scoreIndices(axis(0), [0])[0].score, 1);
+});
+
+test('with an adapter live a clear raw match is accepted by fusion, not abstained because the adapter lowers scores', () => {
+  configureCatalog({ adapter: { rank: 1, u: axis(5), v: axis(0) }, adapted: loweredRows() });
+  const read = fuseResults(searchCatalog(axis(0), 2), null, [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], null);
+  assert.equal(read.abstain, false);
+  assert.equal(read.identity.id, 'a');
 });
 
 test('an adapter without a matching adapted catalog is ignored rather than mixing spaces', () => {

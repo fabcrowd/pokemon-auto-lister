@@ -180,7 +180,9 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
    20. Reported: top-1 accuracy before and after, and the wrong-at-high rate (a wrong answer carrying the
    "high" stripe by the `fusion.js` rule). Pack-promoted answers are tied with the top hit, so never high.
 6. Regression set (`regression.npz`, fixed and owned by you, see step 10). The same scoring runs on it. `improved`
-   additionally requires no drop in top-1 accuracy there; without the file it is never true.
+   additionally requires, on that set, a rise in top-1 and in accepted-right answers, no rise in accepted-wrong answers
+   and an abstain rate up by at most 2 points (`pipeline/gate.py`; accepted/abstained follow the accept rule of
+   `lib/fusion.js`, read on the raw cosine because the adapter only ranks); without the file it is never true.
 7. `manifest.json` is signed by the `sign` job (ECDSA P-256, SHA-256) over its exact bytes. `manifest.sig` is the
    base64 of the 64-byte raw `r||s` signature, which is what WebCrypto `verify` takes with
    `{name: "ECDSA", hash: "SHA-256"}`. The public key is imported as `spki`. Before signing, `sign_release.py`

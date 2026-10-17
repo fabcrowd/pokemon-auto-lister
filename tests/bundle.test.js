@@ -2,7 +2,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  adaptedRows, cardProbability, checkBundle, fetchBundle, loadStoredBundle, mergeExtra, parseAdapter, parseCatalogExtra, parseCheck,
+  adaptedRows, cardProbability, checkBundle, fetchBundle, liveParts, loadStoredBundle, mergeExtra, parseAdapter, parseCatalogExtra, parseCheck,
   parsePack, signatureUrl, verifySignature,
 } from '../tools/extension-wasm/lib/bundle.js';
 import { adaptVector } from '../tools/extension-wasm/lib/adapter.js';
@@ -525,4 +525,11 @@ test('adaptedRows computes once per key and then serves the stored copy', async 
   assert.deepEqual(Array.from(again.subarray(0, 4)), Array.from(first.subarray(0, 4)));
   const other = await adaptedRows({ store, key: 'k2', rows: new Float32Array(2 * DIM), adapter });
   assert.equal(other[0], 0);
+});
+
+test('liveParts names only the parts that carry something, so an empty memory is not "live"', () => {
+  assert.equal(liveParts(null), 'none');
+  assert.equal(liveParts({ memory: [], check: null }, { adapter: null, extra: null }), 'nothing usable');
+  assert.equal(liveParts({ memory: [{}], check: {} }, { adapter: {}, extra: { meta: [] } }), 'memory, adapter, check, new cards');
+  assert.equal(liveParts({ memory: [], check: null }, { adapter: {}, extra: null }), 'adapter');
 });

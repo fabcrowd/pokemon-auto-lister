@@ -121,7 +121,8 @@ class Parts(unittest.TestCase):
         def evaluate(candidate, live, exam, regression, catalog):
             seen["candidate"], seen["live"], seen["exam_n"], seen["regression_n"] = candidate, live, len(exam[1]), len(regression[1])
             return {"improved": seen.get("improved", True), "regression": {"before": 0.5, "after": 0.6, "n": 2},
-                    "exam": {"before": 0.4, "after": 0.5, "n": 1}, "wrongHigh": {"before": 0.1, "after": 0.1}}
+                    "exam": {"before": 0.4, "after": 0.5, "n": 1}, "wrongHigh": {"before": 0.1, "after": 0.1},
+                    "outcomes": {"regression": {"before": {"abstained": 0}}}}
 
         def write(path, record):
             seen["status"] = (path, record)
@@ -158,6 +159,7 @@ class Parts(unittest.TestCase):
             self.assertEqual(m["regression"], {"before": 0.5, "after": 0.6, "n": 2})
             self.assertEqual(m["exam"], {"before": 0.4, "after": 0.5, "n": 1, "wrongAtHigh": {"before": 0.1, "after": 0.1}})
             self.assertEqual((summary["newCards"], summary["newSets"]), (1, ["sv9"]))
+            self.assertEqual(summary["outcomes"], {"regression": {"before": {"abstained": 0}}})
             self.assertEqual(set(self.seen["candidate"]), {"memory", "adapter"})  # check and catalogExtra do not change answers
             self.assertEqual((self.seen["exam_n"], self.seen["regression_n"]), (1, 2))
 

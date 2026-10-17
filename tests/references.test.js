@@ -148,6 +148,11 @@ test('promoteHit moves a card already in the hits to the front at the top score,
   assert.equal(hits[1].index, 9);
 });
 
+test('promoteHit ties a ranked hit with the top on rank too', () => {
+  const hits = [{ index: 4, score: 0.8, rank: 0.5 }, { index: 9, score: 0.7, rank: 0.4 }];
+  assert.deepEqual(promoteHit(hits, 9)[0], { index: 9, score: 0.8, rank: 0.5 });
+});
+
 test('promoteHit never adds a card the catalog did not return', () => {
   const hits = [{ index: 4, score: 0.8 }, { index: 9, score: 0.7 }];
   assert.deepEqual(promoteHit(hits, 77), hits);

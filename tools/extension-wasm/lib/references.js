@@ -134,7 +134,7 @@ export function withEmbeddings(corrections, refs) {
 export function promoteHit(hits, index) {
   const at = hits.findIndex((h) => h.index === index);
   if (at <= 0) return hits;
-  return [{ index, score: hits[0].score }, ...hits.filter((_, i) => i !== at)];
+  return [{ index, score: hits[0].score, ...(hits[0].rank === undefined ? {} : { rank: hits[0].rank }) }, ...hits.filter((_, i) => i !== at)];
 }
 
 /**

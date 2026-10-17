@@ -385,3 +385,10 @@ export async function adaptedRows({ store, key, rows, adapter }) {
   }
   return adapted;
 }
+
+/** For the log: which parts of the stored bundle are live. An empty memory counts as nothing. */
+export function liveParts(stored, { adapter = null, extra = null } = {}) {
+  if (!stored) return "none";
+  const parts = [[stored.memory?.length, "memory"], [adapter, "adapter"], [stored.check, "check"], [extra, "new cards"]];
+  return parts.filter(([live]) => live).map(([, name]) => name).join(", ") || "nothing usable";
+}

@@ -8,5 +8,6 @@
   "dim": 512,
   "cropVersion": 2,
   "reference": { "min": 0.93, "margin": 0.02 },
+  "accept": { "minSim": 0.72, "clearGap": 0.02, "highSim": 0.85 },
   "highTier": { "sim": 0.82, "gap": 0.025 }
 }

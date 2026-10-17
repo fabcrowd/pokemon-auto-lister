@@ -124,6 +124,7 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
     truths = {s.key: t for s, t in cases}
     exam_truths = [truths[s.key] for s in exam_samples]
     has_regression = regression is not None and len(regression[1]) > 0
+    outcomes = None
 
     if "gate" in modules:
         empty = (np.zeros((0, 512), dtype=np.float32), [])
@@ -133,6 +134,7 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
         exam = {**_scores(verdict["exam"]), "wrongAtHigh": verdict["wrongHigh"]}
         regression_result = _scores(verdict["regression"]) if has_regression else None
         improved = bool(verdict["improved"])
+        outcomes = verdict.get("outcomes")
         # A night that only adds cards changes nothing the gate can measure. It may ship when what was learned is
         # byte-identical to the live bundle and the fixed regression set shows no drop.
         if not improved and new_cards and new_cards["added"] and regression_result and regression_result["n"] > 0:
@@ -170,6 +172,7 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
         "improved": manifest["improved"],
         "exam": exam,
         "regression": regression_result,
+        "outcomes": outcomes,
         "newCards": len(new_cards["added"]) if new_cards else 0,
         "newSets": new_cards["sets"] if new_cards else [],
         "contributionsDropped": dropped,

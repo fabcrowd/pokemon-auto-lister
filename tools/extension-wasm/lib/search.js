@@ -110,50 +110,53 @@ export function configureCatalog({ extra = null, adapter = null, adapted = null 
  * Embeddings must already be L2-normalised.
  * Returns [{ index, score }] sorted by descending score.
  *
- * With { penalty: true } and a matching penalty loaded, rows are ranked by cosine minus their penalty and
- * returned as [{ index, score, rank }] best rank first. `score` stays the row's own cosine, so every
+ * With a live adapter, or { penalty: true } and a matching penalty loaded, rows are ranked by the adapted cosine
+ * (minus their penalty) and returned as [{ index, score, rank }] best rank first. `score` stays the raw query's
+ * cosine with the row's raw vector, so every
  * threshold that reads it (confidence, card-back check) means the same as without the penalty; `rank` is
  * only for order and for gaps between neighbours.
  */
 export function searchCatalog(query, topK = 20, { penalty = false, raw = false } = {}) {
   if (!_rows) throw new Error("Catalog not loaded");
-  // raw: the unadapted query against the unadapted rows, what the search was before any adapter.
-  const useAdapter = _adapter && !raw;
-  const q = useAdapter ? adaptVector(query, _adapter) : query;
-  const rows = useAdapter ? _rows : _catalog;
+  const scores = dotAll(query, _catalog);
 
-  const scores = new Float32Array(_n);
-
-  for (let i = 0; i < _n; i++) {
-    const base = i * DIM;
-    let dot = 0;
-    for (let d = 0; d < DIM; d++) {
-      dot += q[d] * rows[base + d];
-    }
-    scores[i] = dot;
-  }
+  // A live adapter only changes the order: rows are ranked by the adapted query against the adapted rows, while
+  // `score` stays the raw cosine, so thresholds fitted to raw scores keep their meaning (the adapter lowers cosines).
+  let ranks = null;
+  if (_adapter && !raw) ranks = dotAll(adaptVector(query, _adapter), _rows);
 
   const offsets = penalty ? usablePenalty() : null;
   if (offsets) {
-    const ranks = new Float32Array(_n);
-    for (let i = 0; i < _n; i++) ranks[i] = scores[i] - (i < offsets.length ? offsets[i] : 0) * PENALTY_UNIT;
-    return topKIndices(ranks, topK).map((idx) => ({ index: idx, score: scores[idx], rank: ranks[idx] }));
+    const base = ranks ?? scores;
+    ranks = new Float32Array(_n);
+    for (let i = 0; i < _n; i++) ranks[i] = base[i] - (i < offsets.length ? offsets[i] : 0) * PENALTY_UNIT;
   }
 
+  if (ranks) return topKIndices(ranks, topK).map((idx) => ({ index: idx, score: scores[idx], rank: ranks[idx] }));
+
   // Partial sort: find top-K without sorting everything
-  const indices = topKIndices(scores, topK);
-  return indices.map((idx) => ({ index: idx, score: scores[idx] }));
+  return topKIndices(scores, topK).map((idx) => ({ index: idx, score: scores[idx] }));
 }
 
-/** Similarity of the query to each listed catalog row, as [{ index, score }] best first. */
+function dotAll(q, rows) {
+  const out = new Float32Array(_n);
+  for (let i = 0; i < _n; i++) {
+    const base = i * DIM;
+    let dot = 0;
+    for (let d = 0; d < DIM; d++) dot += q[d] * rows[base + d];
+    out[i] = dot;
+  }
+  return out;
+}
+
+/** Raw similarity of the query to each listed catalog row, as [{ index, score }] best first. */
 export function scoreIndices(query, indices) {
   if (!_rows) throw new Error("Catalog not loaded");
-  const q = _adapter ? adaptVector(query, _adapter) : query;
   return indices
     .map((index) => {
       const base = index * DIM;
       let dot = 0;
-      for (let d = 0; d < DIM; d++) dot += q[d] * _rows[base + d];
+      for (let d = 0; d < DIM; d++) dot += query[d] * _catalog[base + d];
       return { index, score: dot };
     })
     .sort((a, b) => b.score - a.score);

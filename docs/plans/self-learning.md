@@ -56,6 +56,14 @@ A candidate bundle must:
 
 Otherwise the live bundle stays. Pack and adapter matches are advisory and are never "high".
 
+The gate scores what a user sees, not only top-1. Each case is accepted-right, accepted-wrong or abstained under the
+accept rule of `lib/fusion.js`. A bundle ships only when top-1 and accepted-right rise on the regression set,
+accepted-wrong does not rise and the abstain rate rises by no more than 2 points (the same limits, minus the two rises, apply to the exam
+once n >= 30). **The adapter only ranks:** `searchCatalog` orders hits by the adapted score but each hit's `score` is the
+raw cosine and `rank` carries the adapted one, so the accept/abstain/high thresholds, fitted to raw cosines, keep their
+meaning (an adapter lowers cosines; reading them adapted made the scanner abstain on 45 of 50 HiBid crops in the
+2026-10-17 end-to-end run). The pipeline's gate replays the same.
+
 ## Status reporting
 
 `STATUS.md` in the data repo is rewritten nightly. Per run it shows before/after scores, contributors, cards learned, new sets, and whether the bundle shipped.
@@ -71,6 +79,9 @@ Each step is TDD. Sonnet subagents build; Opus plans and reviews. A measured gai
 
 ## Risks and open questions
 
+- **Browser and Python embeddings differ.** The same crop embedded by the extension (onnxruntime-web, canvas decode and resize)
+  and by the pipeline (onnxruntime, Pillow) has mean cosine 0.976 (minimum 0.92, 50 HiBid crops). Adapted top-1 agreed on 84% of
+  those crops. The gate therefore predicts the extension's answers only approximately. Known gap, not fixed.
 - **Sybil poisoning.** Bounded by: matches are advisory, top-20 plus margin, multi-day agreement, and the regression gate.
 - **Cold start.** The community exam is not trusted until n >= 30; until then only the HiBid regression set gates.
 - **Chrome store policy.** Models and data are data, not code; the extension already downloads models at setup.
