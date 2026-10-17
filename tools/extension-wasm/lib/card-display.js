@@ -199,9 +199,18 @@ export function swapVersion(card, id) {
 
 const hasSetRange = (card) => card?.setRange?.high > 0;
 
-// More than one possible set means the user has to pick before we quote.
+// More than one possible set means the user has to pick before we quote, unless the scanner has made a
+// best guess: that row is quoted like a settled one and marked until the user confirms or changes it.
 export function isSetConfirmed(card) {
-  return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true;
+  return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true || Boolean(card?.bestGuess);
+}
+
+/** The user accepted the guessed printing: it stops being a guess, and the Set? menu stays. */
+export function confirmGuess(card) {
+  if (!card?.bestGuess) return card;
+  const next = { ...card, setConfirmed: true };
+  delete next.bestGuess;
+  return next;
 }
 
 /** The scanner is guessing: it abstained, the set is open with nothing to show for it, or confidence is low. */
@@ -209,7 +218,7 @@ export function isUnsure(card) {
   if (!card || card.cardBack || card.setConfirmed === true) return false;
   return card.unsure === true
     || Boolean(card.abstain)
-    || ((card.setChoices?.length || 0) > 1 && !hasSetRange(card))
+    || ((card.setChoices?.length || 0) > 1 && !hasSetRange(card) && !card.bestGuess)
     || confTier(card.confidence) === 'low';
 }
 

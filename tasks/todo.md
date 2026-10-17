@@ -228,8 +228,26 @@ Plan: `docs/plans/launch.md`. Nothing is pushed (branch `feat/card-picker-sealed
 # Self-learning (next) — plan: `docs/plans/self-learning.md`
 
 - [x] 1. Security fixes (87f2d0e, 58a9c93)
-- [ ] 2. Signed bundle replaces the pack-only manifest (catalog, memory, adapter, check; per-part sha256; hot-load)
-- [ ] 3. Seed data, the three add-ons (memory, photo adapter, "is this a card?" check), one gate, nightly `STATUS.md`
-- [ ] 4. New sets added automatically
-- [ ] Report a measured gain on the HiBid regression set before anything ships
+- [x] 2. Signed bundle replaces the pack-only manifest (catalog, memory, adapter, check; per-part sha256; hot-load) (1f42193)
+- [x] 3. Seed data, the three add-ons (memory, photo adapter, "is this a card?" check), one gate, nightly `STATUS.md` (1f42193, 03db8eb)
+- [x] 4. New sets added automatically (1f42193)
+- [x] Report a measured gain on the HiBid regression set before anything ships (03db8eb: accepted-right 43 -> 85, accepted-wrong 42 -> 32 on 203 rows)
+- [x] Deploy relay and data repo; point the extension at them (c583710)
+
+# Lot value and set confirmation on lots (2026-10-17)
+
+## Done
+- [x] Lot value estimate; ask about every unrecognised card (ab122cc)
+- [x] Corner number read from the source photo for open-set cards
+- [x] Best guess for open-set rows: page prior, then picture score; "?" confirms; Set? menu and confirm save corrections
+- [x] Measured before/after on 67 HiBid lot photos and 48 synthetic pages (numbers in CHANGELOG.md 2026-10-17)
+
+## Review
+- Corner reads rescue few real lot cards: on HiBid none under 400 source px settled its set, and each try cost about a second (median scan 3.4 s -> 4.4 s, p90 8.3 s -> 15.5 s at a 120 px gate). At a 400 px gate the results are identical and the median is 3.8 s (total 310 s -> 401 s). Most of what remains is about 1.2 s per open card of 400 px or more.
+- Picture-only guesses are right about half the time on HiBid (74% on synthetic pages). Shown anyway by the owner's rule: always best-guess; corrections train.
+- The page prior also applies across grid tiles of a search page, which are separate listings. Not measured.
+
+## Open
+- [ ] Popup simplification
+- [ ] Detection learning (tilted cards 15–40° are most of the missed lot cards)
 

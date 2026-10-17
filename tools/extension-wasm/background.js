@@ -43,7 +43,9 @@ import { hasSiteAccess } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
 import { isCardBack }                  from "./lib/card-back.js";
-import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner } from "./lib/ocr.js";
+import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner, readSourceCorner } from "./lib/ocr.js";
+import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-read.js";
+import { decideGuesses, withGuess } from "./lib/page-prior.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
 import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from "./lib/photo-fetch.js";
@@ -631,7 +633,7 @@ async function handleScanPage(sendResponse, era) {
           // One card that fails to read must not drop the rest of the photo.
           let read;
           try {
-            read = await identifyCard(cardCanvas, era, by2 - by1, stampCanvas, capFor(by2 - by1, naturalPerFed));
+            read = await identifyCard(cardCanvas, era, by2 - by1, stampCanvas, capFor(by2 - by1, naturalPerFed), { bitmap: photoBitmap, box });
           } catch (err) {
             console.error("[BG] card read failed:", err?.message || err);
             read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
@@ -648,6 +650,7 @@ async function handleScanPage(sendResponse, era) {
           pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
             shareOf(photoId, box, imageW, imageH, read));
         }
+        cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst)));
         const photoReads = cards.slice(photoFirst);
         const checked = markRepeatedNames(photoReads);
         const repeated = checked.filter((card, i) => card !== photoReads[i]);
@@ -717,6 +720,8 @@ async function handleScanPage(sendResponse, era) {
       }
     }
 
+    // Cards outside any split photo (a single listing picture, a grid tile) still get a best guess.
+    cards.splice(0, cards.length, ...await withBestGuesses(cards));
     if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
@@ -1254,6 +1259,43 @@ function _photoKey(entry) {
 
 // ─── pricing resolver ────────────────────────────────────────────────────────
 
+// The number is read from the source picture's own pixels when a set is still open: a card in a lot photo is a
+// few hundred pixels tall, too small for the 750x1050 rectified copy to carry its collector number.
+// Each try costs about a second. On 67 HiBid lot photos no card under 400 source px gave a number that settled its set.
+const CORNER_MIN_HEIGHT = 400;
+
+async function settleFromCorners(result, numberSource) {
+  if (!numberSource || result.abstain || (result.setChoices?.length || 0) < 2) return;
+  if (numberSource.box[3] - numberSource.box[1] < CORNER_MIN_HEIGHT) return;
+  await _numberReader;
+  _setSizes ??= setSizes(_meta);
+  const { bitmap, box } = numberSource;
+  for (const { side, rect } of cornerRects(box, bitmap.width, bitmap.height)) {
+    for (const enhance of [false]) {
+      let text = "";
+      try {
+        text = await readSourceCorner(bitmap, rect, box[3] - box[1], enhance);
+      } catch (err) {
+        console.log("[BG] corner read failed:", err?.message || err);
+        continue;
+      }
+      const read = parseCornerText(text);
+      console.log("[BG] corner", side, enhance ? "+" : "=", JSON.stringify(text), read ? "→ " + read.number + (read.total ? "/" + read.total : "") + (read.code ? " " + read.code : "") : "no number");
+      const hit = choiceFromCorner(result.setChoices, read, _setSizes);
+      const identity = hit ? catalogCard(hit.choice.id) : null;
+      if (!identity) continue;
+      console.log("[BG] corner number", hit.via, identity.id);
+      result.identity = identity;
+      result.setChoices = undefined;
+      result.abstain = false;
+      result.setEvidence = hit.via === "code" ? "code" : "number";
+      result.numberRead = read.total ? `${read.number}/${read.total}` : read.number;
+      Object.assign(result, await priceIdentity(identity));
+      return;
+    }
+  }
+}
+
 // Source pixels of card height; below this the stamp is a few blurry pixels.
 const STAMP_MIN_HEIGHT = 400;
 const STAMP_CARD_W = 375;
@@ -1264,11 +1306,35 @@ const STAMP_CARD_H = 525;
  * the user may pick) was printed in 1st Edition. `firstEdition` stays unset otherwise.
  * A stamp rules out the set choices that never had a 1st Edition.
  */
-async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null, capHeight = sourceHeight) {
-  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas);
+async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null, capHeight = sourceHeight, numberSource = null) {
+  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
   return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
+}
+
+// A row whose printing is still open is shown as its best guess: the set the page's settled cards share, else
+// the printing the picture scored highest. The Set? menu stays, and a correction there is saved like any other.
+async function withBestGuesses(reads) {
+  const decisions = decideGuesses(reads);
+  const out = [];
+  for (let i = 0; i < reads.length; i++) {
+    const decision = decisions[i];
+    const card = decision ? catalogCard(decision.choice.id) : null;
+    if (!card) {
+      out.push(reads[i]);
+      continue;
+    }
+    let priced = { market_price: null, price_variant: null, price_grid: null };
+    try {
+      priced = await priceIdentity(card);
+    } catch (err) {
+      console.log("[BG] no price for", card.id, err?.message || err);
+    }
+    console.log("[BG] best guess", card.id, decision.source);
+    out.push(withGuess(reads[i], decision, card, priced));
+  }
+  return out;
 }
 
 // A name whose set is still open is shown with what the candidate printings sell for, so the row is useful before anyone picks.
@@ -1295,8 +1361,10 @@ async function rangeOfChoices(choices) {
   return setRangeSummary(priced);
 }
 
-async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
+async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource = null) {
   const result = await recognizeCard(cardCanvas, era, sourceHeight);
+  if (result.numberRead && result.identity?.id && !result.setChoices) result.setEvidence = "number";
+  await settleFromCorners(result, numberSource);
   const setCodes = result.setChoices ? result.setChoices.map((c) => c.setCode) : [result.identity?.setCode];
   if (sourceHeight < STAMP_MIN_HEIGHT) return result;
   if (variantModelReady()) {
@@ -1350,6 +1418,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
     const stampedCard = stamped ? catalogCard(stamped.id) : null;
     if (stampedCard) {
       console.log("[BG] set stamp", stampedCard.id);
+      result.setEvidence = "stamp";
       result.identity = stampedCard;
       result.setChoices = undefined;
       result.abstain = false;
@@ -1364,6 +1433,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
       const identity = catalogCard(kept[0].id);
       if (identity) {
         console.log("[BG] set symbol", symbol);
+        result.setEvidence = "symbol";
         result.identity = identity;
         result.setChoices = undefined;
         result.abstain = false;
@@ -1392,6 +1462,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas) {
       const identity = catalogCard(promo.id);
       if (identity && result.identity?.id !== identity.id) {
         console.log("[BG] promo number", number, "→", identity.id);
+        result.setEvidence = "number";
         result.identity = identity;
         result.setUnconfirmed = false;
         result.setChoices = undefined;
@@ -1593,7 +1664,7 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
       identity: { name: identity.name },
       confidence,
       abstain,
-      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
+      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
       ocrText,
       ...unpriced,
       ...(await versionsAlongside(identity, hits, abstain)),
@@ -1621,6 +1692,12 @@ async function versionsAlongside(identity, hits, abstain) {
     entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced, ...(priceError ? { priceError } : {}), ...(await ownSetState(card, hits)) });
   }
   return entries.length ? { versionChoices: entries } : {};
+}
+
+// How well the picture matched this card, so a best guess among the set choices can follow the picture.
+function hitScore(hits, id) {
+  const hit = hits.find((h) => _meta[h.index]?.id === id);
+  return hit ? Math.round(hit.score * 1000) / 1000 : undefined;
 }
 
 // A version printed in several sets stays set-unconfirmed when the popup swaps to it, so it brings its own choices and range.

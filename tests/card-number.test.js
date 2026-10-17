@@ -28,6 +28,13 @@ test('faint blobs and specks are not text', () => {
   assert.deepEqual(textBoxes(map, 100, 40), []);
 });
 
+test('a sparse line is judged on its own strokes when asked, not on the empty space around them', () => {
+  // Three thin strokes joined by a faint bridge: the box is mostly empty, the strokes are sure.
+  const map = probMap(100, 40, [[10, 10, 12, 30, 0.95], [30, 10, 32, 30, 0.95], [50, 10, 52, 30, 0.95], [10, 19, 52, 21, 0.35]]);
+  assert.deepEqual(textBoxes(map, 100, 40), []);
+  assert.equal(textBoxes(map, 100, 40, { strokeScore: true }).length, 1);
+});
+
 test('the decoder drops blanks and repeats and keeps only plain characters', () => {
   const classes = 6625;
   const steps = [93, 93, 0, 25, 0, 25, 487, 3539, 94, 0, 25];

@@ -6,7 +6,7 @@ import { inEra } from "./era.js";
 import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
 
-const VIAS = ["candidates", "search", "wrong-card"];
+const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed"];
 const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
 
 export { isUnsure };
@@ -190,6 +190,16 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
     crop: typeof crop === "string" && JPEG_DATA_URL.test(crop) ? crop : null,
     extVersion: typeof extVersion === "string" ? extVersion : null,
   };
+}
+
+/**
+ * The saveCorrection message for a set picked from the Set? menu or a guessed set the user accepted, or null
+ * when there is nothing to save. The scan's own guess rides along so the answer is kept against what it said.
+ */
+export function setMenuCorrection(scan, index, pickedId, via) {
+  const card = scan?.cards?.[index];
+  if (!card || !pickedId) return null;
+  return { action: "saveCorrection", scanId: scan.bgScanId, index, guess: card.guess, pickedId, via };
 }
 
 export function escHtml(s) {

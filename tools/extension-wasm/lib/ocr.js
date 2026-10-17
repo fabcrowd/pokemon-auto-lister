@@ -2,6 +2,7 @@
 // bottom strip of a rectified card. Inputs follow RapidOCR: BGR, scaled to [-1, 1].
 
 import { textBoxes, ctcDecode, parseCardNumber } from "./card-number.js";
+import { stripSize } from "./corner-read.js";
 
 // The number sits in the bottom 12% of a centered card. A taller strip is the
 // fallback when the box runs past the card edge. Small photos need the 3× band.
@@ -113,6 +114,22 @@ export async function readArtStamp(cardCanvas) {
   return readRegion(cardCanvas, box.x1, box.y1, box.x2, box.y2, box.scale);
 }
 
+/**
+ * Text in one bottom-corner rect [x, y, w, h] of the source picture, cut at native resolution and scaled up
+ * on its own. `enhance` raises the contrast of faint print on a photographed card.
+ */
+export async function readSourceCorner(source, rect, cardHeight, enhance) {
+  if (!numberReaderReady()) return "";
+  const [x, y, w, h] = rect;
+  const { width, height } = stripSize(w, h, cardHeight);
+  const strip = new OffscreenCanvas(width, height);
+  const ctx = strip.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  if (enhance) ctx.filter = "grayscale(1) contrast(1.5)";
+  ctx.drawImage(source, x, y, w, h, 0, 0, width, height);
+  return readRegion(strip, 0, 0, 1, 1, 1, { strokeScore: true });
+}
+
 async function readStrip(cardCanvas, stripTop, scale = 1) {
   const top = Math.round(cardCanvas.height * stripTop);
   const srcW = cardCanvas.width;
@@ -140,7 +157,7 @@ async function readStrip(cardCanvas, stripTop, scale = 1) {
   return { text: `${text} (${lines.length} of ${boxes.length} boxes)`, number: null, total: null };
 }
 
-async function readRegion(cardCanvas, x1, y1, x2, y2, scale) {
+async function readRegion(cardCanvas, x1, y1, x2, y2, scale, boxOptions) {
   const srcX = Math.round(cardCanvas.width * x1);
   const srcY = Math.round(cardCanvas.height * y1);
   const srcW = Math.max(1, Math.round(cardCanvas.width * x2) - srcX);
@@ -151,7 +168,7 @@ async function readRegion(cardCanvas, x1, y1, x2, y2, scale) {
   const ctx = strip.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(cardCanvas, srcX, srcY, srcW, srcH, 0, 0, width, height);
   const output = await _det.run({ [_det.inputNames[0]]: toTensor(ctx, width, height) });
-  const boxes = textBoxes(output[_det.outputNames[0]].data, width, height);
+  const boxes = textBoxes(output[_det.outputNames[0]].data, width, height, boxOptions);
   const lines = boxes
     .filter((box) => (box.x2 - box.x1) >= (box.y2 - box.y1))
     .sort((a, b) => a.y1 - b.y1)

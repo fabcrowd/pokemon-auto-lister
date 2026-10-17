@@ -203,4 +203,45 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.unrec-toggle')).toHaveCount(0);
     await page.close();
   });
+
+  test('a best-guess set is priced and marked; confirming it saves the answer and keeps the Set? menu', async () => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 640 });
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.evaluate(() => {
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      window.__sent = [];
+      const cards = [{
+        identity: { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
+        setChoices: [
+          { id: 'sv01-5', name: 'Eevee', set: 'Scarlet & Violet', setCode: 'sv01', number: '005' },
+          { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
+        ],
+        setConfirmed: false,
+        bestGuess: { source: 'page', reason: 'likely Paldea Evolved: 2 other cards on this page are from it' },
+        confidence: 0.7, abstain: false, market_price: 3, box: [0, 0, 1, 1],
+        price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } },
+      }];
+      chrome.runtime.sendMessage = async (msg) => {
+        if (msg?.action === 'scanPage') return { cards, scanId: 'g', srcWidth: 10, srcHeight: 10, pending: 0 };
+        if (msg?.action === 'saveCorrection') { window.__sent.push(msg); return { ok: true }; }
+        return real(msg);
+      };
+    });
+    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+
+    const mark = page.locator('.card-row .guess-mark');
+    await expect(mark).toHaveCount(1);
+    await expect(mark).toHaveAttribute('title', 'likely Paldea Evolved: 2 other cards on this page are from it');
+    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    await expect(page.locator('#s-value')).toHaveText('$3.00');
+
+    await mark.evaluate((b) => b.click());
+    await expect(page.locator('.card-row .guess-mark')).toHaveCount(0);
+    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'g', index: 0, pickedId: 'sv02-5', via: 'guess-confirmed' });
+    await page.close();
+  });
 });

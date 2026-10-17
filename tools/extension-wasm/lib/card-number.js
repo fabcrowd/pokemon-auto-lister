@@ -69,22 +69,32 @@ function components(mask, width, height) {
   return found;
 }
 
-function meanScore(map, width, box) {
+function meanScore(map, width, box, strokesOnly) {
   let sum = 0;
+  let count = 0;
   for (let y = box.y1; y <= box.y2; y++) {
-    for (let x = box.x1; x <= box.x2; x++) sum += map[y * width + x];
+    for (let x = box.x1; x <= box.x2; x++) {
+      const value = map[y * width + x];
+      if (strokesOnly && !(value > TEXT_THRESH)) continue;
+      sum += value;
+      count += 1;
+    }
   }
-  return sum / ((box.x2 - box.x1 + 1) * (box.y2 - box.y1 + 1));
+  return count ? sum / count : 0;
 }
 
-/** Text boxes {x1, y1, x2, y2, score} in detector-map pixels, axis-aligned. */
-export function textBoxes(map, width, height) {
+/**
+ * Text boxes {x1, y1, x2, y2, score} in detector-map pixels, axis-aligned. A box is kept when the mean map value
+ * over its whole area passes BOX_THRESH; with strokeScore only the pixels that count as text are averaged, so a
+ * thin line of small print on a large upscaled strip is not thrown out for the empty space between its letters.
+ */
+export function textBoxes(map, width, height, { strokeScore = false } = {}) {
   const boxes = [];
   for (const box of components(dilate(map, width, height), width, height)) {
     const w = box.x2 - box.x1;
     const h = box.y2 - box.y1;
     if (Math.min(w, h) < MIN_SIDE) continue;
-    const score = meanScore(map, width, box);
+    const score = meanScore(map, width, box, strokeScore);
     if (score < BOX_THRESH) continue;
     const grow = (w * h * UNCLIP_RATIO) / (2 * (w + h));
     if (Math.min(w, h) + 2 * grow < MIN_SIDE + 2) continue;

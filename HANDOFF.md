@@ -1,18 +1,81 @@
 # Handoff
 
-Last updated: 2026-10-16. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous (stale) handoff is in git history (`git log -- HANDOFF.md`).
+Last updated: 2026-10-17. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
+
+## Today (2026-10-17)
+
+Claude's long session (through 11:08 AM America/Chicago) finished the live shared-learning deploy and the lot-value popup, then hit the session limit while its set-confirmation agent was still running. A Cursor session finished that work in the afternoon: it measured the change, raised the corner-read gate to 400 px for speed, added a popup e2e test, and committed it as "Guess the set of open-set lot cards; read the number from the photo's corners".
+
+### Committed, not pushed
+
+The branch is **7 commits ahead of** `origin/feat/card-picker-sealed-test` (`87f2d0e`) and **28 ahead of** `main` (`e2ab17b`, which matches `origin/main`). Nothing from today is pushed.
+
+| Commit | When | What |
+|---|---|---|
+| (top of `git log`) | 10-17 afternoon | Set confirmation on lots: corner number read, best guess for open-set rows (details below) |
+| c583710 | 10:04 | Point the extension at the live relay and the live community bundle |
+| ab122cc | 08:26 | Estimate a lot's value; ask about every unrecognised card |
+| 03db8eb | 08:08 | Photo adapter ranks only; accept/abstain/high still use the raw cosine. Gate scores what the user sees |
+| 1f42193 | 10-16 22:18 | One signed bundle: memory, photo adapter, card check, new sets (self-learning plan steps 2–4) |
+| 672cbc5 | 10-16 21:07 | This handoff, the self-learning plan, README, CLAUDE.md, CHANGELOG |
+| 58a9c93 | 10-16 20:46 | Signing key stays off the upload path; replayed packs are rejected |
+
+`c583710` was checked in Chrome with the dev build: the live bundle loaded (adapter and new cards), and with sharing on one correction uploaded (relay 200). The relay's 15:07 UTC hourly commit wrote it to `fabcrowd/card-scanner-data` branch `inbox` as `contributions/2026-10-17/eea8a8e8889cd4d4-60054b19-1.json`. The install id in that file is the HMAC (`60054b191a781bdd`), not the raw id. Claude reported `npm test` 1028 pass at this commit.
+
+Lot value (`ab122cc`), measured on 67 reviewed HiBid lot photos in Chrome: 273 of 305 cards found (89.5%); misses are mostly cards tilted 15–40°. Of found cards, 71% get the right name, but 97 of 186 leave the set open, which is what widens the value range. The popup shows "Estimated lot value $X–$Y · N of M cards identified · K still to identify" once there are 3 or more cards. Confirmed prices count at both ends; an open set or version counts across its range; an unpicked or unpriced card counts as $0. Card backs stay folded. Every other unrecognised card shows "Which card is this?" with the 5 closest matches and search.
+
+Adapter (`03db8eb`): an end-to-end run showed the adapter lowers every cosine, so the old raw thresholds abstained on 45 of 50 HiBid crops. Search now ranks by the adapted score and still reports the raw cosine. Same 50 crops in Chrome: abstained 45 → 12 (15 with no adapter); accepted-right 15 → 23; accepted-wrong 20 → 15. On the 203-row regression set: accepted-right 43 → 85, accepted-wrong 42 → 32.
+
+### Set confirmation on lots (finished 2026-10-17 afternoon)
+
+Why: on the 67 HiBid lots, 71% of found cards had the right name but about half left the set open, so lot ranges were wide. The owner wants a best guess of the printing, never shown as "high", with the Set? menu kept. A wrong guess is fine; the user corrects it and that trains.
+
+What it does:
+
+- Corner number read (`lib/corner-read.js`, `lib/set-codes.js`, `readSourceCorner` in `lib/ocr.js`, `settleFromCorners` in `background.js`). When a card's set is still open and it is at least 400 source px tall, both bottom corners of the source photo are cut at native resolution (34% width, from 86% down) and scaled so the number text is about 100 px. A read settles the set only when it matches one of that row's own choices: the number (with its total fitting the set size), or a printed Scarlet & Violet code (SVI, PAL, ...).
+- Best guess (`lib/page-prior.js`, `withBestGuesses` in `background.js`). After a photo is read, each still-open row takes the set that most evidence-settled cards on the page share. With none, it takes the printing the picture matched best. It is priced as that printing and capped below "high" (`BEST_GUESS_CAP`). The Set? menu stays, preselected. A "?" next to the name confirms it, and the reason is in its tooltip. Confirming saves a correction (`guess-confirmed`). So does picking from the Set? menu (`set-menu`). Both go to shared learning as `pick`.
+- The lot estimate counts a best guess at its single price.
+
+Measured in Chrome on 67 reviewed HiBid lot photos, HEAD `c583710` vs this commit, same boxes, 186 matched cards. HiBid was used for earlier tuning, and the 400 px gate was set from these runs.
+
+| | before | after |
+|---|---|---|
+| Set confirmed by evidence, exact | 48 | 51 |
+| Set open | 94 | 0 |
+| Best guess right / wrong | – | 49 / 43 |
+| Exact card incl. guesses | 48 | 100 |
+| Wrong confirmed set | 3 | 3 |
+| Wrong name / not named | 13 / 28 | 13 / 27 |
+| Scan median / total | 3.4 s / 310 s | 3.8 s / 401 s |
+
+- Page-prior guesses were right 6 of 6. Picture-only guesses were right 43 of 93 (46%).
+- 48 synthetic binder pages (catalog scans, 6 per era plus promos, glare, ±8° tilt, 432 cards; `.tmp/lots/mksynth.py`). Exact card 155 → 391. Page prior right 38 of 42, picture guesses 86 of 117. Wrong confirmed set 0 → 0.
+- Corner reads help little on real lot photos. Nothing under 400 source px settled, and at a 120 px gate each try cost about 1 s (median 4.4 s, total 477 s, same results), hence 400. Most of the remaining time is about 1.2 s per open card of 400 px or more.
+- Not done: contrast boost on the corner strip (`for (const enhance of [false])`). The page prior also runs across the grid tiles of a search page, which are separate listings; that was not measured.
+- Harness: `.tmp/lots/run.mjs` (env `EXT`, `JOBS`, `OUT`; profile is a fresh copy of `data/extension-live-profile` at `.tmp/lots/profile`, deleted after) and `.tmp/lots/analyze2.py <results.json> [jobs.json]`. Results: `head-c583710.json`, `after5.json`, `synth-old.json`, `synth-new.json`. `.tmp/` is gitignored.
+- Verified: `npm test` 1033 pass, 0 fail. Popup e2e 5 of 5, including a new best-guess test. ESLint on touched files shows only the two older `background.js` errors (lines 65 and 193, from 8358db5). The dev build and `dist/extension-wasm-store.zip` were rebuilt from this tree.
+
+### Next
+
+Popup simplification, then detection learning (cards tilted 15–40° are most of the missed lot cards).
 
 ## Product and branch state
 
 The product is the Chrome extension in `tools/extension-wasm/` (Pokémon card finder and price overlay; recognition runs in the browser with CLIP + YOLO via onnxruntime-web). The Node dashboard and the Python VellumAI sidecar are the older server side and still work.
 
-- Branch `feat/card-picker-sealed-test`, HEAD `58a9c93`, 22 commits ahead of `main` (`e2ab17b`). **Nothing is pushed.** The remote has `main` and an older `origin/feat/card-picker-sealed-test`.
+- Branch `feat/card-picker-sealed-test`. See the counts above. `origin/main` is `e2ab17b`. The feature branch on the remote stops at `87f2d0e`.
 - Other local branches: `wip/cursor-variant-goal-2026-10-15` (Cursor's variant-detection work, snapshot) and `wip/p1-listing-focus` (stopped mid-edit; superseded by the commits below).
 
 Branch commits, newest first (`git log --oneline main..HEAD`):
 
 | Commit | Summary |
 |---|---|
+| (top) | Guess the set of open-set lot cards; read the number from the photo's corners |
+| c583710 | Point the extension at the live relay and community bundle |
+| ab122cc | Estimate a lot's value and ask about every unrecognised card |
+| 03db8eb | Let the photo adapter rank, not decide; gate on what users see |
+| 1f42193 | Ship learning as one signed bundle: memory, photo adapter, card check, new sets |
+| 672cbc5 | Document the self-learning plan and the 2026-10-16 handoff |
 | 58a9c93 | Keep the signing key away from untrusted uploads; reject replayed packs |
 | 87f2d0e | Stop one install or a forged crop from entering the community pack (a Cursor commit) |
 | 508e616 | Share corrections across users through a relay and a signed community pack |
@@ -36,7 +99,7 @@ Branch commits, newest first (`git log --oneline main..HEAD`):
 | deb1f77 | Sealed marketplace test set: collect, import, label, score |
 | bdedbe2 | Ask which card it is when unsure, and keep the answer |
 
-The doc changes from the session that wrote this file (this file, README.md, CLAUDE.md, CHANGELOG.md, tasks/, docs/plans/self-learning.md, docs/plans/launch.md) are uncommitted.
+Those docs are in `672cbc5`.
 
 ## Build
 
@@ -53,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 
 ## Verify
 
-- `npm test`: 955 tests, 955 pass, 0 fail (run 2026-10-16 at 58a9c93, exit 0). Capture the real summary lines; do not pipe through `tail` (hides the exit code).
+- `npm test`: 1033 pass, 0 fail with the set-confirmation commit (2026-10-17, exit 0). Capture the real summary lines; do not pipe through `tail` (hides the exit code).
 - `npm run lint`: 47 problems (46 errors, 1 warning), all pre-existing (unused variables and browser globals, e.g. `tools/extension-wasm/photo-detection.js:74`). Do not add new ones.
 - Python, VellumAI: `cd tools/vellum-ai; .venv/Scripts/python.exe -m unittest discover -s tests` (about 11 minutes; `tests` is not a package, so `unittest tests.x` fails). Last run at ac3d08e: "Ran 279 tests ... OK" (exit 0).
 - Python, shared learning: `python -m unittest discover -s tools/shared-data/tests`. Last run at 58a9c93: "Ran 101 tests ... OK".
@@ -102,14 +165,13 @@ Known weak spots (held-out):
 - eBay search grids can return an eBay error page, which is a site block, not a code bug.
 - Repeated names in one photo (glare) are sent to the picker (f1366ba).
 
-## Shared learning (built, not deployed)
+## Shared learning (deployed 2026-10-17)
 
-- Extension: opt-in "Help improve recognition for everyone" (off). `tools/extension-wasm/lib/shared-config.js` has `RELAY_URL`, `PACK_MANIFEST_URL` and `PACK_PUBLIC_KEY` all empty, so the feature is inert ("Not available in this build").
-- `tools/relay/` is a Cloudflare Worker template; `tools/shared-data/` is the data repo's template (nightly pipeline, consensus, exam, regression gate, signing). Neither is deployed from this repo; the owner copies them.
-- Data repo `fabcrowd/card-scanner-data` exists, is public, and is empty.
-- Security fixes are done (87f2d0e, 58a9c93): the relay writes only to an `inbox` branch, `main` is admin-only by ruleset, the nightly job is split into a no-secrets build job and a signing job, manifests carry `seq` and `issuedAt`.
-- Owner checklist: `tools/shared-data/README.md` ("Owner setup"): copy templates to the data repo, add the branch rulesets, fine-grained token, Cloudflare R2/KV, `wrangler.toml` values, secrets, deploy, generate the signing key, build `regression.npz` once, then fill `lib/shared-config.js`.
-- Next plan: `docs/plans/self-learning.md`.
+- Opt-in "Help improve recognition for everyone" is still off until the user turns it on. `tools/extension-wasm/lib/shared-config.js` is filled in (`c583710`): relay `https://card-scanner-relay.fabcrowd.workers.dev/v1/contributions`, manifest `https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json`, and the pack public key. The store package adds those two hosts.
+- The relay is deployed (KV, R2, both secrets). Allowed extension ids: the dev build and the unpacked store build. It writes only to the data repo's `inbox` branch. `main` there is admin-only by ruleset. The nightly job is split into a no-secrets build job and a signing job. Manifests carry `seq` and `issuedAt` (58a9c93, 87f2d0e).
+- `fabcrowd/card-scanner-data` is public and no longer empty. The first nightly published a signed bundle (adapter + new sets). One test correction is on `inbox` (path in the today section). Leave it or delete it.
+- Templates still live in this repo at `tools/relay/` and `tools/shared-data/`. Owner setup notes: `tools/shared-data/README.md`. Plan: `docs/plans/self-learning.md` (steps 2–4 are in `1f42193`).
+- Revoke the Cloudflare setup token and the GitHub fine-grained token that were pasted into the Claude chat on 2026-10-17. They are not in the repo. Do not copy them into a commit or into this file.
 
 ## Sealed test set and exam photos
 
@@ -117,16 +179,17 @@ Known weak spots (held-out):
 
 ## Owner decisions outstanding
 
-- Manual test of the store zip (`dist/extension-wasm-store.zip`), including the site-access permission prompt.
+- Manual test of the store zip (rebuilt 2026-10-17 from the set-confirmation commit), including the site-access permission prompt.
 - Contact email for the privacy policy and listing.
 - Where to host the privacy policy (public URL).
 - Chrome Web Store developer account.
 - Approve the extension name and the icon.
-- Push and publish (nothing is pushed).
-- Deploy the relay and data repo (see above).
+- Push the 7 unpushed commits on `feat/card-picker-sealed-test`. `main` is already at `origin/main`.
+- Revoke the Cloudflare setup token and the GitHub token pasted into the Claude chat (see shared learning).
 
 ## Working rules
 
+- Simplicity first (owner, 2026-10-17): scan a page, see which cards are there and their market price. Always show a best guess. A wrong guess is fine; the user corrects it and that correction trains. Do not withhold an answer behind an accuracy gate. An unpicked unrecognised card counts as $0 in the lot value, never as "bulk". Put explanations in tooltips, not extra sentences.
 - Opus (the main session) researches, writes plans and briefs, reviews, verifies and commits. Sonnet subagents (`model: sonnet`) execute the plans: every code and file change, even one-liners. This is a token-saving measure: don't have Opus edit files or Sonnet invent plans. If a Sonnet agent hits a design decision not covered by its brief, it stops and reports instead of choosing.
 - Never read, list or search `data/sealed-test`. Never tune to per-photo results. Run `node scripts/sealed-score.mjs` only when the user asks.
 - A Cursor agent may commit concurrently; 87f2d0e was a Cursor commit. Run `git status` first and stage specific files, never `git add -A`.
@@ -137,4 +200,6 @@ Known weak spots (held-out):
 
 ## Next step
 
-Self-learning plan step 2: the signed bundle replacing the pack-only manifest (catalog, memory, adapter, check, each with a sha256; hot-load only changed parts; keyed to the CLIP model and crop version). See `docs/plans/self-learning.md` (build order: 2 signed bundle, 3 seed + three add-ons + gate + STATUS.md, 4 new sets). Report a measured gain on the HiBid regression set before anything ships.
+Popup simplification, then detection learning. Set confirmation on lots is done (see the today section).
+
+Self-learning steps 2–4 are already in `1f42193` and live as of `c583710`. Do not start them again.

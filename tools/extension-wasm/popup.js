@@ -1,6 +1,6 @@
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotEstimateLine, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotEstimateLine, lotTotal, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeNote, sourceFooter, sourceName, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
-import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, unrecognisedLabel } from "./lib/card-picker.js";
+import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { hasAllSites, requestAllSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
@@ -472,7 +472,11 @@ function renderResults() {
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
 
   document.querySelectorAll(".set-select-row select").forEach((sel) => {
-    sel.addEventListener("change", (e) => pickSet(Number(e.target.dataset.idx), e.target.value));
+    sel.addEventListener("change", (e) => {
+      const idx = Number(e.target.dataset.idx);
+      saveSetCorrection(idx, e.target.value, "set-menu");
+      pickSet(idx, e.target.value);
+    });
   });
 
   document.querySelectorAll(".version-select-row select").forEach((sel) => {
@@ -535,7 +539,7 @@ function renderCardRow(card, idx) {
       <div class="conf-stripe ${tier}"></div>
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
-        <div class="card-name">${escHtml(name)}</div>
+        <div class="card-name">${escHtml(name)}${guessMark(card, idx)}</div>
         <div class="card-sub">${subHtml}</div>
       </div>
       ${grid ? `<div class="src-badge ${srcClass}" title="pricing source">${escHtml(sourceName({ source }) || source)}</div>` : ""}
@@ -711,7 +715,12 @@ resultsEl.addEventListener("click", (e) => {
     return;
   }
   const idx = Number(button.dataset.idx);
-  if (button.dataset.pick) {
+  if ("guessConfirm" in button.dataset) {
+    const card = _lastResult?.cards?.[idx];
+    if (!card?.bestGuess) return;
+    saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
+    replaceCard(idx, confirmGuess(card));
+  } else if (button.dataset.pick) {
     const fromSearch = Boolean(button.closest(".picker-results"));
     const shown = fromSearch ? _picker.get(idx)?.results : _lastResult?.cards?.[idx]?.candidates;
     pickCard(
@@ -738,10 +747,26 @@ resultsEl.addEventListener("input", (e) => {
   if (e.target.classList.contains("picker-input")) onSearchInput(Number(e.target.dataset.idx), e.target.value);
 });
 
+// The only sign that a printing is a guess; why it was chosen is in the tooltip, not in a sentence.
+function guessMark(card, idx) {
+  if (!card.bestGuess || card.setConfirmed === true) return "";
+  const why = escHtml(card.bestGuess.reason || "Best guess");
+  return ` <button type="button" class="guess-mark" data-guess-confirm data-idx="${idx}" title="${why}" aria-label="Best guess: ${why}. Press to confirm this set.">?</button>`;
+}
+
+// A set the user picked, or a guess they accepted, is an answer worth keeping like any other pick.
+function saveSetCorrection(idx, id, via) {
+  const message = setMenuCorrection(_lastResult, idx, id, via);
+  if (!message) return;
+  chrome.runtime.sendMessage(message).then((resp) => {
+    if (resp?.error) showMessage(resp.error, true);
+  }).catch((err) => showMessage(explainScanError(err?.message || err), true));
+}
+
 function renderSetRow(card, idx) {
   const choices = card.setChoices || [];
   if (choices.length <= 1) return "";
-  const picked = card.setConfirmed ? card.identity?.id : "";
+  const picked = card.setConfirmed || card.bestGuess ? card.identity?.id : "";
   const blank = `<option value="" ${picked ? "" : "selected"}>Choose set</option>`;
   const options = choices.map((c) => {
     const label = `${c.set || c.setCode || "Unknown set"}${c.number ? " #" + c.number : ""}`;
@@ -790,16 +815,16 @@ async function pickSet(idx, id, picked = null) {
   const stale = () => _lastResult?.scanId !== scan.scanId || _pickToken.get(idx) !== token;
   const unpriced = { market_price: null, price_variant: null, price_grid: null, priceError: null };
   if (!id) {
-    replaceCard(idx, { ...card, ...unpriced, identity: { name: card.identity?.name }, setConfirmed: false });
+    replaceCard(idx, { ...card, ...unpriced, identity: { name: card.identity?.name }, setConfirmed: false, bestGuess: undefined });
     return;
   }
   const label = picked?.name || card.identity?.name || "this card";
   if (picked) {
     // The other sets on offer no longer apply, and the old card's price must not stay on screen.
-    replaceCard(idx, { ...card, ...unpriced, identity: picked, setChoices: [], setConfirmed: false, pricing: true });
+    replaceCard(idx, { ...card, ...unpriced, identity: picked, setChoices: [], setConfirmed: false, bestGuess: undefined, pricing: true });
     showMessage(`Getting price for ${label}…`);
   } else {
-    replaceCard(idx, { ...card, pricing: true, priceError: null });
+    replaceCard(idx, { ...card, bestGuess: undefined, pricing: true, priceError: null });
   }
   let resp;
   try {

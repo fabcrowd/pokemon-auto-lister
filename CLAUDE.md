@@ -165,7 +165,7 @@ Playwright or real-world runs, which load `dist/`. Fetch onnxruntime-web once wi
   never read it for tuning. `PROFILE` must be a copy of `data/extension-live-profile` at `.tmp/realworld-profile`.
 - Shared learning: `tools/relay` and `tools/shared-data` are templates the owner deploys. Never commit secrets or keys.
   The relay writes only to the `inbox` branch and must never touch code that runs with the signing key.
-  `lib/shared-config.js` is empty on purpose (feature inert) until the owner fills it.
+  `lib/shared-config.js` points at the live relay and bundle (c583710); changing it changes what every build talks to.
 - Don't kill all `chrome.exe`: the user's own browser is running. Stop only processes you started.
 - A Cursor agent may commit concurrently (87f2d0e was one). Run `git status` first and stage specific files.
 
