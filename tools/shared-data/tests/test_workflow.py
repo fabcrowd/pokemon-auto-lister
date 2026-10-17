@@ -40,6 +40,23 @@ class Workflow(unittest.TestCase):
         self.assertNotIn("requirements.txt", SIGN)
         self.assertIn("scripts/sign_release.py", SIGN)
 
+    def test_the_build_job_reads_the_live_release_with_the_read_only_token_and_passes_it_to_the_pipeline(self):
+        self.assertIn("gh release download", BUILD)
+        self.assertIn("github.token", BUILD)
+        self.assertIn("--live-dir live", BUILD)
+        self.assertIn("--seed seed.npz", BUILD)
+        self.assertIn("--base-url", BUILD)
+
+    def test_the_sign_job_signs_per_run_urls_and_publishes_unapproved_bundles_as_prereleases(self):
+        self.assertIn("--base-url", SIGN)
+        self.assertNotIn("--url ", SIGN)
+        self.assertIn("--prerelease", SIGN)
+        self.assertIn("manifest.sig", SIGN)
+
+    def test_every_part_is_uploaded_from_the_build_job(self):
+        for name in ("community-pack.bin", "adapter.bin", "check.bin", "catalog-extra.bin", "manifest.json", "STATUS.md"):
+            self.assertIn(f"out/{name}", BUILD)
+
 
 class Requirements(unittest.TestCase):
     def check(self, name):

@@ -1,10 +1,16 @@
 // Brute-force cosine similarity search over the card catalog.
 // catalog.bin.gz contains L2-normalised float32 vectors so dot-product == cosine similarity.
 
+import { adaptVector } from "./adapter.js";
+
 const DIM = 512;
 
-let _catalog = null; // Float32Array (N × 512)
+let _base    = null; // Float32Array, the catalog that ships in the extension
+let _catalog = null; // Float32Array (N × 512): base plus any rows from the bundle's catalogExtra
+let _rows    = null; // what is searched: _catalog, or its adapted copy while an adapter is live
+let _adapter = null; // applied to every query while _rows is the adapted copy
 let _n       = 0;
+let _baseN   = 0;
 
 // Optional per-row penalty for look-alike "hub" cards that real photos match for the wrong reasons.
 // One signed byte per catalog row, in thousandths of cosine (scripts/build-hub-penalty.py).
@@ -23,12 +29,13 @@ export function loadHubPenalty(bytes) {
 }
 
 // A penalty built for another catalog would move the wrong rows, so a size mismatch turns it off.
+// Rows appended after the shipped catalog have no penalty.
 function usablePenalty() {
   if (!_penalty) return null;
-  if (_penalty.length === _n) return _penalty;
+  if (_penalty.length === _baseN) return _penalty;
   if (!_penaltyWarned) {
     _penaltyWarned = true;
-    console.warn(`[search] hub penalty has ${_penalty.length} rows but the catalog has ${_n}; ignoring it`);
+    console.warn(`[search] hub penalty has ${_penalty.length} rows but the catalog has ${_baseN}; ignoring it`);
   }
   return null;
 }
@@ -61,8 +68,41 @@ export async function loadCatalog(gzBuffer) {
     offset += c.byteLength;
   }
 
-  _catalog = new Float32Array(raw.buffer);
-  _n       = _catalog.length / DIM;
+  _base = new Float32Array(raw.buffer);
+  _baseN = _base.length / DIM;
+  configureCatalog({});
+}
+
+/** True while an adapter is live, so a raw search differs from the normal one. */
+export const adapterActive = () => _adapter !== null;
+
+/** The shipped catalog's rows followed by `extra` rows (a new array when there are any). */
+export function catalogRowsWith(extra = null) {
+  if (!_base) throw new Error("Catalog not loaded");
+  if (!extra?.length) return _base;
+  const all = new Float32Array(_base.length + extra.length);
+  all.set(_base, 0);
+  all.set(extra, _base.length);
+  return all;
+}
+
+/**
+ * Sets what is searched on top of the shipped catalog, all at once so a search never sees half of it:
+ * `extra` rows are appended; `adapter` is applied to each query and `adapted` (the adapter applied to every
+ * row of base + extra) is what gets searched. An adapted copy of the wrong size is ignored, so the two
+ * embedding spaces are never mixed.
+ */
+export function configureCatalog({ extra = null, adapter = null, adapted = null }) {
+  if (!_base) throw new Error("Catalog not loaded");
+  _catalog = catalogRowsWith(extra);
+  _n = _catalog.length / DIM;
+  if (adapter && adapted?.length === _catalog.length) {
+    _adapter = adapter;
+    _rows = adapted;
+  } else {
+    _adapter = null;
+    _rows = _catalog;
+  }
 }
 
 /**
@@ -75,8 +115,12 @@ export async function loadCatalog(gzBuffer) {
  * threshold that reads it (confidence, card-back check) means the same as without the penalty; `rank` is
  * only for order and for gaps between neighbours.
  */
-export function searchCatalog(query, topK = 20, { penalty = false } = {}) {
-  if (!_catalog) throw new Error("Catalog not loaded");
+export function searchCatalog(query, topK = 20, { penalty = false, raw = false } = {}) {
+  if (!_rows) throw new Error("Catalog not loaded");
+  // raw: the unadapted query against the unadapted rows, what the search was before any adapter.
+  const useAdapter = _adapter && !raw;
+  const q = useAdapter ? adaptVector(query, _adapter) : query;
+  const rows = useAdapter ? _rows : _catalog;
 
   const scores = new Float32Array(_n);
 
@@ -84,7 +128,7 @@ export function searchCatalog(query, topK = 20, { penalty = false } = {}) {
     const base = i * DIM;
     let dot = 0;
     for (let d = 0; d < DIM; d++) {
-      dot += query[d] * _catalog[base + d];
+      dot += q[d] * rows[base + d];
     }
     scores[i] = dot;
   }
@@ -92,7 +136,7 @@ export function searchCatalog(query, topK = 20, { penalty = false } = {}) {
   const offsets = penalty ? usablePenalty() : null;
   if (offsets) {
     const ranks = new Float32Array(_n);
-    for (let i = 0; i < _n; i++) ranks[i] = scores[i] - offsets[i] * PENALTY_UNIT;
+    for (let i = 0; i < _n; i++) ranks[i] = scores[i] - (i < offsets.length ? offsets[i] : 0) * PENALTY_UNIT;
     return topKIndices(ranks, topK).map((idx) => ({ index: idx, score: scores[idx], rank: ranks[idx] }));
   }
 
@@ -103,12 +147,13 @@ export function searchCatalog(query, topK = 20, { penalty = false } = {}) {
 
 /** Similarity of the query to each listed catalog row, as [{ index, score }] best first. */
 export function scoreIndices(query, indices) {
-  if (!_catalog) throw new Error("Catalog not loaded");
+  if (!_rows) throw new Error("Catalog not loaded");
+  const q = _adapter ? adaptVector(query, _adapter) : query;
   return indices
     .map((index) => {
       const base = index * DIM;
       let dot = 0;
-      for (let d = 0; d < DIM; d++) dot += query[d] * _catalog[base + d];
+      for (let d = 0; d < DIM; d++) dot += q[d] * _rows[base + d];
       return { index, score: dot };
     })
     .sort((a, b) => b.score - a.score);

@@ -20,7 +20,7 @@ const isCurrentVersion = (ref) => (ref?.v ?? 1) === EMBEDDING_VERSION;
  * The best reference for a query embedding, or null. It counts only if its cosine
  * similarity reaches `min` and beats the top catalog score by `margin`. The caller may use it
  * only to reorder cards the catalog already returned, never as a score of its own.
- * @param refs [{ cardId, embedding, scale? }] with L2-normalised 512-float embeddings; community-pack rows are int8
+ * @param refs [{ cardId, embedding, scale? }] with L2-normalised 512-float embeddings; bundle memory rows are int8
  *   with scale 1/127
  */
 export function referenceHit(query, refs, catalogTopScore, { min = REFERENCE_MIN, margin = REFERENCE_MARGIN } = {}) {
@@ -135,6 +135,19 @@ export function promoteHit(hits, index) {
   const at = hits.findIndex((h) => h.index === index);
   if (at <= 0) return hits;
   return [{ index, score: hits[0].score }, ...hits.filter((_, i) => i !== at)];
+}
+
+/**
+ * Memory and the user's references, applied to the catalog hits the way the nightly gate (pipeline/gate.py) scores
+ * them: the RAW query against the rows, beaten against the RAW catalog top score, and only a card the (possibly
+ * adapted) hits already list is promoted. `hits` may come from an adapted search; `rawTop` never does.
+ * @returns { hits, referencedId }
+ */
+export function applyMemory(rawEmbedding, rows, hits, rawTop, meta) {
+  if (!rows.length) return { hits, referencedId: null };
+  const hit = referenceHit(rawEmbedding, rows, rawTop);
+  const at = hit ? hits.findIndex((h) => meta[h.index]?.id === hit.cardId) : -1;
+  return at < 0 ? { hits, referencedId: null } : { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId };
 }
 
 /**

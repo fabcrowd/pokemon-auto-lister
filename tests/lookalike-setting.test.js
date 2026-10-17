@@ -22,7 +22,10 @@ test('the setting is stored under one key, read as on only when exactly true, an
   assert.match(options, /lookalikeToggle\.checked = reduceLookalikes === true/);
   const background = stripDevBlocks(read('background.js'), 'background.js');
   assert.match(background, /\.reduceLookalikes === true/);
-  assert.equal(background.match(/searchCatalog\(embedding, 20, \{ penalty: await lookalikePenaltyInUse\(\) \}\)/g).length, 2);
+  // Both scan paths search through searchBoth, which applies the penalty to the normal and the raw search.
+  assert.equal(background.match(/await searchBoth\(embedding\)/g).length, 2);
+  assert.equal(background.match(/\{ penalty \}\)/g).length, 1);
+  assert.equal(background.match(/\{ penalty, raw: true \}\)/g).length, 1);
 });
 
 test('the penalty file is a local asset of the extension, never a download', () => {

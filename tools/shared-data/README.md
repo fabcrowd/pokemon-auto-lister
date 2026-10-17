@@ -69,6 +69,17 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     `python scripts/build_regression.py --labels labels.json --root <crops folder> --model clip_visual_int8.onnx --out regression.npz`.
     It holds embeddings and catalog ids only, no images. Without it the manifest never says `improved`, so no
     user ever receives the pack.
+
+    **How blind is this gate?** The adapter's learning rate and epoch count were chosen while looking at HiBid scores,
+    so the HiBid regression gate is not fully blind to the adapter. The independent checks are the community exam
+    (it gates once it has n >= 30 cards that were never trained on) and the sealed score (`scripts/sealed-score.mjs`,
+    run on request, never tuned against). Treat a HiBid gain as necessary, not sufficient.
+10a. **Seed (build once, re-run when you have more labelled crops).** On the machine that has the catalog art and the
+    labelled crops: `python scripts/build_seed.py --data-dir data --meta data/card-catalog/meta.json --catalog-images data/card-catalog/images --model clip_visual_int8.onnx --out seed.npz`.
+    It embeds labelled real crops plus synthetic photo-like variants of catalog images and stores embeddings and card
+    ids only, no images. Any input path containing `hibid`, `sealed` or `realworld` is refused. Commit `seed.npz` to the
+    root of `main`; the nightly reads it from the `main` checkout (`--seed seed.npz`) and trains the adapter on it
+    together with promoted contributions. Without the file the adapter trains on contributions alone.
 11. **Where packs are published.** The Action publishes releases in the data repo itself, which is public, so
     nothing more is needed. Only if you ever make the data repo private: set the Actions variable
     `PACK_RELEASE_REPO` to a public repo and the secret `PACK_RELEASE_TOKEN` to a fine-grained token with
@@ -78,7 +89,7 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     - `PACK_MANIFEST_URL` = `https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json`
     - `PACK_PUBLIC_KEY` = the base64 SPKI line from step 8
 13. **First run.** Actions tab, "nightly-pack", Run workflow. With no contributions it publishes an empty,
-    valid, not-improved pack, which proves the signing key and release path work.
+    valid, not-improved bundle (a pre-release), which proves the signing key and release path work.
 
 ## Contribution schema v1
 
@@ -138,8 +149,10 @@ existing files so nothing is overwritten.
 ## Pipeline (nightly)
 
 The workflow has two jobs. `build` has no secrets and a read-only token: it checks out code from `main` and the
-contributions from `inbox` into `data/`, runs the tests and the pipeline, and uploads `community-pack.bin`,
-`manifest.json` (unsigned) and `summary.json` as an artifact. `sign` (environment `pack-signing`, the only place the key
+contributions from `inbox` into `data/`, reads the live release (the latest non-pre-release) for the gate, runs the
+tests and the pipeline, and uploads the bundle parts (`community-pack.bin`, `adapter.bin`, `check.bin`,
+`catalog-extra.bin`; a part is absent when its trainer had too little data), `manifest.json` (unsigned),
+`summary.json` and `STATUS.md` / `status.json` as an artifact. `sign` (environment `pack-signing`, the only place the key
 exists) installs only the signing library (`requirements-sign.txt`), runs `scripts/sign_release.py` and publishes the
 release. All actions are pinned to commit SHAs and Python packages to exact versions with hashes
 (`pip install --require-hashes`). To refresh the pins: bump a version, then list that version's file hashes from PyPI.
@@ -171,24 +184,36 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
 7. `manifest.json` is signed by the `sign` job (ECDSA P-256, SHA-256) over its exact bytes. `manifest.sig` is the
    base64 of the 64-byte raw `r||s` signature, which is what WebCrypto `verify` takes with
    `{name: "ECDSA", hash: "SHA-256"}`. The public key is imported as `spki`. Before signing, `sign_release.py`
-   re-checks: manifest fields, pack sha256 / size / entries (at most 20000), the url is this run's release asset,
-   `seq` equals the run number, `issuedAt` is within an hour, and `improved` follows from the numbers
-   (exam after > before on at least 30 cards, no regression drop).
+   re-checks: manifest fields, every part's sha256 / size / format (rank at most 64, finite check weights, at most
+   20000 rows), each url is this run's release asset, `seq` equals the run number, `issuedAt` is within an hour, and
+   `improved: true` is not contradicted by the numbers (regression present with no drop; no exam drop once it has 30
+   cards; wrong "high" answers not up). The gate in `pipeline/gate.py` decides the rest. A bundle the gate did not
+   approve is published as a pre-release, so "latest" is always the live bundle. `STATUS.md` and `status.json` go to
+   the rolling `status` pre-release (the data repo's `main` is admin-only, so the nightly never commits there).
 
-### manifest.json
+### manifest.json (v2)
 
 ```
-{ "v": 1, "model": "<clip 16 hex>", "catalog": "<16 hex>", "crop": 2, "entries": N, "dim": 512,
-  "sha256": "<pack sha256>", "url": "<pack download url>",
+{ "v": 2, "model": "<clip 16 hex>", "crop": 2,
+  "assets": { "memory"?: A, "adapter"?: A, "check"?: A, "catalogExtra"?: A },   A = { "url", "sha256", "bytes" }
   "exam": { "before": 0.0-1.0, "after": 0.0-1.0, "n": N, "wrongAtHigh": { "before": .., "after": .. } },
   "regression": { "before": .., "after": .., "n": N } | null,
-  "improved": exam.after > exam.before && exam.n >= 30 && regression.after >= regression.before && regression.n > 0,
-  "seq": <workflow run number>, "issuedAt": "YYYY-MM-DDTHH:MM:SSZ" }
+  "improved": <the gate's verdict>, "seq": <workflow run number>, "issuedAt": "YYYY-MM-DDTHH:MM:SSZ" }
 ```
 
-The extension refuses a pack whose `model`, `catalog` or `crop` differ from its own, whose `sha256` does not match
-the download, whose signature fails, whose `seq` is lower than the highest it has accepted, or whose `issuedAt` is
-older than 30 days. Downloads are cut off at 64 MB. `improved` is the gate for using the pack at all.
+Keyed to the CLIP model and crop only, never the catalog, so catalog changes do not invalidate learning. The
+extension refuses a bundle whose `model` or `crop` differ from its own, whose signature fails, whose `seq` is lower
+than the highest it has accepted, or whose `issuedAt` is older than 30 days; it downloads only parts whose `sha256`
+it does not already hold, and any failing part leaves the previous live bundle in place. `improved` is the gate for
+using the bundle at all. A bundle replaces all parts: a part missing from the new manifest is removed. To withdraw
+a bad bundle, publish a new improved one without the part (an `improved: false` run keeps what clients have).
+
+| Part | File | Format |
+|---|---|---|
+| memory | `community-pack.bin` | pack v1 below |
+| adapter | `adapter.bin` | header `{v:1,dim:512,rank:r<=64,scale:s}`, then U and V (`512*r` int8 each, row-major); `e' = normalize(e + U(Vt e))` on queries and catalog rows |
+| check | `check.bin` | header `{v:1,dim:512,bias,threshold}`, then 512 float32 weights; a detected box is dropped when `sigmoid(w.e+b) < threshold` on the raw embedding |
+| catalogExtra | `catalog-extra.bin` | pack v1 plus `"cards":[{id,name,set,setName,number,image}]` parallel to `cardIds`; made by `pipeline/new_sets.py` from TCGdex, cumulative, at most 500 new cards per night |
 
 ### Pack byte format (v1)
 
@@ -199,7 +224,7 @@ then              N * 512 int8, row-major; row i belongs to cardIds[i]
 ```
 
 Each value is `round(127 * x)` of the L2-normalised component, clamped to -127..127; there is no scale field.
-The file is exactly `4 + H + entries * 512` bytes. Same layout as `lib/community-pack.js`;
+The file is exactly `4 + H + entries * 512` bytes. Same layout as `lib/bundle.js`;
 `tests/shared-data-pack.test.js` parses a pipeline-written fixture with the extension's own `parsePack`.
 `pipeline/pack.py` is the reference reader and writer.
 
@@ -225,9 +250,8 @@ by GitHub issue or the contact email. Then:
 **Takedown / abuse.** If someone reports a contribution (for example a picture of a person or an offensive image), or
 you find abuse: delete the files and rewrite `inbox` history exactly as above, rotate `RELAY_ID_SECRET` only if the
 mapping itself leaked, and publish an abuse contact (the same contact email as the privacy policy) on the repo
-README. A bad pack is handled by deleting its release; clients then fall back to the plain catalog at their next
-daily check only if a newer manifest says `improved: false`, so to withdraw a pack publish a run without a regression
-set (it signs `improved: false`).
+README. A bad bundle is handled by publishing a newer improved bundle without the bad part; deleting a release does
+not reach clients that already stored it.
 
 ## Tests
 

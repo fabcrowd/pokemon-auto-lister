@@ -12,6 +12,7 @@ Branch `feat/card-picker-sealed-test` (not pushed).
 - Repeat guard: three or more boxes with the same name in one photo go to the picker.
 - Optional look-alike penalty (off; built locally by `scripts/build-hub-penalty.py`).
 - Opt-in shared learning: relay (`tools/relay`), data repo template (`tools/shared-data`), signed community pack with consensus, exam and regression gates.
+- Signed bundle replaces the pack-only manifest (manifest v2): memory, photo adapter, "is this a card" check and new-set cards, each downloaded only when its sha256 changes and hot-loaded without a reload (`lib/bundle.js`, `lib/adapter.js`). Nightly pipeline writes all parts, gates them against the live bundle, and adds new TCGdex sets (`pipeline/new_sets.py`, at most 500 cards a night).
 - Real-world harness `scripts/realworld-run.mjs`.
 - Plans: `docs/plans/launch.md`, `docs/plans/shared-learning.md`, `docs/plans/self-learning.md`.
 

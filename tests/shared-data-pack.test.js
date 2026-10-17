@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parsePack } from "../tools/extension-wasm/lib/community-pack.js";
+import { parsePack } from "../tools/extension-wasm/lib/bundle.js";
 
 // pack-v1.bin is written by tools/shared-data/pipeline/pack.py (tests/test_pack.py keeps it byte-identical).
 const bytes = readFileSync(new URL("../tools/shared-data/tests/fixtures/pack-v1.bin", import.meta.url));

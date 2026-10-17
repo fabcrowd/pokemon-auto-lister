@@ -1,9 +1,14 @@
-// The upload queue and the downloaded community pack live in IndexedDB, in a database of their own:
+// The upload queue and the downloaded bundle live in IndexedDB, in a database of their own:
 // opting out deletes the queue without touching corrections.
+//   pack     one record, the live bundle: { manifest, shas: { assetName: sha256 } }
+//   assets   the downloaded bundle files, by sha256, so a file is fetched only when its sha changes
+//   derived  one computed copy (the adapted catalog), keyed by what it was computed from
 
 const DB_NAME = "card-scanner-share";
 const QUEUE = "queue";
 const PACK = "pack";
+const ASSETS = "assets";
+const DERIVED = "derived";
 const PACK_KEY = "current";
 
 export const MAX_QUEUED = 200;
@@ -15,11 +20,13 @@ export function createShareStore(idb = globalThis.indexedDB) {
   function open() {
     if (!idb) return Promise.reject(new Error("IndexedDB is not available here"));
     opening ??= new Promise((resolve, reject) => {
-      const request = idb.open(DB_NAME, 1);
+      const request = idb.open(DB_NAME, 2);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(QUEUE)) db.createObjectStore(QUEUE, { keyPath: "seq", autoIncrement: true });
         if (!db.objectStoreNames.contains(PACK)) db.createObjectStore(PACK, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(ASSETS)) db.createObjectStore(ASSETS, { keyPath: "sha" });
+        if (!db.objectStoreNames.contains(DERIVED)) db.createObjectStore(DERIVED, { keyPath: "key" });
       };
       request.onsuccess = () => {
         const db = request.result;
@@ -80,9 +87,26 @@ export function createShareStore(idb = globalThis.indexedDB) {
     }),
     count: () => run("readonly", QUEUE, (store) => store.count()),
     clearQueue: () => run("readwrite", QUEUE, (store) => store.clear()),
-    /** { sha256, bytes } of the verified pack; one at a time. */
+    /** The live bundle's record; one at a time. */
     savePack: (pack) => run("readwrite", PACK, (store) => store.put({ ...pack, id: PACK_KEY })),
     getPack: () => run("readonly", PACK, (store) => store.get(PACK_KEY)),
     clearPack: () => run("readwrite", PACK, (store) => store.clear()),
+    putAsset: (sha, bytes) => run("readwrite", ASSETS, (store) => store.put({ sha, bytes })),
+    getAsset: (sha) => run("readonly", ASSETS, (store) => store.get(sha)),
+    /** Deletes every stored file whose sha256 is not in `keep`. */
+    pruneAssets: (keep) => run("readwrite", ASSETS, (store) => {
+      const keys = store.getAllKeys();
+      keys.onsuccess = () => {
+        for (const key of keys.result) if (!keep.includes(key)) store.delete(key);
+      };
+      return keys;
+    }),
+    clearAssets: () => run("readwrite", ASSETS, (store) => store.clear()),
+    getDerived: (key) => run("readonly", DERIVED, (store) => store.get(key)),
+    /** Keeps only this one computed copy. */
+    putDerived: (key, bytes) => run("readwrite", DERIVED, (store) => {
+      store.clear();
+      return store.put({ key, bytes });
+    }),
   };
 }

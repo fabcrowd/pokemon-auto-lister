@@ -50,6 +50,19 @@ export function fuseResults(clipHits, _ocrText, meta, _idMap) {
   return high ? read : { ...read, confidence: BELOW_HIGH_CONFIDENCE };
 }
 
+/**
+ * With a photo adapter live, "high" must also hold on the raw (unadapted) search, as the nightly gate scores it:
+ * the final top card must be the raw top card, and the raw read must itself be high. Otherwise the adapter or
+ * memory changed the answer, which is advisory and never high. Without an adapter rawHits is the same array as hits.
+ */
+export function capAdapterChange(result, hits, rawHits, meta) {
+  if (!result || result.abstain || rawHits === hits || result.confidence <= BELOW_HIGH_CONFIDENCE) return result;
+  const rawRead = rawHits?.length ? fuseResults(rawHits, null, meta) : null;
+  const same = hits[0] && rawHits?.[0] && meta[hits[0].index]?.id === meta[rawHits[0].index]?.id;
+  if (same && rawRead && !rawRead.abstain && rawRead.confidence > BELOW_HIGH_CONFIDENCE) return result;
+  return { ...result, confidence: BELOW_HIGH_CONFIDENCE, confidenceBeforeAdapterCap: result.confidence };
+}
+
 function fuseUntiered(clipHits, meta) {
   if (!clipHits || clipHits.length === 0) {
     return { identity: null, confidence: 0, abstain: true, reason: "no_hits" };

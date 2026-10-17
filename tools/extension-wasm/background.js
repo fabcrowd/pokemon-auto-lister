@@ -17,17 +17,17 @@ import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDete
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
-import { loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
-import { capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
+import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
+import { capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
 import { candidatesFor, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
-import { correctionsToEmbed, currentReferences, decodeEmbedding, promoteHit, referenceHit, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
+import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
-import { checkCommunityPack, loadStoredPack } from "./lib/community-pack.js";
+import { adaptedRows, cardProbability, checkBundle, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
@@ -62,6 +62,7 @@ import {
 let _ready            = false;
 let _loading          = false;
 let _meta             = null;
+let _metaBase         = null; // meta.json as shipped; _meta is this plus the bundle's new cards
 let _idMap            = null;
 let _popupWinId       = null;
 let _targetTabId      = null;
@@ -228,6 +229,8 @@ async function loadModels() {
       getAssetJson("meta.json"),
       getAssetJson("id_map.json"),
     ]);
+    _metaBase = _meta;
+    await applyBundle();
 
     _ready = true;
     _loadHubPenalty();
@@ -620,6 +623,8 @@ async function handleScanPage(sendResponse, era) {
             ? rectifyCard(photoBitmap, rect)
             : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
           const cardCanvas = rectify(box);
+          // The hero fallback is never checked: it may be the listing's only card.
+          if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
           // The number is read from the detector box. The stamp is scored on the
           // box after a clipped yellow border is included, so the card is not stretched.
           const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
@@ -995,34 +1000,59 @@ async function loadedReferences() {
   return rows;
 }
 
-let _packRows = null;
+let _packRows = [];
+let _photoCheck = null;
 
 const packBuild = () => {
-  const { clip, catalog, crop } = modelTags();
-  return { model: clip, catalog, crop };
+  const { clip, crop } = modelTags();
+  return { model: clip, crop };
 };
 
-async function communityRows() {
-  try {
-    _packRows ??= await loadStoredPack(_shareStore, packBuild());
-    return _packRows;
-  } catch (err) {
-    console.error("[BG] community pack unreadable:", err?.message || err);
-    return [];
-  }
+let _applying = Promise.resolve();
+
+// Puts the stored bundle live without a reload: memory rows, the "is this a card" check, new catalog cards and
+// the photo adapter. Everything slow is done first and the swap is synchronous, so a scan sees the old bundle or
+// the new one, never half of it. A failure leaves what was live.
+function applyBundle() {
+  _applying = _applying.then(applyBundleOnce).catch((err) => console.error("[BG] bundle not applied:", err?.message || err));
+  return _applying;
 }
 
-// At most one check a day (lib/community-pack.js); nothing about the user is sent.
-checkCommunityPack({
+async function applyBundleOnce() {
+  if (!_metaBase) return;
+  const stored = await loadStoredBundle(_shareStore, packBuild());
+  const merged = stored?.extra ? mergeExtra(_metaBase, stored.extra) : null;
+  let adapter = null;
+  let adapted = null;
+  if (stored?.adapter) {
+    try {
+      const rows = catalogRowsWith(merged?.rows);
+      const key = [stored.manifest.assets.adapter.sha256, stored.manifest.assets.catalogExtra?.sha256 ?? "-", rows.length, modelTags().catalog].join(":");
+      adapted = await adaptedRows({ store: _shareStore, key, rows, adapter: stored.adapter });
+      adapter = stored.adapter;
+    } catch (err) {
+      console.error("[BG] photo adapter not applied:", err?.message || err);
+    }
+  }
+  configureCatalog({ extra: merged?.rows ?? null, adapter, adapted });
+  _meta = merged ? _metaBase.concat(merged.meta) : _metaBase;
+  _catalogNames = _indicesByName = _setSizes = _metaById = null;
+  _packRows = stored?.memory ?? [];
+  _photoCheck = stored?.check ?? null;
+  console.log("[BG] bundle live:", stored ? Object.entries({ memory: stored.memory, adapter: adapter, check: stored.check, "new cards": merged }).filter(([, v]) => v).map(([k]) => k).join(", ") || "nothing usable" : "none");
+}
+
+// At most one check a day (lib/bundle.js); nothing about the user is sent.
+checkBundle({
   manifestUrl: PACK_MANIFEST_URL,
   publicKey: PACK_PUBLIC_KEY,
   expected: packBuild(),
   store: _shareStore,
   state: { get: () => local.get("packCheck"), set: (value) => local.set("packCheck", value) },
 }).then((result) => {
-  if (result.status === "ok") _packRows = null;
-  else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] community pack not used:", result.status);
-}).catch((err) => console.error("[BG] community pack check failed:", err?.message || err));
+  if (result.status === "ok") applyBundle();
+  else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] bundle not used:", result.status);
+}).catch((err) => console.error("[BG] bundle check failed:", err?.message || err));
 
 const HUB_PENALTY_PATH = "data/hub-penalty.bin";
 
@@ -1044,27 +1074,54 @@ async function referencesInUse() {
 }
 
 // A scan and a reference pass can both want the embedder, and one session cannot run twice at once.
+// A canvas is embedded once: the photo check and the read that follows it share the result.
+const _embedded = new WeakMap();
 function embedSerial(canvas) {
+  const known = _embedded.get(canvas);
+  if (known) return known;
   const run = _embedQueue.then(() => embedCard(canvas));
   _embedQueue = run.catch(() => {});
+  _embedded.set(canvas, run);
+  run.catch(() => _embedded.delete(canvas));
   return run;
+}
+
+// The pipeline's "is this a card" check, on the raw embedding of a detected box. A failure keeps the box.
+async function boxLooksLikeCard(canvas) {
+  if (!_photoCheck) return true;
+  try {
+    const p = cardProbability(await embedSerial(canvas), _photoCheck);
+    if (p >= _photoCheck.threshold) return true;
+    console.log("[BG]   box dropped by the card check, p=" + p.toFixed(2));
+    return false;
+  } catch (err) {
+    console.error("[BG] card check failed:", err?.message || err);
+    return true;
+  }
 }
 
 // A reference only reorders cards the catalog already returned, at the catalog's own top score, so a
 // reprint of a corrected card is not made certain. Any failure leaves the catalog hits as they were.
-async function withReferenceHit(embedding, hits) {
+async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0) {
   try {
-    // The community pack is in use only after it passed the exam gate (lib/community-pack.js); the user's own rows need their setting.
+    // The community pack is in use only after it passed the exam gate (lib/bundle.js); the user's own rows need their setting.
     const own = (await referencesInUse()) ? await loadedReferences() : [];
-    const pack = await communityRows();
-    if (!own.length && !pack.length) return { hits, referencedId: null };
-    const hit = referenceHit(embedding, pack.length ? own.concat(pack) : own, hits[0]?.score ?? 0);
-    const at = hit ? hits.findIndex((h) => _meta[h.index]?.id === hit.cardId) : -1;
-    return at < 0 ? { hits, referencedId: null } : { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId };
+    const pack = _packRows;
+    // Same as pipeline/gate.py: the raw embedding against the rows, beaten against the raw catalog top score.
+    return applyMemory(embedding, pack.length ? own.concat(pack) : own, hits, rawTop, _meta);
   } catch (err) {
     console.error("[BG] reference lookup failed:", err?.message || err);
     return { hits, referencedId: null };
   }
+}
+
+// The normal (adapted, when a photo adapter is live) hits, and the raw ones the gate also scores. They are the
+// same array when no adapter is live.
+async function searchBoth(embedding) {
+  const penalty = await lookalikePenaltyInUse();
+  const hits = physicalHits(searchCatalog(embedding, 20, { penalty }), _meta);
+  const rawHits = adapterActive() ? physicalHits(searchCatalog(embedding, 20, { penalty, raw: true }), _meta) : hits;
+  return { hits, rawHits };
 }
 
 async function embedCrop(cropDataUrl) {
@@ -1149,13 +1206,13 @@ async function handleDetect(imageB64, sendResponse) {
     for (const { box, score } of rawBoxes) {
       const cardCanvas = rectifyCard(bitmap, box);
       const embedding  = await embedSerial(cardCanvas);
-      const catalogHits = physicalHits(searchCatalog(embedding, 20, { penalty: await lookalikePenaltyInUse() }), _meta);
-      if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
+      const { hits: catalogHits, rawHits } = await searchBoth(embedding);
+      if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
       }
-      const { hits }   = await withReferenceHit(embedding, catalogHits);
-      const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
+      const { hits }   = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
+      const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
       const priceData  = abstain ? null : await getPrice(identity);
       const market_price  = priceData?.price  ?? null;
       const price_variant = priceData?.variant ?? null;
@@ -1481,14 +1538,14 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
 
 async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   const embedding = await embedSerial(cardCanvas);
-  const catalogHits = physicalHits(searchCatalog(embedding, 20, { penalty: await lookalikePenaltyInUse() }), _meta);
-  seen.catalogTop = catalogHits[0]?.score ?? null;
-  if (isCardBack(embedding, catalogHits[0]?.score ?? 0)) {
+  const { hits: catalogHits, rawHits } = await searchBoth(embedding);
+  seen.catalogTop = rawHits[0]?.score ?? null;
+  if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
-  const { hits, referencedId } = await withReferenceHit(embedding, catalogHits);
+  const { hits, referencedId } = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
   seen.referencedId = referencedId;
-  const { identity, confidence, abstain } = fuseResults(hits, null, _meta, _idMap);
+  const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;
   const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits, era) : null;
