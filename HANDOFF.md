@@ -8,11 +8,11 @@ Claude's long session (through 11:08 AM America/Chicago) finished the live share
 
 ### Committed, not pushed
 
-The branch is **7 commits ahead of** `origin/feat/card-picker-sealed-test` (`87f2d0e`) and **28 ahead of** `main` (`e2ab17b`, which matches `origin/main`). Nothing from today is pushed.
+The branch is **8 commits ahead of** `origin/feat/card-picker-sealed-test` (`87f2d0e`) and **29 ahead of** `main` (`e2ab17b`, which matches `origin/main`): the seven below plus a handoff-only commit. Nothing from today is pushed.
 
 | Commit | When | What |
 |---|---|---|
-| (top of `git log`) | 10-17 afternoon | Set confirmation on lots: corner number read, best guess for open-set rows (details below) |
+| 4ba5795 | 12:40 | Set confirmation on lots: corner number read, best guess for open-set rows (details below) |
 | c583710 | 10:04 | Point the extension at the live relay and the live community bundle |
 | ab122cc | 08:26 | Estimate a lot's value; ask about every unrecognised card |
 | 03db8eb | 08:08 | Photo adapter ranks only; accept/abstain/high still use the raw cosine. Gate scores what the user sees |
@@ -70,7 +70,7 @@ Branch commits, newest first (`git log --oneline main..HEAD`):
 
 | Commit | Summary |
 |---|---|
-| (top) | Guess the set of open-set lot cards; read the number from the photo's corners |
+| 4ba5795 | Guess the set of open-set lot cards; read the number from the photo's corners |
 | c583710 | Point the extension at the live relay and community bundle |
 | ab122cc | Estimate a lot's value and ask about every unrecognised card |
 | 03db8eb | Let the photo adapter rank, not decide; gate on what users see |
@@ -184,7 +184,7 @@ Known weak spots (held-out):
 - Where to host the privacy policy (public URL).
 - Chrome Web Store developer account.
 - Approve the extension name and the icon.
-- Push the 7 unpushed commits on `feat/card-picker-sealed-test`. `main` is already at `origin/main`.
+- Push the 8 unpushed commits on `feat/card-picker-sealed-test`. `main` is already at `origin/main`.
 - Revoke the Cloudflare setup token and the GitHub token pasted into the Claude chat (see shared learning).
 
 ## Working rules
