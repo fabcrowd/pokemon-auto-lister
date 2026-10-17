@@ -98,9 +98,12 @@ export const PACK_MANIFEST_URL = "${manifest}";
 export const PACK_PUBLIC_KEY = "";
 `;
 
-test('the shipped shared-config is empty, so the store build adds no host', () => {
+test('the shipped shared-config adds exactly the relay origin and the data repo release pattern', () => {
   const text = readFileSync(path.join(repoRoot, 'tools', 'extension-wasm', 'lib', 'shared-config.js'), 'utf8');
-  assert.deepEqual(configuredOrigins(text), []);
+  assert.deepEqual(configuredOrigins(text), [
+    'https://card-scanner-relay.fabcrowd.workers.dev/*',
+    'https://github.com/fabcrowd/card-scanner-data/releases/*',
+  ]);
 });
 
 test('a configured relay and pack address add their origins once, and only those', () => {

@@ -71,6 +71,8 @@ test('store manifest: exactly the specified permissions and hosts', win32, () =>
     'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/*',
     'https://objects.githubusercontent.com/*',
     'https://release-assets.githubusercontent.com/*',
+    'https://card-scanner-relay.fabcrowd.workers.dev/*',
+    'https://github.com/fabcrowd/card-scanner-data/releases/*',
   ]);
   assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
   assert.equal(manifest.version, '2.1.0');

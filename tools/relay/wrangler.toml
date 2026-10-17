@@ -13,7 +13,7 @@ DATA_REPO = "fabcrowd/card-scanner-data"
 DATA_BRANCH = "inbox"
 # DATA_BASE_BRANCH = "main"
 # OWNER: your extension's id (chrome://extensions, 32 letters a-p). Comma-separate several (dev + store).
-ALLOWED_EXTENSION_IDS = "abcdefghijklmnopabcdefghijklmnop"
+ALLOWED_EXTENSION_IDS = "pjihnfaeeeikhdjkpochhdaoiklhpiag,glpgpefjjkfbjjahibcegokmbomghonc"
 # Optional limits (defaults shown).
 # CARDS_PER_INSTALL_DAY = "200"
 # REQUESTS_PER_IP_HOUR = "50"
@@ -36,7 +36,7 @@ bucket_name = "card-scanner-pending"
 # OWNER: paste the id printed by `npx wrangler kv namespace create RATE`.
 [[kv_namespaces]]
 binding = "RATE"
-id = "paste-the-kv-namespace-id-here"
+id = "a8713722190748258a6522abfb57530f"
 
 [triggers]
 crons = ["7 * * * *"]
