@@ -283,3 +283,46 @@ test('only boxes that reach the viewport are drawn', () => {
   assert.equal(pure.boxInView([-90, 10, -1, 100], 1100, 800), false);
   assert.equal(pure.boxInView([-50, 700, 50, 900], 1100, 800), true);
 });
+
+function loadWithMessages() {
+  const source = fs.readFileSync(new URL('../tools/extension-wasm/content.js', import.meta.url), 'utf8');
+  const frames = [];
+  const window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1100, innerHeight: 800, scrollX: 0, scrollY: 0, requestAnimationFrame: (fn) => frames.push(fn) && frames.length, cancelAnimationFrame() {} };
+  const canvas = { style: {}, remove() {}, getContext: () => ({ clearRect() {} }) };
+  const document = { getElementById: () => null, createElement: () => canvas, documentElement: { appendChild() {} }, querySelectorAll: () => [] };
+  let listener;
+  const chrome = { runtime: { onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: () => Promise.resolve() } };
+  vm.runInNewContext(source, { window, document, chrome, MutationObserver: class {}, getComputedStyle: () => ({}) });
+  const send = (msg) => { const replies = []; listener(msg, null, (r) => replies.push(r)); return replies; };
+  const nextFrame = () => frames.shift()();
+  return { canvas, send, nextFrame, frames };
+}
+
+test('hiding the overlay answers only after two frames, so a capture cannot include the badges', () => {
+  const page = loadWithMessages();
+  page.send({ action: 'showOverlay', cards: [], srcWidth: 1100, srcHeight: 800 });
+  const replies = page.send({ action: 'hideOverlay' });
+  assert.equal(page.canvas.style.visibility, 'hidden');
+  assert.equal(replies.length, 0);
+  page.nextFrame();
+  assert.equal(replies.length, 0);
+  page.nextFrame();
+  assert.equal(replies.length, 1);
+});
+
+test('a new overlay shows again after a hide, and hiding with no overlay answers at once', () => {
+  const page = loadWithMessages();
+  assert.equal(page.send({ action: 'hideOverlay' }).length, 1);
+  page.send({ action: 'showOverlay', cards: [], srcWidth: 1100, srcHeight: 800 });
+  page.send({ action: 'hideOverlay' });
+  page.send({ action: 'showOverlay', cards: [], srcWidth: 1100, srcHeight: 800 });
+  assert.equal(page.canvas.style.visibility, 'visible');
+});
+
+test('restoreOverlay brings back a hidden overlay', () => {
+  const page = loadWithMessages();
+  page.send({ action: 'showOverlay', cards: [], srcWidth: 1100, srcHeight: 800 });
+  page.send({ action: 'hideOverlay' });
+  page.send({ action: 'restoreOverlay' });
+  assert.equal(page.canvas.style.visibility, 'visible');
+});

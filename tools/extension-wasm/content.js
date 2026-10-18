@@ -200,8 +200,23 @@
     chrome.runtime.sendMessage({ action: 'newCardsDetected' }).catch(() => {});
   }
 
+  // A screenshot taken with the badges drawn over the cards is read as badges, not cards, so the scan
+  // hides the overlay first. It stays hidden until the new overlay arrives, because the old boxes would be
+  // wrong by then; a scan that fails sends restoreOverlay instead.
+  function hideOverlay(done) {
+    if (!canvas) { done(); return; }
+    canvas.style.visibility = 'hidden';
+    // One frame is not enough: the compositor may still hold the last painted frame.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(done));
+  }
+
+  function restoreOverlay() {
+    if (canvas) canvas.style.visibility = 'visible';
+  }
+
   function renderOverlay(cards, srcWidth, srcHeight) {
     ensureCanvas();
+    canvas.style.visibility = 'visible';
     const scaleX = canvas.width  / srcWidth;
     const scaleY = canvas.height / srcHeight;
     _placed = [];
@@ -873,6 +888,11 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.action === 'showOverlay') {
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
+    } else if (msg.action === 'hideOverlay') {
+      hideOverlay(() => sendResponse({ hidden: true }));
+      return true;
+    } else if (msg.action === 'restoreOverlay') {
+      restoreOverlay();
     } else if (msg.action === 'clearOverlay') {
       clearOverlay();
     } else if (msg.action === 'findCards') {

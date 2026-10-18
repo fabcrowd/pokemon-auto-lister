@@ -492,6 +492,7 @@ async function handleScanPage(sendResponse, era) {
       return;
     }
     targetTab = freshTab;
+    await sendToTab(chrome, targetTab.id, { action: "hideOverlay" }).catch(() => {});
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
     const b64 = dataUrl.split(",")[1];
     const bitmap = await b64ToBitmap(b64);
@@ -773,6 +774,7 @@ async function handleScanPage(sendResponse, era) {
       ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
+    sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
   }
 }
