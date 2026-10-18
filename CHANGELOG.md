@@ -9,6 +9,8 @@ Store-build debug pass (1536670, 654a132, era-restricted search).
 - "151" is no longer read as a set from card numbers.
 - Star cards are no longer grouped with plain names.
 - The first scan waits for the number reader.
+- Overlay frames and prices stay on their cards while scrolling and after resize (c118fe5).
+- A rescan no longer captures the previous overlay. Pokellector Base Set grid identified 47 then 13 before, 47 and 47 now. "Scan again" after allowing site access always hit this (9a4b98f).
 
 ### Changed
 - A set named in the page heading, breadcrumb or title is now the best guess for open rows. Pokellector Base Set grid: rows guessed Base Set 10 to 33. HiBid lots unchanged. Near-ties go by catalog order.

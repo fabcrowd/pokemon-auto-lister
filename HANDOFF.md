@@ -6,6 +6,7 @@ Last updated: 2026-10-18. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\p
 
 Store-build debug pass, three fixes. Page set hint (1536670): the set named in the page heading, breadcrumb or title is the best guess for open rows; Pokellector Base Set grid rows guessed Base Set 10 to 33, HiBid lots unchanged. Overlay labels (654a132) are clamped to card width, price-only under 140 px. Era-restricted search: era 1999-2003 on that grid went 3 to 47 identified with no out-of-era suggestions, and the store build no longer requests variant.onnx.
 Debug harness: `.tmp/debug-store/` (Playwright Chromium). Delete ScriptCache and Database in a profile copy to avoid a stale service worker.
+Two more fixes: overlay frames and prices stay on their cards while scrolling and after resize (c118fe5); a rescan no longer captures the previous overlay, Pokellector Base Set grid 47 then 13 before, 47 and 47 now (9a4b98f). Harness note: reused profiles need `Service Worker/ScriptCache` and `Database` deleted.
 Branch state: main now tracks the feature branch `feat/card-picker-sealed-test`.
 
 ## Yesterday (2026-10-17)

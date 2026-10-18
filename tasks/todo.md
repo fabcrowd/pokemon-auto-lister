@@ -3,7 +3,7 @@
 - [x] Page set hint: set in heading/breadcrumb/title is the best guess for open rows (1536670)
 - [x] Overlay labels clamped to card width; price-only under 140 px (654a132)
 - [x] Era-restricted search; store build no longer requests variant.onnx
-- [ ] Debug harness can't click Chrome's native permission prompt or the toolbar icon; owner hand-check of site access on the store zip still pending.
+- [x] Site access and toolbar click tested on the unmodified store build via CDP `Extensions.triggerAction` (`--enable-unsafe-extension-debugging`) and Windows UI Automation on the permission dialog (`.tmp/debug-store/plib.mjs`, `p8.mjs`, `accept.ps1`)
 
 # Fix corner-as-front photo selection (2026-08-11)
 
