@@ -40,6 +40,7 @@ import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "
 // dev-only:end
 import { sendToTab } from "./lib/tab-messaging.js";
 import { fullSizeCandidates, loadFullSize } from "./lib/full-size.js";
+import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
@@ -864,6 +865,13 @@ async function handleScanPage(sendResponse, era) {
       crops.splice(0, crops.length, ...crops.filter(keep));
       shares.splice(0, shares.length, ...shares.filter(keep));
     }
+    if (pageFocus.kind !== "listing") {
+      const shares = pageSetShares(cards, { hint: setHint });
+      const before = cards.map((c) => c.identity?.id);
+      cards.splice(0, cards.length, ...cards.map((card) => applySetPrior(card, shares, catalogCard)));
+      const moved = cards.filter((c, i) => c.identity?.id !== before[i]).length;
+      if (shares.size) console.log("[BG] set prior", JSON.stringify([...shares].map(([k, v]) => [k, Math.round(v * 100) / 100])), "moved", moved, "best guesses");
+    }
     cards.splice(0, cards.length, ...await withBestGuesses(cards, setHint));
     if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
@@ -1457,6 +1465,17 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
   return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
 }
 
+// The closest cards with the score they were ranked by, for the page's set prior to re-order (lib/set-prior.js).
+function rankedIds(hits, limit = 10) {
+  const out = [];
+  for (const hit of hits || []) {
+    const id = _meta[hit?.index]?.id;
+    if (id && !out.some((o) => o.id === id)) out.push({ id, rank: Math.round((hit.rank ?? hit.score) * 10000) / 10000 });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 // A row whose printing is still open is shown as its best guess: the set the page names, else the set the page's settled cards share, else
 // the printing the picture scored highest. The Set? menu stays, and a correction there is saved like any other.
 async function withBestGuesses(reads, setHint = null) {
@@ -1787,6 +1806,7 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
       agreedFinish: numbered?.finish || null,
       // Kept so a card nothing could name still asks the user, with what the search found closest.
       nearest: closestIds(hits),
+      ranked: rankedIds(hits),
       ...unpriced,
     };
   }
