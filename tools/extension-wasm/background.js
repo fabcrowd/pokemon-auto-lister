@@ -24,6 +24,7 @@ import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedB
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
+import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
 import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
@@ -505,6 +506,7 @@ async function handleScanPage(sendResponse, era) {
     // Where each card sits on the page, so a card seen twice (on two overlapping screens, or as an <img> and
     // the slot behind it) is kept once. A listing's single photo is left as it always was.
     const slots = [];
+    const hints = []; // per card: where the page keeps its own picture of a grid tile, for the second look (lib/refine.js)
     const dropped = new Set();
     let screenNo = 0;
     let offset = { x: 0, y: 0 };
@@ -518,16 +520,52 @@ async function handleScanPage(sendResponse, era) {
       // The earlier card is only given up once this one has been read and kept (see pushCard).
       return judged.verdict === "replace" ? { ...slot, replaces: judged.drop } : slot;
     };
-    const pushCard = (card, cardCanvas, share = null, slot = null) => {
+    const pushCard = (card, cardCanvas, share = null, slot = null, hint = null) => {
       if (slot?.replaces != null) dropped.add(slot.replaces);
       cards.push(wholePage && slot ? { ...card, docBox: slot.docBox } : card);
       crops.push(encodeCrop(cardCanvas));
       shares.push(share);
       slots.push(slot);
+      hints.push(hint);
     };
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
     let lackedSiteAccess = false;
+    // A grid tile the screenshot crop could not settle gets a second look at the page's own, larger picture of the card.
+    // The service worker fetches it with the site access the extension already has (no new permission), so a site that
+    // withholds access, a blocked or failed fetch, or a picture that is not card-shaped leaves the tile as it was.
+    const refineFromSource = async (list, tileHints) => {
+      const order = sourceRefineOrder(list, tileHints, MAX_REFINED_TILES);
+      if (!order.length) return;
+      const started = Date.now();
+      const budget = createBudget(REFINE_BUDGET_MS);
+      let failures = 0;
+      let refined = 0;
+      let settled = 0;
+      for (const i of order) {
+        if (budget.remaining() <= 0 || failures >= REFINE_MAX_FAILURES) break;
+        let bitmap = null;
+        try {
+          if (!(await canReadPhotoSource(tileHints[i].src))) { failures = REFINE_MAX_FAILURES; break; }
+          bitmap = await loadPhotoSource(tileHints[i].src, { allowedHosts: pageImageHosts, budget, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
+          if (!bitmap || !looksLikeCard(bitmap.width, bitmap.height)) { if (!bitmap) failures++; continue; }
+          const tileCanvas = rectifyCard(bitmap, [0, 0, bitmap.width, bitmap.height]);
+          const read = await identifyCard(tileCanvas, era, bitmap.height, null, bitmap.height);
+          const merged = mergeSourceRead(list[i], read, (r) => asLowCertaintyGuess(r, catalogCard));
+          if (merged !== list[i]) {
+            refined++;
+            if (!merged.lowCertainty) settled++;
+            list[i] = merged;
+          }
+        } catch (err) {
+          failures++;
+          console.warn("[BG] source look failed", err?.message || err);
+        } finally {
+          bitmap?.close?.();
+        }
+      }
+      console.log("[BG] source pictures:", order.length, "unsettled tiles looked at,", refined, "re-read,", settled, "settled,", failures, "fetch failures,", (Date.now() - started) + "ms");
+    };
 
     const stops = pageFocus.kind !== "listing" ? planScreens(domResp.documentHeight, domResp.viewportHeight) : [0];
     const wholePage = stops.length > 1;
@@ -787,6 +825,11 @@ async function handleScanPage(sendResponse, era) {
             docBox: toDocBox([dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h], offset),
             area: dc.rect.vw * dc.rect.vh,
           })));
+          // The picture the page keeps of a tile: its own <img>, or that of the view lying over the same spot.
+          const tileHint = (index, shownPx) => {
+            const found = tileSource(domCards, index);
+            return found ? { ...found, shownPx } : null;
+          };
           for (const [dcIndex, dc] of domCards.entries()) {
             if (betterView.has(dcIndex)) continue;
             // Skip the single-card interpretation when this image was already split by YOLO
@@ -811,7 +854,8 @@ async function handleScanPage(sendResponse, era) {
               box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
               score: 1.0,
               ...read,
-            }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed);
+            }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed,
+            read.lowCertainty ? tileHint(dcIndex, sh) : null);
           }
 
           // ── Fallback: YOLO viewport scan ───────────────────────────────────────
@@ -864,7 +908,9 @@ async function handleScanPage(sendResponse, era) {
       cards.splice(0, cards.length, ...cards.filter(keep));
       crops.splice(0, crops.length, ...crops.filter(keep));
       shares.splice(0, shares.length, ...shares.filter(keep));
+      hints.splice(0, hints.length, ...hints.filter(keep));
     }
+    await refineFromSource(cards, hints);
     if (pageFocus.kind !== "listing") {
       const shares = pageSetShares(cards, { hint: setHint });
       const before = cards.map((c) => c.identity?.id);
@@ -2154,6 +2200,10 @@ async function forcedScreenshotPath() {
 
 const PHOTO_TIMEOUT_MS = 4000;
 const PHOTO_MAX_SIDE = 1600;
+// Second look at the page's own picture of unsettled grid tiles: how many, how long in all, and how many failed fetches end it.
+const MAX_REFINED_TILES = 40;
+const REFINE_BUDGET_MS = 30000;
+const REFINE_MAX_FAILURES = 3;
 // Everything one photo may spend fetching: its larger renditions and its own source together.
 const PHOTO_BUDGET_MS = 8000;
 
