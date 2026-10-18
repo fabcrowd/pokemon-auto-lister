@@ -2,6 +2,7 @@
 // catalog.bin.gz contains L2-normalised float32 vectors so dot-product == cosine similarity.
 
 import { adaptVector } from "./adapter.js";
+import { eraRowIndices } from "./era.js";
 
 const DIM = 512;
 
@@ -160,6 +161,11 @@ export function scoreIndices(query, indices) {
       return { index, score: dot };
     })
     .sort((a, b) => b.score - a.score);
+}
+
+/** The `topK` physical catalog rows of the era closest to the query, as [{ index, score }] best first. */
+export function eraHits(query, meta, era, topK = 20) {
+  return physicalHits(scoreIndices(query, eraRowIndices(meta, era)), meta).slice(0, topK);
 }
 
 // TCG Pocket ids (A1-…, A3b-…, B1-…, P-A-…) are digital-only cards.

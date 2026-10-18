@@ -92,6 +92,12 @@ test('store package carries no dev code, test hooks, or localhost addresses', wi
   for (const dropped of EXCLUDE_FILES) assert.equal(existsSync(path.join(storeDir, dropped)), false, dropped);
 });
 
+test('store background.js never looks for the variant model the store build excludes', win32, () => {
+  const background = readFileSync(path.join(storeDir, 'background.js'), 'utf8');
+  assert.doesNotMatch(background, /variant\.onnx|_loadVariantModel/);
+  assert.match(readFileSync(path.join(devDir, 'background.js'), 'utf8'), /variant\.onnx/);
+});
+
 test('every store script still parses, and every import resolves', win32, () => {
   writeFileSync(path.join(storeDir, 'package.json'), '{"type":"module"}');
   try {

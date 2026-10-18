@@ -17,7 +17,7 @@ import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDete
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
-import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices } from "./lib/search.js";
+import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -237,7 +237,9 @@ async function loadModels() {
     _ready = true;
     _loadHubPenalty();
     _loadNumberReader();
+    // dev-only:start
     _loadVariantModel();
+    // dev-only:end
     embedPendingReferences();
   })();
   try {
@@ -259,7 +261,8 @@ function _loadHubPenalty() {
 
 let _numberReader = null;
 
-// The variant model ships inside the extension. Scanning works without it.
+// dev-only:start
+// The store package excludes models/, so only the dev build looks for the variant model. Scanning works without it.
 function _loadVariantModel() {
   fetch(chrome.runtime.getURL("models/variant.onnx"))
     .then((res) => (res.ok ? res.arrayBuffer() : null))
@@ -267,6 +270,7 @@ function _loadVariantModel() {
     .then(() => { if (variantModelReady()) console.log("[BG] variant model loaded"); })
     .catch((err) => console.log("[BG] variant model not available", err?.message || err));
 }
+// dev-only:end
 
 // Scans run without the number reader until its files are cached.
 function _loadNumberReader() {
@@ -755,7 +759,7 @@ async function handleScanPage(sendResponse, era) {
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
-    const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta) } : card));
+    const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta, 5, era) } : card));
     const asked = applyTitlePrior(withCandidates, {
       kind: focus.kind,
       page: domResp?.page,
@@ -1631,9 +1635,12 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
-  const { hits, referencedId } = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
+  // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
+  // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
+  const inEraHits = era ? eraHits(embedding, _meta, era) : null;
+  const { hits, referencedId } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0);
   seen.referencedId = referencedId;
-  const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
+  const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, inEraHits ? hits : rawHits, _meta);
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;
   const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits, era) : null;

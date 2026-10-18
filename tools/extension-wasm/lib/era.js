@@ -38,6 +38,19 @@ export function inEra(card, era) {
   return era.series.includes(seriesOf(card));
 }
 
+const _eraRows = new WeakMap();
+/** Catalog row indices whose printing is in the era; cached per catalog array. */
+export function eraRowIndices(meta, era) {
+  let byEra = _eraRows.get(meta);
+  if (!byEra) _eraRows.set(meta, (byEra = new Map()));
+  if (!byEra.has(era.id)) {
+    const out = [];
+    meta.forEach((card, index) => { if (card && inEra(card, era)) out.push(index); });
+    byEra.set(era.id, out);
+  }
+  return byEra.get(era.id);
+}
+
 /**
  * Same-name printings inside the era, best first, as {index, score}.
  * Returns {pick: index} when one printing is clearly it, {choices: [index…]} when

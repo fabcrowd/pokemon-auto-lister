@@ -171,11 +171,10 @@ test('findCards: accents and apostrophes do not stop a match', () => {
   assert.deepEqual(findCards(META, 'charizard δ').map((c) => c.id), ['ex6-100']);
 });
 
-test('findCards: in-era cards rank first when an era is given', () => {
+test('findCards: only in-era cards are returned when an era is given', () => {
   const era = eraById('sv-me');
   const ids = findCards(META, 'charizard', { era }).map((c) => c.id);
-  assert.equal(ids[0], 'sv3-125');
-  assert.deepEqual(ids.slice(1), ['base1-4', 'xy12-11', 'ex6-100']);
+  assert.deepEqual(ids, ['sv3-125']);
 });
 
 test('findCards: exact names beat longer names', () => {

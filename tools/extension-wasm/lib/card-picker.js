@@ -26,7 +26,7 @@ export function closestMatches(hits, meta, limit = 5) {
 }
 
 /** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
-export function candidatesFor(card, meta, limit = 5) {
+export function candidatesFor(card, meta, limit = 5, era = null) {
   if (!card) return [];
   const catalog = Array.isArray(meta) ? meta : [];
   const choices = card.setChoices || [];
@@ -34,7 +34,7 @@ export function candidatesFor(card, meta, limit = 5) {
   const out = [];
   const seen = new Set();
   const add = (row) => {
-    if (!row?.id || seen.has(row.id) || out.length >= limit) return;
+    if (!row?.id || seen.has(row.id) || out.length >= limit || (era && !inEra(row, era))) return;
     seen.add(row.id);
     out.push(row);
   };
@@ -102,8 +102,8 @@ function sizesOf(meta) {
 }
 
 /**
- * Catalog rows matching a typed query, best first. Cards from the scan's era
- * come first, then sets whose size matches a typed total, then closer names.
+ * Catalog rows matching a typed query, best first. With an era, only its cards
+ * are returned. Sets whose size matches a typed total come first, then closer names.
  */
 export function findCards(meta, query, { era = null, limit = 20 } = {}) {
   const { words, number, total } = parseSearch(query);
@@ -112,7 +112,7 @@ export function findCards(meta, query, { era = null, limit = 20 } = {}) {
   const phrase = words.join(" ");
   const hits = [];
   meta.forEach((card, index) => {
-    if (!card) return;
+    if (!card || (era && !inEra(card, era))) return;
     if (wantNumber && numberKey(card.number) !== wantNumber) return;
     let quality = 3;
     if (words.length) {
@@ -120,13 +120,13 @@ export function findCards(meta, query, { era = null, limit = 20 } = {}) {
       if (!words.every((word) => name.includes(word))) return;
       quality = name === phrase ? 0 : name.startsWith(phrase) ? 1 : 2;
     }
-    hits.push({ card, index, quality, era: era && !inEra(card, era) ? 1 : 0, sized: 1 });
+    hits.push({ card, index, quality, sized: 1 });
   });
   if (total && number && hits.length) {
     const rows = hits.map((hit) => hit.card);
     for (const at of exactTotalHits(rows, { number, total }, sizesOf(meta))) hits[at].sized = 0;
   }
-  hits.sort((a, b) => a.era - b.era || a.sized - b.sized || a.quality - b.quality || a.index - b.index);
+  hits.sort((a, b) => a.sized - b.sized || a.quality - b.quality || a.index - b.index);
   return hits.slice(0, limit).map((hit) => hit.card);
 }
 
