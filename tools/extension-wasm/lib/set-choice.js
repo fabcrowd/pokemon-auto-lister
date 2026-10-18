@@ -10,9 +10,10 @@ const NEAR = 0.05;
 const MAX_CHOICES = 4;
 
 // "Vibrava δ" and "Vibrava" are the same name for choosing a set.
-// "Mew ex" stays different from "Mew": it is another card.
+// "Mew ex" and "Alakazam ☆" stay different from "Mew" and "Alakazam": they are other cards, and folding a
+// Gold Star into the plain card made its set compete in the plain card's menu and flip between scans.
 export function choiceName(name) {
-  return String(name || "").replace(/\s*[δ★☆]$/u, "").trim().toLowerCase();
+  return String(name || "").replace(/\s*δ$/u, "").trim().toLowerCase();
 }
 
 // Mechanic words that go on a card of the same Pokémon without redrawing the picture. Regional forms

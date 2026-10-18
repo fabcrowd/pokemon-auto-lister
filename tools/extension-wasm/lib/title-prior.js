@@ -39,15 +39,24 @@ export function listingTitles(page) {
   return out;
 }
 
+// The array also carries cardNumberAt: indices of tokens written as part of a card number ("151/165", "#151").
 function words(text) {
-  return String(text ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}+/gu, "")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean);
+  const clean = String(text ?? "").toLowerCase().normalize("NFD").replace(/\p{M}+/gu, "");
+  const out = [];
+  const cardNumberAt = new Set();
+  for (const m of clean.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const before = clean.slice(0, m.index).trimEnd();
+    const after = clean.slice(m.index + m[0].length).trimStart();
+    if (before.endsWith("/") || before.endsWith("#") || after.startsWith("/")) cardNumberAt.add(out.length);
+    out.push(m[0]);
+  }
+  Object.defineProperty(out, "cardNumberAt", { value: cardNumberAt });
+  return out;
+}
+
+// An all-digit set name ("151") is not the set where it is a card number.
+function digitSetIsCardNumber(tokens, set, at) {
+  return set.length === 1 && /^\d+$/.test(set[0]) && tokens.cardNumberAt?.has(at) === true;
 }
 
 // "004" and "4" are one number; "TG01" and "TG1" too.
@@ -160,11 +169,16 @@ export function titleConfirmsPrinting(parsed, card) {
 }
 
 // "Base Set 2" is not "Base Set": a digit right after the set's words belongs to the set unless it is the card's number.
+function setRunAt(tokens, set, at, number) {
+  if (!set.every((word, i) => tokens[at + i] === word)) return false;
+  if (digitSetIsCardNumber(tokens, set, at)) return false;
+  const next = tokens[at + set.length];
+  return next === undefined || !/^\d{1,2}$/.test(next) || numberKey(next) === number;
+}
+
 function setNamed(tokens, set, number) {
   for (let at = 0; at + set.length <= tokens.length; at++) {
-    if (!set.every((word, i) => tokens[at + i] === word)) continue;
-    const next = tokens[at + set.length];
-    if (next === undefined || !/^\d{1,2}$/.test(next) || numberKey(next) === number) return true;
+    if (setRunAt(tokens, set, at, number)) return true;
   }
   return false;
 }
@@ -233,4 +247,38 @@ export function applyTitlePrior(cards, { kind, page, knownNames = [], log = () =
     }
     return next;
   });
+}
+
+/**
+ * The one catalog set that the page's own words name, as its setCode, else null. Whole-word phrases only, the
+ * longest name wins where names overlap ("Base Set 2" is not "Base Set"), and two different sets, or two catalog
+ * sets with one name, give no hint. `texts` are the heading, breadcrumb, document title and listing title.
+ */
+export function pageSetHint(texts, catalogSets) {
+  const byName = new Map();
+  for (const entry of catalogSets || []) {
+    const set = words(entry?.set);
+    // "XY" or "SM" in a series name would match too much.
+    if (set.join("").length < 3 || !entry.setCode) continue;
+    const key = set.join(" ");
+    if (!byName.has(key)) byName.set(key, { set, codes: new Set() });
+    byName.get(key).codes.add(entry.setCode);
+  }
+  const named = new Set();
+  for (const text of texts || []) {
+    const tokens = words(text);
+    const found = [];
+    for (const { set, codes } of byName.values()) {
+      for (let at = 0; at + set.length <= tokens.length; at++) {
+        if (setRunAt(tokens, set, at, null)) {
+          found.push({ from: at, to: at + set.length, codes });
+        }
+      }
+    }
+    for (const hit of found) {
+      const inside = found.some((o) => o !== hit && o.from <= hit.from && o.to >= hit.to && o.to - o.from > hit.to - hit.from);
+      if (!inside) for (const code of hit.codes) named.add(code);
+    }
+  }
+  return named.size === 1 ? [...named][0] : null;
 }

@@ -73,3 +73,45 @@ test('withGuess shows the guessed printing with its single price and keeps the m
   assert.deepEqual(next.bestGuess, { source: 'page', reason: 'likely B' });
   assert.ok(next.confidence <= BEST_GUESS_CAP && BEST_GUESS_CAP < 0.8);
 });
+
+const sc = (id, setCode, set, score) => ({ id, setCode, set, number: '1', name: 'Alakazam', score });
+
+test('a page set hint beats the page prior and the picture score', () => {
+  const reads = [settled('sv02'), open(sc('a', 'base1', 'Base Set', 0.5), sc('b', 'base4', 'Base Set 2', 0.9), sc('c', 'sv02', 'X', 0.8))];
+  const out = decideGuesses(reads, { hint: 'base1' });
+  assert.equal(out[1].choice.id, 'a');
+  assert.equal(out[1].source, 'hint');
+  assert.equal(out[1].reason, 'Page says Base Set');
+});
+
+test('a hint leaves settled rows and rows whose choices lack the set alone', () => {
+  const out = decideGuesses([settled('sv02'), open(sc('b', 'base4', 'Base Set 2', 0.9), sc('c', 'sv02', 'X', 0.8))], { hint: 'base1' });
+  assert.equal(out[0], null);
+  assert.equal(out[1].source, 'page');
+  assert.equal(out[1].choice.id, 'c');
+});
+
+test('picture scores within 0.005 are broken by the stable rank, not by the score', () => {
+  const choices = [sc('late', 'xy12', 'Evolutions', 0.803), sc('early', 'base1', 'Base Set', 0.8)];
+  const rank = (choice) => (choice.id === 'early' ? 0 : 1);
+  assert.equal(decideGuesses([open(...choices)], { rank })[0].choice.id, 'early');
+  assert.equal(decideGuesses([open(...[...choices].reverse())], { rank })[0].choice.id, 'early');
+});
+
+test('without a rank a tie falls to the id, in either input order', () => {
+  const choices = [sc('b', 'xy12', 'E', 0.801), sc('a', 'base1', 'B', 0.8)];
+  assert.equal(decideGuesses([open(...choices)])[0].choice.id, 'a');
+  assert.equal(decideGuesses([open(...[...choices].reverse())])[0].choice.id, 'a');
+});
+
+test('a clear picture-score lead still wins over the rank', () => {
+  const choices = [sc('late', 'xy12', 'Evolutions', 0.82), sc('early', 'base1', 'Base Set', 0.8)];
+  assert.equal(decideGuesses([open(...choices)], { rank: (c) => (c.id === 'early' ? 0 : 1) })[0].choice.id, 'late');
+});
+
+test('two unranked choices tie-break by id in either input order', () => {
+  const choices = [sc('b', 'xy12', 'E', 0.801), sc('a', 'base1', 'B', 0.8)];
+  const rank = () => Infinity;
+  assert.equal(decideGuesses([open(...choices)], { rank })[0].choice.id, 'a');
+  assert.equal(decideGuesses([open(...[...choices].reverse())], { rank })[0].choice.id, 'a');
+});

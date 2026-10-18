@@ -10,20 +10,31 @@ export const BEST_GUESS_CAP = BELOW_HIGH_CONFIDENCE;
 const isOpen = (read) => !read?.abstain && !read?.bestGuess && (read?.setChoices?.length || 0) > 1;
 const isEvidence = (read) => !read?.abstain && read?.setEvidence && read?.identity?.setCode && !read?.setUnconfirmed;
 
-function bestByScore(choices) {
-  let best = choices[0];
-  for (const choice of choices) {
-    if ((choice.score ?? -Infinity) > (best.score ?? -Infinity)) best = choice;
-  }
-  return best;
+// Printings of one card the picture cannot tell apart score a few thousandths apart and swap places between
+// scans of the same photo, so near-equal scores go by a fixed order (release order when the caller has one).
+const SCORE_TIE = 0.005;
+
+function bestByScore(choices, rank) {
+  const score = (choice) => choice.score ?? -Infinity;
+  const top = Math.max(...choices.map(score));
+  const tied = choices.filter((choice) => top - score(choice) <= SCORE_TIE);
+  if (!tied.length) return choices[0];
+  return tied.reduce((best, choice) => {
+    // Unranked ids rank Infinity, and Infinity - Infinity is NaN, so compare instead of subtracting.
+    const a = rank(choice);
+    const b = rank(best);
+    if (a !== b) return a < b ? choice : best;
+    return String(choice.id) < String(best.id) ? choice : best;
+  });
 }
 
 /**
- * For each read of one photo, null (leave it) or {choice, source, reason}. The page prior picks the printing
- * in the set most settled cards share, when that set is among the row's choices; otherwise the choice the
- * picture scored highest, or the first choice when none carries a score.
+ * For each read of one photo, null (leave it) or {choice, source, reason}. A set the page's own text names
+ * (`hint`, a setCode) comes first, then the printing in the set most settled cards share, when that set is among
+ * the row's choices; otherwise the choice the picture scored highest, or the first choice when none carries a
+ * score. Each applies only where the set is among the row's choices.
  */
-export function decideGuesses(reads) {
+export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
   const counts = new Map();
   const names = new Map();
   for (const read of reads) {
@@ -38,12 +49,14 @@ export function decideGuesses(reads) {
   }
   return reads.map((read) => {
     if (!isOpen(read)) return null;
+    const named = hint ? read.setChoices.find((choice) => choice.setCode === hint) : null;
+    if (named) return { choice: named, source: "hint", reason: `Page says ${named.set || hint}` };
     const onPage = pageSet ? read.setChoices.find((choice) => choice.setCode === pageSet) : null;
     if (onPage) {
       const n = counts.get(pageSet);
       return { choice: onPage, source: "page", reason: `likely ${names.get(pageSet)}: ${n} other ${n === 1 ? "card" : "cards"} on this page ${n === 1 ? "is" : "are"} from it` };
     }
-    return { choice: bestByScore(read.setChoices), source: "image", reason: "best guess from the picture" };
+    return { choice: bestByScore(read.setChoices, rank), source: "image", reason: "best guess from the picture" };
   });
 }
 

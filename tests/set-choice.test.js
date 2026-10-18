@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
+import { choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
 
 const meta = [
   { id: 'ex8-93', name: 'Boost Energy', set: 'Deoxys', setCode: 'ex8', number: '93' },
@@ -274,4 +274,18 @@ test('each version name is offered once and at most three versions', () => {
   const hits = [hit(0, 0.86), hit(1, 0.859), hit(4, 0.858), hit(7, 0.857), hit(8, 0.856), hit(2, 0.855)];
   const ids = versionChoices(lookalikes[0], hits, lookalikes).map((c) => c.id);
   assert.deepEqual(ids, ['a-2', 'a-8', 'a-9']);
+});
+
+test('a star card is not the plain card of the same name', () => {
+  const stars = [
+    { id: 'ex14-99', name: 'Alakazam ☆', set: 'Crystal Guardians', setCode: 'ex14', number: '99' },
+    { id: 'base1-1', name: 'Alakazam', set: 'Base Set', setCode: 'base1', number: '1' },
+    { id: 'pop5-17', name: 'Espeon ★', set: 'POP Series 5', setCode: 'pop5', number: '17' },
+    { id: 'ex1-1', name: 'Espeon', set: 'Hidden', setCode: 'ex1', number: '1' },
+  ];
+  assert.notEqual(choiceName(stars[0].name), choiceName(stars[1].name));
+  assert.notEqual(choiceName(stars[2].name), choiceName(stars[3].name));
+  assert.deepEqual(setChoices(stars[1], [hit(0, 0.9), hit(1, 0.89)], stars).map((c) => c.id), ['base1-1']);
+  assert.equal(choiceName('Vibrava δ'), 'vibrava');
+  assert.deepEqual(versionChoices(stars[1], [hit(1, 0.9), hit(0, 0.89)], stars).map((c) => c.id), ['ex14-99']);
 });

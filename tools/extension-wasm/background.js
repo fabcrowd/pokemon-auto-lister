@@ -21,7 +21,7 @@ import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubP
 import { capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
-import { applyTitlePrior } from "./lib/title-prior.js";
+import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
 import { candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
@@ -281,6 +281,17 @@ function _loadNumberReader() {
   })().catch((err) => console.error("[BG] number reader failed:", err?.message || err));
 }
 
+// A scan that starts while the reader's files are still loading would read no numbers at all. Never held
+// longer than this: a reader that fails to load must not stop scans.
+const NUMBER_READER_WAIT_MS = 15000;
+
+async function numberReaderReady() {
+  if (!_numberReader) return;
+  let timer;
+  await Promise.race([_numberReader, new Promise((resolve) => { timer = setTimeout(resolve, NUMBER_READER_WAIT_MS); })]);
+  clearTimeout(timer);
+}
+
 // ─── message handler ─────────────────────────────────────────────────────────
 
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
@@ -395,6 +406,7 @@ function readBitmap(bitmap) {
 async function handleScanPage(sendResponse, era) {
   console.log("[BG] handleScanPage start; _ready =", _ready, "_targetTabId =", _targetTabId, "era =", era?.id || "any");
   if (!(await _ensureReady(sendResponse))) return;
+  await numberReaderReady();
   // dev-only:start
   const collecting = await testSetCollecting();
   // dev-only:end
@@ -458,6 +470,9 @@ async function handleScanPage(sendResponse, era) {
       titles: [domResp?.page?.title, domResp?.page?.ogTitle, domResp?.page?.h1],
       sealedLabel: focus.main?.ctx?.sealedLabel === true,
     });
+    // What the page says it is about: a set page's heading, its breadcrumb, a lot's title.
+    const setHint = pageSetHint([domResp?.page?.h1, domResp?.page?.breadcrumb, domResp?.page?.title, domResp?.page?.ogTitle], catalogSets());
+    if (setHint) console.log("[BG] page hint:", setHint);
     console.log("[BG] page focus:", focus.kind, focus.reason, focus.main ? "main " + imageKey(focus.main) : "", sealed ? "(sealed product: cards only if the detector finds some)" : "");
     // A sealed product's photo is not read as one card; cards the detector really finds in it are kept.
     const domCards = sealed ? [] : focus.cards;
@@ -650,7 +665,7 @@ async function handleScanPage(sendResponse, era) {
           pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
             shareOf(photoId, box, imageW, imageH, read));
         }
-        cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst)));
+        cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
         const photoReads = cards.slice(photoFirst);
         const checked = markRepeatedNames(photoReads);
         const repeated = checked.filter((card, i) => card !== photoReads[i]);
@@ -721,7 +736,7 @@ async function handleScanPage(sendResponse, era) {
     }
 
     // Cards outside any split photo (a single listing picture, a grid tile) still get a best guess.
-    cards.splice(0, cards.length, ...await withBestGuesses(cards));
+    cards.splice(0, cards.length, ...await withBestGuesses(cards, setHint));
     if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
@@ -1041,7 +1056,7 @@ async function applyBundleOnce() {
   }
   configureCatalog({ extra: merged?.rows ?? null, adapter, adapted });
   _meta = merged ? _metaBase.concat(merged.meta) : _metaBase;
-  _catalogNames = _indicesByName = _setSizes = _metaById = null;
+  _catalogNames = _indicesByName = _setSizes = _metaById = _catalogSets = _metaRank = null;
   _packRows = stored?.memory ?? [];
   _photoCheck = stored?.check ?? null;
   console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
@@ -1267,7 +1282,7 @@ const CORNER_MIN_HEIGHT = 400;
 async function settleFromCorners(result, numberSource) {
   if (!numberSource || result.abstain || (result.setChoices?.length || 0) < 2) return;
   if (numberSource.box[3] - numberSource.box[1] < CORNER_MIN_HEIGHT) return;
-  await _numberReader;
+  await numberReaderReady();
   _setSizes ??= setSizes(_meta);
   const { bitmap, box } = numberSource;
   for (const { side, rect } of cornerRects(box, bitmap.width, bitmap.height)) {
@@ -1313,10 +1328,10 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
   return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
 }
 
-// A row whose printing is still open is shown as its best guess: the set the page's settled cards share, else
+// A row whose printing is still open is shown as its best guess: the set the page names, else the set the page's settled cards share, else
 // the printing the picture scored highest. The Set? menu stays, and a correction there is saved like any other.
-async function withBestGuesses(reads) {
-  const decisions = decideGuesses(reads);
+async function withBestGuesses(reads, setHint = null) {
+  const decisions = decideGuesses(reads, { hint: setHint, rank: catalogRank });
   const out = [];
   for (let i = 0; i < reads.length; i++) {
     const decision = decisions[i];
@@ -1900,6 +1915,23 @@ async function priceIdentity(identity) {
     price_variant: legacyPrice?.variant ?? null,
     price_grid: grid || null,
   };
+}
+
+let _catalogSets = null;
+function catalogSets() {
+  if (!_catalogSets) {
+    const sets = new Map();
+    for (const card of _meta) if (card.setCode && card.set && !sets.has(card.setCode)) sets.set(card.setCode, { setCode: card.setCode, set: card.set });
+    _catalogSets = [...sets.values()];
+  }
+  return _catalogSets;
+}
+
+// The catalog lists sets in release order, so a card's place in it settles near-equal picture scores the same way every scan.
+let _metaRank = null;
+function catalogRank(choice) {
+  _metaRank ??= new Map(_meta.map((card, i) => [card.id, i]));
+  return _metaRank.get(choice.id) ?? Infinity;
 }
 
 let _metaById = null;

@@ -5,8 +5,10 @@ import {
   cleanListingTitle,
   listingTitles,
   nameFromTitle,
+  pageSetHint,
   parseListingTitle,
   rerankByTitle,
+  titleConfirmsPrinting,
 } from '../tools/extension-wasm/lib/title-prior.js';
 
 const base = { id: 'base1-4', name: 'Charizard', set: 'Base', setCode: 'base1', number: '4' };
@@ -254,4 +256,65 @@ test('the only card of a single-box photo is swapped; the same title on a non-li
 test('two cards from separate photos are both left alone by a one-card title', () => {
   const out = applyTitlePrior([versionCard({ photoBoxes: 1 }), versionCard({ photoBoxes: 1 })], page('Pokemon Pikachu ex Surging Sparks Holo'));
   assert.deepEqual(out.map((c) => c.identity.id), ['swsh4-43', 'swsh4-43']);
+});
+
+const SETS = [
+  { setCode: 'base1', set: 'Base Set' },
+  { setCode: 'base4', set: 'Base Set 2' },
+  { setCode: 'xy12', set: 'Evolutions' },
+  { setCode: 'ecard1', set: 'Expedition Base Set' },
+  { setCode: 'swsh1', set: 'Sword & Shield' },
+  { setCode: 'xy1', set: 'XY' },
+];
+
+test('pageSetHint reads a set out of a lot title', () => {
+  assert.equal(pageSetHint(['18 Pokemon Trading Cards Base Set 1999'], SETS), 'base1');
+});
+
+test('pageSetHint does not read Base Set 2 as Base Set', () => {
+  assert.equal(pageSetHint(['Pokemon Base Set 2 lot'], SETS), 'base4');
+  assert.equal(pageSetHint(['Base Set 3 cards'], SETS), null);
+});
+
+test('pageSetHint reads a breadcrumb and a set page heading', () => {
+  assert.equal(pageSetHint(['Pokellector Base Set'], SETS), 'base1');
+  assert.equal(pageSetHint(['', 'Base Set Expansion', undefined], SETS), 'base1');
+});
+
+test('pageSetHint takes the longest set name', () => {
+  assert.equal(pageSetHint(['Expedition Base Set holo'], SETS), 'ecard1');
+});
+
+test('pageSetHint is null when the texts name two sets or none', () => {
+  assert.equal(pageSetHint(['Base Set', 'Evolutions'], SETS), null);
+  assert.equal(pageSetHint(['Base Set and Evolutions cards'], SETS), null);
+  assert.equal(pageSetHint(['Pokemon cards lot', ''], SETS), null);
+  assert.equal(pageSetHint([], SETS), null);
+});
+
+test('pageSetHint tells Evolutions from Base Set and ignores a name inside a longer word', () => {
+  assert.equal(pageSetHint(['XY Evolutions'], SETS), 'xy12');
+  assert.equal(pageSetHint(['Evolutionsary basement set'], SETS), null);
+});
+
+test('pageSetHint stays quiet when two catalog sets share a name', () => {
+  const dup = [...SETS, { setCode: 'basex', set: 'Base Set' }];
+  assert.equal(pageSetHint(['Base Set'], dup), null);
+});
+
+const SETS_151 = [...SETS, { setCode: 'sv3pt5', set: '151' }];
+
+test('pageSetHint reads an all-digit set name as a set, not as a card number', () => {
+  assert.equal(pageSetHint(['Pokemon 151 Charizard ex'], SETS_151), 'sv3pt5');
+  assert.equal(pageSetHint(['Scarlet & Violet 151 booster'], SETS_151), 'sv3pt5');
+  assert.equal(pageSetHint(['Mew ex 151/165'], SETS_151), null);
+  assert.equal(pageSetHint(['Pikachu 4/151'], SETS_151), null);
+  assert.equal(pageSetHint(['Pikachu 4 / 151'], SETS_151), null);
+  assert.equal(pageSetHint(['Mew ex #151'], SETS_151), null);
+});
+
+test('titleConfirmsPrinting does not read the card number 151 as the set 151', () => {
+  const mew = { id: 'sv3pt5-151', name: 'Mew ex', set: '151', setCode: 'sv3pt5', number: '151' };
+  assert.equal(titleConfirmsPrinting(parseListingTitle('Mew ex 151/165'), mew), false);
+  assert.equal(titleConfirmsPrinting(parseListingTitle('Pokemon 151 Mew ex 151/165'), mew), true);
 });

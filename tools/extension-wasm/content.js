@@ -554,6 +554,17 @@
     return document.querySelector(selector)?.getAttribute('content') || '';
   }
 
+  // The last crumb names the page itself; the ones before it are the site's sections and a series.
+  function breadcrumbText() {
+    // A class like "has-breadcrumb" can sit on the body or a page wrapper; a real trail is short.
+    const el = [...document.querySelectorAll('nav[aria-label*="readcrumb" i], .breadcrumb, [class*="breadcrumb" i]')]
+      .find((node) => node !== document.body && node !== document.documentElement && (node.textContent || '').length <= 400);
+    if (!el) return '';
+    const items = [...el.querySelectorAll('li')].map((li) => (li.textContent || '').trim()).filter(Boolean);
+    const crumbs = items.length ? items : (el.textContent || '').split(/[>›»/|]/).map((t) => t.trim()).filter(Boolean);
+    return (crumbs[crumbs.length - 1] || '').slice(0, 200);
+  }
+
   // What the page says it is about: used to recognise the listing photo and sealed products.
   function pageInfo() {
     const ogImages = [
@@ -568,6 +579,7 @@
       title: (document.title || '').slice(0, 200),
       ogTitle: metaContent('meta[property="og:title"]').slice(0, 200),
       h1: (document.querySelector('h1')?.textContent || '').trim().slice(0, 200),
+      breadcrumb: breadcrumbText(),
       ogImages,
       headings: collectHeadings(),
       imageHosts: collectImageHosts(),
