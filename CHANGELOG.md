@@ -4,6 +4,9 @@
 
 Store-build debug pass (1536670, 654a132, era-restricted search).
 
+### Added
+- Whole-page scan (d4f8c12): any page except a single listing is scanned screen by screen (up to 12 screens, 200 cards, with a popup note when the cap cuts it short). Cards seen on two screens or read twice on one are deduped, the user's scroll is restored, one scan runs per tab, a mid-scan navigation aborts cleanly, and a capture quota error is retried once. Pokellector Base Set: 102 found, 97-98 identified, about 48 s. S&V 151 and Paldea Evolved hit the 200 cap with 191-193 identified at about 3 min. Single listings and HiBid lots unchanged.
+
 ### Fixed
 - Overlay labels are clamped to the card width; under 140 px a card shows the price only.
 - "151" is no longer read as a set from card numbers.

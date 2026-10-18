@@ -5,6 +5,10 @@
 - [x] Era-restricted search; store build no longer requests variant.onnx
 - [x] Site access and toolbar click tested on the unmodified store build via CDP `Extensions.triggerAction` (`--enable-unsafe-extension-debugging`) and Windows UI Automation on the permission dialog (`.tmp/debug-store/plib.mjs`, `p8.mjs`, `accept.ps1`)
 
+- [x] Whole-page scan (d4f8c12): up to 12 screens / 200 cards, dedupe, scroll restored
+- [ ] Whole-page scans of big sets take ~3 min for 200 cards and need the popup open throughout: speed up per-card recognition or run the scan without the popup
+- [ ] Back-to-back whole-page scans found 108 then 102 on Pokellector Base Set; check what the first scan's extra 6 were (lazy images mid-scan?)
+
 # Fix corner-as-front photo selection (2026-08-11)
 
 ## Plan

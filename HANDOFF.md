@@ -7,6 +7,7 @@ Last updated: 2026-10-18. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\p
 Store-build debug pass, three fixes. Page set hint (1536670): the set named in the page heading, breadcrumb or title is the best guess for open rows; Pokellector Base Set grid rows guessed Base Set 10 to 33, HiBid lots unchanged. Overlay labels (654a132) are clamped to card width, price-only under 140 px. Era-restricted search: era 1999-2003 on that grid went 3 to 47 identified with no out-of-era suggestions, and the store build no longer requests variant.onnx.
 Debug harness: `.tmp/debug-store/` (Playwright Chromium). Delete ScriptCache and Database in a profile copy to avoid a stale service worker.
 Two more fixes: overlay frames and prices stay on their cards while scrolling and after resize (c118fe5); a rescan no longer captures the previous overlay, Pokellector Base Set grid 47 then 13 before, 47 and 47 now (9a4b98f). Harness note: reused profiles need `Service Worker/ScriptCache` and `Database` deleted.
+Whole-page scan (d4f8c12): up to 12 screens and 200 cards; Base Set 102 found, 97-98 identified, ~48 s; S&V 151 and Paldea Evolved hit the cap, 191-193 identified, ~3 min. Open: speed (popup must stay open for ~3 min), and a first scan found 108 vs 102 on the next (lazy images?). See `tasks/todo.md`.
 Branch state: main now tracks the feature branch `feat/card-picker-sealed-test`.
 
 ## Yesterday (2026-10-17)
@@ -204,6 +205,6 @@ Known weak spots (held-out):
 
 ## Next step
 
-Popup simplification is done and the shape filter is widened (this commit). Detector retrain tried and parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: confident wrong names 14→21); next is recognising tilted cards, not detection. Set confirmation on lots is done (see the today section).
+Speed up whole-page scans (about 3 min for 200 cards, popup must stay open): faster per-card recognition or scan without the popup. Detector retrain is parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: confident wrong names 14→21). Set confirmation on lots is done (see the today section).
 
 Self-learning steps 2–4 are already in `1f42193` and live as of `c583710`. Do not start them again.
