@@ -2,39 +2,51 @@
 
 Last updated: 2026-10-18. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
 
-## Today (2026-10-18)
+State: branch `feat/card-picker-sealed-test` and `main` are both at `b6c6749` and pushed. Nothing is uncommitted except this file and the untracked detector candidates `tools/vellum-ai/models/card_detect_v7/` and `card_detect_v7b/` (parked; do not commit weights). `dist/extension-wasm-store.zip` is rebuilt from HEAD.
 
-Store-build debug pass, three fixes. Page set hint (1536670): the set named in the page heading, breadcrumb or title is the best guess for open rows; Pokellector Base Set grid rows guessed Base Set 10 to 33, HiBid lots unchanged. Overlay labels (654a132) are clamped to card width, price-only under 140 px. Era-restricted search: era 1999-2003 on that grid went 3 to 47 identified with no out-of-era suggestions, and the store build no longer requests variant.onnx.
-Debug harness: `.tmp/debug-store/` (Playwright Chromium). Delete ScriptCache and Database in a profile copy to avoid a stale service worker.
-Two more fixes: overlay frames and prices stay on their cards while scrolling and after resize (c118fe5); a rescan no longer captures the previous overlay, Pokellector Base Set grid 47 then 13 before, 47 and 47 now (9a4b98f). Harness note: reused profiles need `Service Worker/ScriptCache` and `Database` deleted.
-Whole-page scan (d4f8c12): up to 12 screens and 200 cards; Base Set 102 found, 97-98 identified, ~48 s; S&V 151 and Paldea Evolved hit the cap, 191-193 identified, ~3 min. Open: speed (popup must stay open for ~3 min), and a first scan found 108 vs 102 on the next (lazy images?). See `tasks/todo.md`.
-Branch state: main now tracks the feature branch `feat/card-picker-sealed-test`.
+## Done 2026-10-17/18
 
-## Yesterday (2026-10-17)
+Commits since `9c1cb1e` (details in `CHANGELOG.md`):
 
-Claude's long session (through 11:08 AM America/Chicago) finished the live shared-learning deploy and the lot-value popup, then hit the session limit while its set-confirmation agent was still running. A Cursor session finished that work in the afternoon: it measured the change, raised the corner-read gate to 400 px for speed, added a popup e2e test, and committed it as "Guess the set of open-set lot cards; read the number from the photo's corners".
-
-### Committed, not pushed
-
-The branch is **8 commits ahead of** `origin/feat/card-picker-sealed-test` (`87f2d0e`) and **29 ahead of** `main` (`e2ab17b`, which matches `origin/main`): the seven below plus a handoff-only commit. Nothing from today is pushed.
-
-| Commit | When | What |
+| Commit | What | Key number |
 |---|---|---|
-| 4ba5795 | 12:40 | Set confirmation on lots: corner number read, best guess for open-set rows (details below) |
-| c583710 | 10:04 | Point the extension at the live relay and the live community bundle |
-| ab122cc | 08:26 | Estimate a lot's value; ask about every unrecognised card |
-| 03db8eb | 08:08 | Photo adapter ranks only; accept/abstain/high still use the raw cosine. Gate scores what the user sees |
-| 1f42193 | 10-16 22:18 | One signed bundle: memory, photo adapter, card check, new sets (self-learning plan steps 2–4) |
-| 672cbc5 | 10-16 21:07 | This handoff, the self-learning plan, README, CLAUDE.md, CHANGELOG |
-| 58a9c93 | 10-16 20:46 | Signing key stays off the upload path; replayed packs are rejected |
+| 4c5e4eb | Popup simplified (one price per card, est. value in the action bar, chips in Settings); shape window widened to 1.82 so tilted/sideways cards keep boxes | 67 HiBid lots: +9 found, +6 right names, wrong 13 to 14 |
+| a8f9246 | Tilted-card detector retrain parked (v7b), reason in `tasks/lessons.md` | 7 confident wrong names for 1 right (14 to 21 wrong) |
+| 2e72d3d | Store contact email; name and icon approved | n/a |
+| 1536670 | Page set hint: set named in heading, breadcrumb or title is the best guess | Pokellector Base Set grid: Base Set rows 10 to 33 |
+| 654a132 | Overlay labels clamped to card width; price-only under 140 px | n/a |
+| c2790bb | Era search: only the chosen era's cards; store build drops `variant.onnx` | Era 1999-2003: 3 to 47 identified, no out-of-era suggestions |
+| c118fe5 | Overlay frames and prices stay on cards while scrolling and after resize | n/a |
+| 9a4b98f | Rescan hides the overlay before capture | Grid identified 47 then 13 before, 47 and 47 now |
+| d4f8c12 | Whole-page scan: up to 12 screens, 200 cards, dedupe, scroll restored | Base Set 102 found, 97-98 identified, ~48 s; S&V 151 and Paldea Evolved hit the cap, 191-193 identified, ~3 min |
+| 5d321a2, 69c592c, b6c6749 | Docs-only: changelog and handoff records | n/a |
 
-`c583710` was checked in Chrome with the dev build: the live bundle loaded (adapter and new cards), and with sharing on one correction uploaded (relay 200). The relay's 15:07 UTC hourly commit wrote it to `fabcrowd/card-scanner-data` branch `inbox` as `contributions/2026-10-17/eea8a8e8889cd4d4-60054b19-1.json`. The install id in that file is the HMAC (`60054b191a781bdd`), not the raw id. Claude reported `npm test` 1028 pass at this commit.
+## Next
 
-Lot value (`ab122cc`), measured on 67 reviewed HiBid lot photos in Chrome: 273 of 305 cards found (89.5%); misses are mostly cards tilted 15–40°. Of found cards, 71% get the right name, but 97 of 186 leave the set open, which is what widens the value range. The popup shows "Estimated lot value $X–$Y · N of M cards identified · K still to identify" once there are 3 or more cards. Confirmed prices count at both ends; an open set or version counts across its range; an unpicked or unpriced card counts as $0. Card backs stay folded. Every other unrecognised card shows "Which card is this?" with the 5 closest matches and search.
+1. Whole-page scan speed: about 3 min for 200 cards and the popup must stay open. Consider running the scan without the popup, or pushing the overlay from the background worker. See `tasks/todo.md`.
+2. Check the 108-vs-102 discrepancy: a first Base Set scan found 108 cards and the back-to-back one found 102 (lazy images?).
+3. Recognising heavily tilted cards. Detector retrain is parked (`card_detect_v7b`, not shipped); see `tasks/lessons.md` (a wide box is a tilted card; gate detectors on right/wrong names in the Chrome lot harness, not box counts).
 
-Adapter (`03db8eb`): an end-to-end run showed the adapter lowers every cosine, so the old raw thresholds abstained on 45 of 50 HiBid crops. Search now ranks by the adapted score and still reports the raw cosine. Same 50 crops in Chrome: abstained 45 → 12 (15 with no adapter); accepted-right 15 → 23; accepted-wrong 20 → 15. On the 203-row regression set: accepted-right 43 → 85, accepted-wrong 42 → 32.
+## Owner to-do
 
-### Set confirmation on lots (finished 2026-10-17 afternoon)
+- Revoke the Cloudflare setup token and the GitHub fine-grained token pasted into chat on 2026-10-17. They are not in the repo; never copy them into a commit or this file.
+- Create a Chrome Web Store developer account (chrome.google.com/webstore/devconsole, $5, fabcrowd@gmail.com) and upload `dist/extension-wasm-store.zip` with the listing from `docs/store/listing.md` and the privacy policy URL https://github.com/fabcrowd/pokemon-auto-lister/blob/main/docs/store/privacy-policy.md. Name and icon are approved; contact email is set.
+
+## Owner decisions this session
+
+- Measure without manual labeling: the sealed test is dormant and the owner will not label. Do not propose labeling chores.
+- Simplicity first: scan a page, see the cards and market price, always a best guess; corrections train.
+- The scanner is for all Pokémon cards; Base Set is just the hardest reprint case.
+- Opus plans, Sonnet subagents edit (every code and file change, even one-liners).
+
+## Testing notes
+
+- Debug harness: `.tmp/debug-store/` (Playwright Chromium; real Chrome 155 refuses `--load-extension`). Reused profiles need `Service Worker/ScriptCache` and `Database` deleted.
+- Toolbar click: CDP `Extensions.triggerAction` with `--enable-unsafe-extension-debugging`. The site-access prompt is accepted via Windows UI Automation (`accept.ps1`).
+- HiBid lot harness: `.tmp/lots/run.mjs` (env `EXT`, `JOBS`, `OUT`) and `.tmp/lots/analyze2.py <results.json> [jobs.json]`. Latest baseline `.tmp/lots/whole.json`. `.tmp/` is gitignored.
+
+## Reference: lot value and set confirmation (2026-10-17)
+
 
 Why: on the 67 HiBid lots, 71% of found cards had the right name but about half left the set open, so lot ranges were wide. The owner wants a best guess of the printing, never shown as "high", with the Set? menu kept. A wrong guess is fine; the user corrects it and that trains.
 
@@ -63,52 +75,6 @@ Measured in Chrome on 67 reviewed HiBid lot photos, HEAD `c583710` vs this commi
 - Harness: `.tmp/lots/run.mjs` (env `EXT`, `JOBS`, `OUT`; profile is a fresh copy of `data/extension-live-profile` at `.tmp/lots/profile`, deleted after) and `.tmp/lots/analyze2.py <results.json> [jobs.json]`. Results: `head-c583710.json`, `after5.json`, `synth-old.json`, `synth-new.json`. `.tmp/` is gitignored.
 - Verified: `npm test` 1033 pass, 0 fail. Popup e2e 5 of 5, including a new best-guess test. ESLint on touched files shows only the two older `background.js` errors (lines 65 and 193, from 8358db5). The dev build and `dist/extension-wasm-store.zip` were rebuilt from this tree.
 
-### Next
-
-Popup simplification is done and the shape filter is widened (this commit). Detector retrain tried and parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: more boxes but confident wrong names 14→21). Next: recognising tilted cards, not detection.
-
-## Product and branch state
-
-The product is the Chrome extension in `tools/extension-wasm/` (Pokémon card finder and price overlay; recognition runs in the browser with CLIP + YOLO via onnxruntime-web). The Node dashboard and the Python VellumAI sidecar are the older server side and still work.
-
-- Branch `feat/card-picker-sealed-test`. See the counts above. `origin/main` is `e2ab17b`. The feature branch on the remote stops at `87f2d0e`.
-- Other local branches: `wip/cursor-variant-goal-2026-10-15` (Cursor's variant-detection work, snapshot) and `wip/p1-listing-focus` (stopped mid-edit; superseded by the commits below).
-
-Branch commits, newest first (`git log --oneline main..HEAD`):
-
-| Commit | Summary |
-|---|---|
-| 4ba5795 | Guess the set of open-set lot cards; read the number from the photo's corners |
-| c583710 | Point the extension at the live relay and community bundle |
-| ab122cc | Estimate a lot's value and ask about every unrecognised card |
-| 03db8eb | Let the photo adapter rank, not decide; gate on what users see |
-| 1f42193 | Ship learning as one signed bundle: memory, photo adapter, card check, new sets |
-| 672cbc5 | Document the self-learning plan and the 2026-10-16 handoff |
-| 58a9c93 | Keep the signing key away from untrusted uploads; reject replayed packs |
-| 87f2d0e | Stop one install or a forged crop from entering the community pack (a Cursor commit) |
-| 508e616 | Share corrections across users through a relay and a signed community pack |
-| a1606f2 | Fix review findings: version swaps, photo fetch bounds, page caches |
-| ac3d08e | Offer look-alike versions (ex / V / VSTAR / Dark) without hiding the price |
-| 25adc7e | Offer full-size photo access after a screenshot-only scan |
-| a56c0e9 | Show name and price when only the set is open; earn "high" honestly |
-| f1366ba | Ask when one photo repeats a name; add an optional look-alike penalty |
-| be75912 | Use the listing title to order the picker's choices |
-| 34bc430 | Crop card art the way the catalog was embedded |
-| 2c8678b | Read the largest rendition of the listing photo the page offers |
-| 7278b5f | Find related-item sections from their headings; adds the real-world harness |
-| 6830ccb | Scan the listing's own photo, not the page's carousels |
-| 94a576b | Popup: fold unrecognised cards into one row, count only real identifications |
-| ef11ec4 | Chrome Web Store package with minimal permissions |
-| ea5f9b6 | Remember corrected cards to rank them first next time (off by default) |
-| 5d4d99c | Store docs: privacy policy, listing copy, original icon |
-| feb0a3b | vellum-ai: keep splits stable as data grows; guard degenerate hashes |
-| c579a0a | vellum-ai: split training photos by near-duplicate group |
-| bda78c3 | Labeler: draw missed-card boxes without dragging |
-| deb1f77 | Sealed marketplace test set: collect, import, label, score |
-| bdedbe2 | Ask which card it is when unsure, and keep the answer |
-
-Those docs are in `672cbc5`.
-
 ## Build
 
 Run from the repo root in PowerShell.
@@ -124,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 
 ## Verify
 
-- `npm test`: 1033 pass, 0 fail with the set-confirmation commit (2026-10-17, exit 0). Capture the real summary lines; do not pipe through `tail` (hides the exit code).
+- `npm test`: 1033 pass, 0 fail at the set-confirmation commit (2026-10-17, exit 0); not rerun for this doc-only update. Capture the real summary lines; do not pipe through `tail` (hides the exit code).
 - `npm run lint`: 47 problems (46 errors, 1 warning), all pre-existing (unused variables and browser globals, e.g. `tools/extension-wasm/photo-detection.js:74`). Do not add new ones.
 - Python, VellumAI: `cd tools/vellum-ai; .venv/Scripts/python.exe -m unittest discover -s tests` (about 11 minutes; `tests` is not a package, so `unittest tests.x` fails). Last run at ac3d08e: "Ran 279 tests ... OK" (exit 0).
 - Python, shared learning: `python -m unittest discover -s tools/shared-data/tests`. Last run at 58a9c93: "Ran 101 tests ... OK".
@@ -177,20 +143,13 @@ Known weak spots (held-out):
 
 - Opt-in "Help improve recognition for everyone" is still off until the user turns it on. `tools/extension-wasm/lib/shared-config.js` is filled in (`c583710`): relay `https://card-scanner-relay.fabcrowd.workers.dev/v1/contributions`, manifest `https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json`, and the pack public key. The store package adds those two hosts.
 - The relay is deployed (KV, R2, both secrets). Allowed extension ids: the dev build and the unpacked store build. It writes only to the data repo's `inbox` branch. `main` there is admin-only by ruleset. The nightly job is split into a no-secrets build job and a signing job. Manifests carry `seq` and `issuedAt` (58a9c93, 87f2d0e).
-- `fabcrowd/card-scanner-data` is public and no longer empty. The first nightly published a signed bundle (adapter + new sets). One test correction is on `inbox` (path in the today section). Leave it or delete it.
+- `fabcrowd/card-scanner-data` is public and no longer empty. The first nightly published a signed bundle (adapter + new sets). One test correction is on `inbox` (`contributions/2026-10-17/eea8a8e8889cd4d4-60054b19-1.json`). Leave it or delete it.
 - Templates still live in this repo at `tools/relay/` and `tools/shared-data/`. Owner setup notes: `tools/shared-data/README.md`. Plan: `docs/plans/self-learning.md` (steps 2–4 are in `1f42193`).
 - Revoke the Cloudflare setup token and the GitHub fine-grained token that were pasted into the Claude chat on 2026-10-17. They are not in the repo. Do not copy them into a commit or into this file.
 
 ## Sealed test set and exam photos
 
 `data/sealed-test` has no labels yet: `scripts/sealed-score.mjs` prints "No fully labeled photos yet". The agreed approach is exam photos collected from real use. The look-alike penalty stays off until a score shows a gain (on 190 held-out HiBid boxes it raised right-name 70.5% -> 75.8% but wrong-name accepts 8 -> 10 and the test split fell 69% -> 66%). Saved-correction ranking is also off by default.
-
-## Owner decisions outstanding
-
-- Manual test of the store zip (rebuilt 2026-10-17 from the set-confirmation commit), including the site-access permission prompt.
-- Privacy policy URL: https://github.com/fabcrowd/pokemon-auto-lister/blob/main/docs/store/privacy-policy.md (repo is public; live once merged to main).
-- Chrome Web Store developer account.
-- Revoke the Cloudflare setup token and the GitHub token pasted into the Claude chat (see shared learning).
 
 ## Working rules
 
@@ -203,8 +162,4 @@ Known weak spots (held-out):
 - Don't kill all `chrome.exe`; stop only processes you started.
 - Update `tasks/todo.md` and `CHANGELOG.md` (date headers; Added / Changed / Fixed / Removed) before pushing.
 
-## Next step
-
-Speed up whole-page scans (about 3 min for 200 cards, popup must stay open): faster per-card recognition or scan without the popup. Detector retrain is parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: confident wrong names 14→21). Set confirmation on lots is done (see the today section).
-
-Self-learning steps 2–4 are already in `1f42193` and live as of `c583710`. Do not start them again.
+Self-learning steps 2-4 are already in `1f42193` and live as of `c583710`. Do not start them again.
