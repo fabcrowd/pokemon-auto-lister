@@ -57,7 +57,7 @@ Measured in Chrome on 67 reviewed HiBid lot photos, HEAD `c583710` vs this commi
 
 ### Next
 
-Popup simplification is done and the shape filter is widened (this commit). Next: detector retraining for the ~18 unseen tilted cards (see the todo item).
+Popup simplification is done and the shape filter is widened (this commit). Detector retrain tried and parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: more boxes but confident wrong names 14→21). Next: recognising tilted cards, not detection.
 
 ## Product and branch state
 
@@ -197,6 +197,6 @@ Known weak spots (held-out):
 
 ## Next step
 
-Popup simplification is done and the shape filter is widened (this commit); detector retraining for the ~18 unseen tilted cards is next. Set confirmation on lots is done (see the today section).
+Popup simplification is done and the shape filter is widened (this commit). Detector retrain tried and parked (candidate `tools/vellum-ai/models/card_detect_v7b/card_detect_v7b.onnx`, not shipped: confident wrong names 14→21); next is recognising tilted cards, not detection. Set confirmation on lots is done (see the today section).
 
 Self-learning steps 2–4 are already in `1f42193` and live as of `c583710`. Do not start them again.

@@ -103,3 +103,7 @@ The relay's GitHub token can write to the data repo. If it could write to `main`
 ## A wide box is a tilted card, not a sideways one (2026-10-17)
 
 Box aspect 1.0–1.4 on lot photos was upright cards tilted 35–45°. Rotating crops 90° gave 0 right names. Choosing a de-skew angle by highest raw cosine picked wrong crops (8 right names vs 24 for the plain stretch; 31 would be confident wrong), and even an oracle angle added only 4 names. Rule: diagnose misses by cause (filter / threshold / NMS / model) before building, and never pick among augmented views by max cosine without a labelled check.
+
+## Finding more cards is not the goal; naming them is (2026-10-18)
+
+The v7b detector retrain passed its found-count gate offline (284→302 of 305, real-photo F1 .977 = shipped) but end-to-end in Chrome on 67 lot photos it added 7 confident wrong names for 1 right one (14→21 wrong, 106→107 right). Rule: always run the Chrome lot harness (`.tmp/lots/run.mjs` + `analyze2.py`) before promoting a detector, and gate on right/wrong names, not boxes.
