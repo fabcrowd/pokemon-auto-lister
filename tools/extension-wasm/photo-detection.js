@@ -80,7 +80,7 @@ function backgroundScale(size, imageWidth, imageHeight, rect, containScale, cove
   const tokens = value.split(/\s+/);
   if (tokens.length > 2) return null;
   if (tokens.some((token) => token !== "auto" && !/^-?\d+(?:\.\d+)?(?:%|px)$/.test(token))) return null;
-  const parseLength = (token, axis, other) => {
+  const parseLength = (token, axis) => {
     if (!token || token === "auto") return null;
     const percent = token.match(/^(-?\d+(?:\.\d+)?)%$/);
     if (percent) return (axis === "x" ? rect.w : rect.h) * Number(percent[1]) / 100;

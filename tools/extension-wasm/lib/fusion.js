@@ -34,7 +34,6 @@ export const BELOW_HIGH_CONFIDENCE = 0.79;
  * @param {Array<{index: number, score: number}>} clipHits  — sorted desc by score
  * @param {string|null}  _ocrText — reserved
  * @param {Array<object>} meta    — meta.json
- * @param {string[]}     _idMap   — reserved
  *
  * @returns {{ identity: object|null, confidence: number, abstain: boolean, reason?: string }}
  */
@@ -42,7 +41,7 @@ export const BELOW_HIGH_CONFIDENCE = 0.79;
 // Order and the distance between neighbours are judged on rank; what a similarity means, on score.
 const rankOf = (hit) => hit.rank ?? hit.score;
 
-export function fuseResults(clipHits, _ocrText, meta, _idMap) {
+export function fuseResults(clipHits, _ocrText, meta) {
   const read = fuseUntiered(clipHits, meta);
   if (read.abstain || read.confidence <= BELOW_HIGH_CONFIDENCE) return read;
   const lead = clipHits[1] ? rankOf(clipHits[0]) - rankOf(clipHits[1]) : clipHits[0].score;

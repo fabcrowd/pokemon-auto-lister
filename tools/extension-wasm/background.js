@@ -63,7 +63,6 @@ import {
 // ─── state ───────────────────────────────────────────────────────────────────
 
 let _ready            = false;
-let _loading          = false;
 let _meta             = null;
 let _metaBase         = null; // meta.json as shipped; _meta is this plus the bundle's new cards
 let _idMap            = null;
@@ -195,7 +194,9 @@ async function tryAutoLoad() {
   try {
     const { targetTabId } = await chrome.storage.session.get("targetTabId");
     if (targetTabId != null) _targetTabId = targetTabId;
-  } catch {}
+  } catch {
+    // session storage unavailable (older Chrome or SW start race): keep the in-memory target
+  }
   await pruneOldCaches().catch((err) => console.error("[BG] clearing old model caches failed:", err?.message || err));
   const ready = await checkModelsReady();
   if (ready) await loadModels();
@@ -220,7 +221,6 @@ let _loadPromise = null;
 async function loadModels() {
   if (_ready) return;
   if (_loadPromise) return _loadPromise;
-  _loading = true;
   _loadPromise = (async () => {
     const [detectBuf, clipBuf, catalogBuf] = await Promise.all([
       getAssetBuffer("card_detect.onnx"),
@@ -250,7 +250,6 @@ async function loadModels() {
   try {
     await _loadPromise;
   } finally {
-    _loading = false;
     _loadPromise = null;
   }
 }

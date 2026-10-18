@@ -340,7 +340,6 @@
     const name  = (id.name || 'Unknown').slice(0, 28);
 
     // Line 2: set + number — always rendered so the user knows what the price refers to.
-    const setCode = id.setCode || disp?.setCode || '';
     const setName = id.set     || disp?.set     || '';
     const number  = id.number  || disp?.number  || '';
     const line2Parts = [];

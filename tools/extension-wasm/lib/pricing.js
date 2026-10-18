@@ -66,7 +66,7 @@ export async function getFullCardPayload(id) {
         const data = json?.data || null;
         await setCached(cacheKey, data);
         return data;
-      } catch (err) {
+      } catch {
         if (attempt < 2) continue;
         return null;
       }
