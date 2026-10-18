@@ -239,3 +239,47 @@ test('fitText ellipsizes to the width and leaves short text alone', () => {
   assert.ok(measure(pure.fitText('abcdefgh', 50, measure)) <= 50);
   assert.equal(pure.fitText('abcdefgh', 5, measure), '');
 });
+
+const rect = (left, top, right, bottom) => ({ left, top, right, bottom });
+
+test('a box stored relative to its element follows the element when it moves or resizes', () => {
+  const captured = rect(100, 200, 300, 480);
+  const rel = pure.boxToRel([120, 220, 220, 360], captured);
+  assert.deepEqual([...pure.relToBox(rel, captured)], [120, 220, 220, 360]);
+  assert.deepEqual([...pure.relToBox(rel, rect(100, -400, 300, -120))], [120, -380, 220, -240]);
+  assert.deepEqual([...pure.relToBox(rel, rect(0, 0, 400, 560))], [40, 40, 240, 320]);
+});
+
+test('an element with no size cannot anchor a box', () => {
+  assert.equal(pure.boxToRel([0, 0, 10, 10], rect(5, 5, 5, 50)), null);
+  assert.equal(pure.boxToRel([0, 0, 10, 10], rect(5, 5, 50, 5)), null);
+});
+
+test('document coordinates survive scrolling', () => {
+  const doc = pure.boxToDoc([50, 80, 150, 220], { x: 0, y: 600 });
+  assert.deepEqual([...doc], [50, 680, 150, 820]);
+  assert.deepEqual([...pure.docToBox(doc, { x: 0, y: 1000 })], [50, -320, 150, -180]);
+  assert.deepEqual([...pure.docToBox(doc, { x: 20, y: 600 })], [30, 80, 130, 220]);
+});
+
+test('the anchor is the smallest element that holds the box', () => {
+  const anchors = [{ rect: rect(0, 0, 800, 800) }, { rect: rect(100, 100, 400, 500) }, { rect: rect(450, 100, 750, 500) }];
+  assert.equal(pure.pickAnchor([120, 120, 380, 480], anchors), 1);
+  assert.equal(pure.pickAnchor([470, 120, 730, 480], anchors), 2);
+  assert.equal(pure.pickAnchor([10, 600, 90, 700], anchors), 0);
+});
+
+test('a box that mostly lies outside every element has no anchor', () => {
+  const anchors = [{ rect: rect(100, 100, 200, 200) }];
+  assert.equal(pure.pickAnchor([150, 100, 350, 200], anchors), -1);
+  assert.equal(pure.pickAnchor([500, 500, 600, 600], anchors), -1);
+  assert.equal(pure.pickAnchor([0, 0, 10, 10], []), -1);
+});
+
+test('only boxes that reach the viewport are drawn', () => {
+  assert.equal(pure.boxInView([10, 10, 100, 100], 1100, 800), true);
+  assert.equal(pure.boxInView([10, -300, 100, -1], 1100, 800), false);
+  assert.equal(pure.boxInView([10, 800, 100, 900], 1100, 800), false);
+  assert.equal(pure.boxInView([-90, 10, -1, 100], 1100, 800), false);
+  assert.equal(pure.boxInView([-50, 700, 50, 900], 1100, 800), true);
+});

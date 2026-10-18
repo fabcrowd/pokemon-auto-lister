@@ -24,7 +24,57 @@
 
   let canvas       = null;
   let ctx          = null;
-  let _lastOverlay = null; // { cards, srcWidth, srcHeight } — survives resize
+  // Boxes the overlay draws, each pinned to a page element or to a document position. Survives resize.
+  let _placed      = [];
+  let _raf         = 0;
+  let _following   = false;
+
+  // The page elements (and their rects) of the last findCards, so a box can be pinned to the picture it came from.
+  let _scanAnchors = [];
+  let _scanScroll  = { x: 0, y: 0 };
+
+  const MIN_ANCHOR_SHARE = 0.9;
+
+  function boxToRel(box, r) {
+    const w = r.right - r.left;
+    const h = r.bottom - r.top;
+    if (!(w > 0) || !(h > 0)) return null;
+    return [(box[0] - r.left) / w, (box[1] - r.top) / h, (box[2] - r.left) / w, (box[3] - r.top) / h];
+  }
+
+  function relToBox(rel, r) {
+    const w = r.right - r.left;
+    const h = r.bottom - r.top;
+    return [r.left + rel[0] * w, r.top + rel[1] * h, r.left + rel[2] * w, r.top + rel[3] * h];
+  }
+
+  function boxToDoc(box, scroll) {
+    return [box[0] + scroll.x, box[1] + scroll.y, box[2] + scroll.x, box[3] + scroll.y];
+  }
+
+  function docToBox(doc, scroll) {
+    return [doc[0] - scroll.x, doc[1] - scroll.y, doc[2] - scroll.x, doc[3] - scroll.y];
+  }
+
+  // The smallest element that holds (nearly all of) the box; -1 when the box came from no known element.
+  function pickAnchor(box, anchors) {
+    const area = Math.max(0, box[2] - box[0]) * Math.max(0, box[3] - box[1]);
+    let best = -1;
+    let bestArea = Infinity;
+    anchors.forEach((a, i) => {
+      const r = a.rect;
+      const w = Math.min(box[2], r.right) - Math.max(box[0], r.left);
+      const h = Math.min(box[3], r.bottom) - Math.max(box[1], r.top);
+      if (!(area > 0) || w <= 0 || h <= 0 || (w * h) / area < MIN_ANCHOR_SHARE) return;
+      const rectArea = (r.right - r.left) * (r.bottom - r.top);
+      if (rectArea < bestArea) { best = i; bestArea = rectArea; }
+    });
+    return best;
+  }
+
+  function boxInView(box, width, height) {
+    return box[2] > 0 && box[3] > 0 && box[0] < width && box[1] < height;
+  }
 
   function ensureCanvas() {
     if (canvas) return;
@@ -41,7 +91,36 @@
     });
     document.documentElement.appendChild(canvas);
     fitCanvas();
-    window.addEventListener('resize', fitCanvas);
+    followPage();
+  }
+
+  // Capture-phase so a scrolling container inside the page moves the overlay too (scroll does not bubble).
+  function followPage() {
+    if (_following) return;
+    _following = true;
+    window.addEventListener('scroll', scheduleDraw, { capture: true, passive: true });
+    window.addEventListener('resize', onResize, { passive: true });
+  }
+
+  function unfollowPage() {
+    if (!_following) return;
+    _following = false;
+    window.removeEventListener('scroll', scheduleDraw, { capture: true });
+    window.removeEventListener('resize', onResize);
+    if (_raf) window.cancelAnimationFrame(_raf);
+    _raf = 0;
+  }
+
+  function scheduleDraw() {
+    if (_raf) return;
+    _raf = window.requestAnimationFrame(() => {
+      _raf = 0;
+      _drawOverlay();
+    });
+  }
+
+  function onResize() {
+    fitCanvas();
   }
 
   function fitCanvas() {
@@ -50,14 +129,13 @@
     canvas.height = window.innerHeight;
     ctx = canvas.getContext('2d');
     // Resizing a canvas clears it — repaint the last known overlay state.
-    if (_lastOverlay) {
-      _drawOverlay(_lastOverlay.cards, _lastOverlay.srcWidth, _lastOverlay.srcHeight);
-    }
+    _drawOverlay();
   }
 
   function clearOverlay() {
     stopObserving();
-    _lastOverlay = null;
+    unfollowPage();
+    _placed = [];
     if (!canvas) return;
     canvas.remove();
     canvas = null;
@@ -124,21 +202,37 @@
 
   function renderOverlay(cards, srcWidth, srcHeight) {
     ensureCanvas();
-    _lastOverlay = { cards, srcWidth, srcHeight };
-    _drawOverlay(cards, srcWidth, srcHeight);
-  }
-
-  function _drawOverlay(cards, srcWidth, srcHeight) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     const scaleX = canvas.width  / srcWidth;
     const scaleY = canvas.height / srcHeight;
-
+    _placed = [];
     for (const card of cards) {
       if (!card.box || card.box.length < 4) continue;
       const [x1, y1, x2, y2] = card.box;
-      const sx1 = x1 * scaleX, sy1 = y1 * scaleY;
-      const sx2 = x2 * scaleX, sy2 = y2 * scaleY;
+      const box = [x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY];
+      const index = pickAnchor(box, _scanAnchors);
+      const rel = index >= 0 ? boxToRel(box, _scanAnchors[index].rect) : null;
+      _placed.push(rel
+        ? { card, el: _scanAnchors[index].el, rel }
+        : { card, doc: boxToDoc(box, _scanScroll) });
+    }
+    _drawOverlay();
+  }
+
+  function _placedBox(p) {
+    if (!p.el) return docToBox(p.doc, { x: window.scrollX, y: window.scrollY });
+    if (!p.el.isConnected) return null;
+    return relToBox(p.rel, p.el.getBoundingClientRect());
+  }
+
+  function _drawOverlay() {
+    if (!canvas) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const p of _placed) {
+      const box = _placedBox(p);
+      if (!box || !boxInView(box, canvas.width, canvas.height)) continue;
+      const [sx1, sy1, sx2, sy2] = box;
+      const card = p.card;
       const tier  = card.abstain ? 'abstain' : confTier(card.confidence);
       const color = CONF_COLORS[tier];
       ctx.save();
@@ -596,8 +690,14 @@
     return { vx: c.x1, vy: c.y1, vw: Math.max(0, c.x2 - c.x1), vh: Math.max(0, c.y2 - c.y1), pvw, pvh };
   }
 
+  function snapshotRect(r) {
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  }
+
   function findCardImages(opts = {}) {
     resetScanCaches();
+    _scanAnchors = [];
+    _scanScroll = { x: window.scrollX, y: window.scrollY };
     const found = [];
     const photos = [];  // large non-card-aspect images for YOLO-inside-image treatment
     const rejected = []; // only populated when opts.diag === true
@@ -609,6 +709,7 @@
 
     for (const img of imgs) {
       const r = img.getBoundingClientRect();
+      if (r.width >= CARD_MIN_W && r.height >= CARD_MIN_H) _scanAnchors.push({ el: img, rect: snapshotRect(r) });
       const ratio = r.height ? r.width / r.height : 0;
       const src = img.currentSrc || img.src || '';
 
@@ -748,6 +849,7 @@
               const urlMatch = bg.match(/url\((?:\s*["']?)(.*?)(?:["']?\s*)\)/i);
               let src = '';
               try { src = urlMatch ? new URL(urlMatch[1], document.baseURI).href : ''; } catch { /* unsupported URL */ }
+              _scanAnchors.push({ el: node, rect: snapshotRect(r) });
               out.push({
                 rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
                 w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)),
@@ -803,6 +905,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { badgeLayout, fitText, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { badgeLayout, fitText, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());
