@@ -224,3 +224,18 @@ test('image hosts work without the performance API and stop at a bound', () => {
   assert.equal(hosts.length, 200);
   assert.deepEqual([...loadPage({}).pure.collectImageHosts()], []);
 });
+
+test('narrow boxes get a compact label and no label is wider than its box', () => {
+  assert.equal(pure.badgeLayout(100).compact, true);
+  assert.equal(pure.badgeLayout(139).compact, true);
+  assert.equal(pure.badgeLayout(140).compact, false);
+  for (const w of [60, 100, 140, 300]) assert.equal(pure.badgeLayout(w).maxWidth, w);
+});
+
+test('fitText ellipsizes to the width and leaves short text alone', () => {
+  const measure = (t) => t.length * 10;
+  assert.equal(pure.fitText('abc', 30, measure), 'abc');
+  assert.equal(pure.fitText('abcdefgh', 50, measure), 'abcd…');
+  assert.ok(measure(pure.fitText('abcdefgh', 50, measure)) <= 50);
+  assert.equal(pure.fitText('abcdefgh', 5, measure), '');
+});

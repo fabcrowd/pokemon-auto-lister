@@ -220,50 +220,46 @@
     const spread = disp?.spreadRatio || 1;
     const warn   = !note && spread > 10 ? `⚠ ${spread.toFixed(1)}× spread` : null;
 
-    const PAD      = 9;
+    const boxW = x2 - x1;
+    const layout = badgeLayout(boxW);
+    const PAD      = layout.compact ? 5 : 9;
     const ACCENT_W = 4;
     const NAME_PX  = 14;
     const SUB_PX   = 11;
     const PRICE_PX = 17;
     const WARN_PX  = 10;
     const GAP      = 3;
+    const FONT     = '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    const frameW   = ACCENT_W + PAD * 2 + 4;
+    const textMax  = layout.maxWidth - frameW;
 
-    let height = PAD + NAME_PX;
-    if (line2)     height += GAP + SUB_PX;
-    if (priceLine) height += GAP + PRICE_PX;
-    if (note)      height += GAP + WARN_PX;
-    if (footer)    height += GAP + WARN_PX;
-    if (warn)      height += GAP + WARN_PX;
-    height += PAD;
+    // Compact tiles only have room for the price; the rest stays in the popup.
+    const lines = layout.compact
+      ? [{ text: price || '—', px: PRICE_PX, weight: 800, color: '#10b981' }]
+      : [
+          { text: name,      px: NAME_PX,  weight: 700, color: '#dde1ee' },
+          { text: line2,     px: SUB_PX,   weight: 500, color: '#8b92ab' },
+          { text: priceLine, px: PRICE_PX, weight: 800, color: '#10b981' },
+          { text: note,      px: WARN_PX,  weight: 700, color: '#f59e0b' },
+          { text: footer,    px: WARN_PX,  weight: 500, color: '#8b92ab' },
+          { text: warn,      px: WARN_PX,  weight: 700, color: '#f59e0b' },
+        ].filter((l) => l.text);
 
-    ctx.font = `700 ${NAME_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-    let widest = ctx.measureText(name).width;
-    if (line2) {
-      ctx.font = `500 ${SUB_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      widest = Math.max(widest, ctx.measureText(line2).width);
+    let height = PAD * 2 - GAP;
+    let widest = 0;
+    for (const l of lines) {
+      ctx.font = `${l.weight} ${l.px}px ${FONT}`;
+      l.text = fitText(l.text, textMax, (t) => ctx.measureText(t).width);
+      widest = Math.max(widest, ctx.measureText(l.text).width);
+      height += GAP + l.px;
     }
-    if (priceLine) {
-      ctx.font = `800 ${PRICE_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      widest = Math.max(widest, ctx.measureText(priceLine).width);
-    }
-    if (note) {
-      ctx.font = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      widest = Math.max(widest, ctx.measureText(note).width);
-    }
-    if (footer) {
-      ctx.font = `500 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      widest = Math.max(widest, ctx.measureText(footer).width);
-    }
-    if (warn) {
-      ctx.font = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      widest = Math.max(widest, ctx.measureText(warn).width);
-    }
-    const WIDTH = Math.ceil(widest) + ACCENT_W + PAD * 2 + 4;
+    const WIDTH = Math.min(Math.ceil(widest) + frameW, layout.maxWidth);
 
     const vy1 = Math.max(0, y1);
     const vy2 = Math.min(canvas.height, y2);
     const vx1 = Math.max(0, x1);
-    const bx = Math.max(6, Math.min(vx1 + 6, canvas.width - WIDTH - 6));
+    const inset = layout.compact ? 3 : 6;
+    const bx = Math.max(0, Math.min(vx1 + inset, canvas.width - WIDTH - inset, x2 - WIDTH));
     const by = Math.max(6, Math.min(vy1 + 6, vy2 - height - 6));
 
     ctx.save();
@@ -284,41 +280,26 @@
     const textLeft = bx + ACCENT_W + PAD;
     let cy = by + PAD;
     ctx.textBaseline = 'top';
+    for (const l of lines) {
+      ctx.font      = `${l.weight} ${l.px}px ${FONT}`;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, textLeft, cy);
+      cy += l.px + GAP;
+    }
+  }
 
-    ctx.font      = `700 ${NAME_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-    ctx.fillStyle = '#dde1ee';
-    ctx.fillText(name, textLeft, cy);
-    cy += NAME_PX + GAP;
+  // Below this box width a full label cannot fit beside its neighbours.
+  const COMPACT_BOX_W = 140;
 
-    if (line2) {
-      ctx.font      = `500 ${SUB_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      ctx.fillStyle = '#8b92ab';
-      ctx.fillText(line2, textLeft, cy);
-      cy += SUB_PX + GAP;
-    }
-    if (priceLine) {
-      ctx.font      = `800 ${PRICE_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      ctx.fillStyle = '#10b981';
-      ctx.fillText(priceLine, textLeft, cy);
-      cy += PRICE_PX + GAP;
-    }
-    if (note) {
-      ctx.font      = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillText(note, textLeft, cy);
-      cy += WARN_PX + GAP;
-    }
-    if (footer) {
-      ctx.font      = `500 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      ctx.fillStyle = '#8b92ab';
-      ctx.fillText(footer, textLeft, cy);
-      cy += WARN_PX + GAP;
-    }
-    if (warn) {
-      ctx.font      = `700 ${WARN_PX}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillText(warn, textLeft, cy);
-    }
+  function badgeLayout(boxWidth) {
+    return { compact: boxWidth < COMPACT_BOX_W, maxWidth: Math.max(0, boxWidth) };
+  }
+
+  function fitText(text, maxPx, measure) {
+    if (measure(text) <= maxPx) return text;
+    let end = text.length;
+    while (end > 0 && measure(text.slice(0, end) + '…') > maxPx) end--;
+    return end > 0 ? text.slice(0, end) + '…' : '';
   }
 
   // ─── DOM-based card finder ────────────────────────────────────────────────
@@ -822,6 +803,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { badgeLayout, fitText, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());
