@@ -1,8 +1,14 @@
 # Handoff
 
-Last updated: 2026-10-17. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
+Last updated: 2026-10-18. Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
 
-## Today (2026-10-17)
+## Today (2026-10-18)
+
+Store-build debug pass, three fixes. Page set hint (1536670): the set named in the page heading, breadcrumb or title is the best guess for open rows; Pokellector Base Set grid rows guessed Base Set 10 to 33, HiBid lots unchanged. Overlay labels (654a132) are clamped to card width, price-only under 140 px. Era-restricted search: era 1999-2003 on that grid went 3 to 47 identified with no out-of-era suggestions, and the store build no longer requests variant.onnx.
+Debug harness: `.tmp/debug-store/` (Playwright Chromium). Delete ScriptCache and Database in a profile copy to avoid a stale service worker.
+Branch state: main now tracks the feature branch `feat/card-picker-sealed-test`.
+
+## Yesterday (2026-10-17)
 
 Claude's long session (through 11:08 AM America/Chicago) finished the live shared-learning deploy and the lot-value popup, then hit the session limit while its set-confirmation agent was still running. A Cursor session finished that work in the afternoon: it measured the change, raised the corner-read gate to 400 px for speed, added a popup e2e test, and committed it as "Guess the set of open-set lot cards; read the number from the photo's corners".
 

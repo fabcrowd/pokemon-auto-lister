@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-18
+
+Store-build debug pass (1536670, 654a132, era-restricted search).
+
+### Fixed
+- Overlay labels are clamped to the card width; under 140 px a card shows the price only.
+- "151" is no longer read as a set from card numbers.
+- Star cards are no longer grouped with plain names.
+- The first scan waits for the number reader.
+
+### Changed
+- A set named in the page heading, breadcrumb or title is now the best guess for open rows. Pokellector Base Set grid: rows guessed Base Set 10 to 33. HiBid lots unchanged. Near-ties go by catalog order.
+- Search is restricted to the page's era. Era 1999-2003 on that grid: 3 to 47 identified, no out-of-era suggestions. The store build no longer requests `variant.onnx`.
+
 ## 2026-10-17
 
 Branch `feat/card-picker-sealed-test`.

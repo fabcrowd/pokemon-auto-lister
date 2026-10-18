@@ -1,3 +1,10 @@
+# Store-build debug (2026-10-18)
+
+- [x] Page set hint: set in heading/breadcrumb/title is the best guess for open rows (1536670)
+- [x] Overlay labels clamped to card width; price-only under 140 px (654a132)
+- [x] Era-restricted search; store build no longer requests variant.onnx
+- [ ] Debug harness can't click Chrome's native permission prompt or the toolbar icon; owner hand-check of site access on the store zip still pending.
+
 # Fix corner-as-front photo selection (2026-08-11)
 
 ## Plan
