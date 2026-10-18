@@ -15,6 +15,7 @@ import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOpti
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
 import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
+import { cardRoom, captureWait, claimSlot, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
@@ -68,7 +69,11 @@ let _metaBase         = null; // meta.json as shipped; _meta is this plus the bu
 let _idMap            = null;
 let _popupWinId       = null;
 let _targetTabId      = null;
-let _autoScanInFlight = false;
+// Every scan path (button, rescan, lazy-load) goes through this: two scans on one tab would fight over its scroll.
+const _scanGate = createScanGate();
+// Shared by all scans, since Chrome limits captureVisibleTab per second across them.
+let _lastCaptureAt = null;
+const PAGE_CHANGED = "The page changed during the scan. Scan again.";
 
 // Rectified card pictures are kept in IndexedDB per scan: the service worker sleeps
 // between a scan and the user's pick, and memory does not survive that.
@@ -371,9 +376,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "newCardsDetected":
       // Content script saw new card-shaped images load (lazy/infinite scroll).
       // Re-scan only when the popup is open, models are ready, and no scan is running.
-      if (_popupWinId !== null && _ready && !_autoScanInFlight) {
-        _autoScanInFlight = true;
-        handleScanPage(() => { _autoScanInFlight = false; });
+      // A scan already running on that tab leaves one follow-up for when it ends.
+      if (_popupWinId !== null && _ready) {
+        const tabId = sender.tab?.id ?? _targetTabId;
+        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(() => {});
       }
       return false;
 
@@ -441,6 +447,11 @@ async function handleScanPage(sendResponse, era) {
     return;
   }
   console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId);
+  if (!_scanGate.begin(targetTab.id)) {
+    sendResponse({ error: "A scan is already running on this tab." });
+    return;
+  }
+  const scanTabId = targetTab.id;
 
   try {
     // Ask the page which images look like cards; sendToTab injects the content script if it is not there yet.
@@ -463,27 +474,21 @@ async function handleScanPage(sendResponse, era) {
     console.log("[BG] DOM finder returned", (domResp?.cards || []).length, "card-shaped images");
 
     // A listing has one photo worth scanning; thumbnails and "similar items" belong to other cards.
-    const focus = choosePageFocus({
+    const pageFocus = choosePageFocus({
       viewport: { w: domResp.viewportWidth, h: domResp.viewportHeight },
       photos: domResp?.photos || [],
       cards: domResp?.cards || [],
       ogImages: domResp?.page?.ogImages || [],
       headings: domResp?.page?.headings || [],
     });
-    const sealed = focus.kind === "listing" && isSealedListing({
+    const sealed = pageFocus.kind === "listing" && isSealedListing({
       titles: [domResp?.page?.title, domResp?.page?.ogTitle, domResp?.page?.h1],
-      sealedLabel: focus.main?.ctx?.sealedLabel === true,
+      sealedLabel: pageFocus.main?.ctx?.sealedLabel === true,
     });
     // What the page says it is about: a set page's heading, its breadcrumb, a lot's title.
     const setHint = pageSetHint([domResp?.page?.h1, domResp?.page?.breadcrumb, domResp?.page?.title, domResp?.page?.ogTitle], catalogSets());
     if (setHint) console.log("[BG] page hint:", setHint);
-    console.log("[BG] page focus:", focus.kind, focus.reason, focus.main ? "main " + imageKey(focus.main) : "", sealed ? "(sealed product: cards only if the detector finds some)" : "");
-    // A sealed product's photo is not read as one card; cards the detector really finds in it are kept.
-    const domCards = sealed ? [] : focus.cards;
-    // Pixels the matcher can use for a card: what it is fed, no more than the picture holds. Grid tiles are
-    // small by design, so no size cap there.
-    const capFor = (fed, naturalPerFed) => capHeightFor(focus.kind, informationHeight(fed, naturalPerFed));
-
+    console.log("[BG] page focus:", pageFocus.kind, pageFocus.reason, pageFocus.main ? "main " + imageKey(pageFocus.main) : "", sealed ? "(sealed product: cards only if the detector finds some)" : "");
     // The tab may have changed while the content script was answering. Capturing now would
     // crop one page's boxes out of another page's pixels.
     const freshTab = await chrome.tabs.get(targetTab.id).catch(() => null);
@@ -492,265 +497,372 @@ async function handleScanPage(sendResponse, era) {
       return;
     }
     targetTab = freshTab;
-    await sendToTab(chrome, targetTab.id, { action: "hideOverlay" }).catch(() => {});
-    const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
-    const b64 = dataUrl.split(",")[1];
-    const bitmap = await b64ToBitmap(b64);
-    // Prefer actual-vs-viewport ratio over DOM-reported devicePixelRatio — some
-    // environments (Playwright + Windows HiDPI) report dpr=1 but still capture at 1.5x.
-    const dprReported = Number(domResp.devicePixelRatio) || 1;
-    const dprMeasured = domResp.viewportWidth ? bitmap.width / domResp.viewportWidth : dprReported;
-    const dpr = Math.abs(dprMeasured - dprReported) < 0.05 ? dprReported : dprMeasured;
-    console.log("[BG] bitmap", bitmap.width + "x" + bitmap.height, "viewport", domResp.viewportWidth + "x" + domResp.viewportHeight, "dpr reported", dprReported, "measured", dprMeasured.toFixed(3), "using", dpr.toFixed(3));
-
     const cards = [];
     const scanId = crypto.randomUUID().slice(0, 8);
     const crops = [];
     // One entry per card: which photo it is in and where, for the opt-in sharing; null when that is unknown.
     const shares = [];
-    const pushCard = (card, cardCanvas, share = null) => {
-      cards.push(card);
+    // Where each card sits on the page, so a card seen twice (on two overlapping screens, or as an <img> and
+    // the slot behind it) is kept once. A listing's single photo is left as it always was.
+    const slots = [];
+    const dropped = new Set();
+    let screenNo = 0;
+    let offset = { x: 0, y: 0 };
+    let capped = false;
+    const claim = (box, anchor, area) => {
+      const slot = { docBox: toDocBox(box, offset), anchor, area, screen: screenNo };
+      if (pageFocus.kind === "listing") return slot;
+      const judged = claimSlot(slots, dropped, slot, cards.length - dropped.size);
+      if (judged.verdict === "skip") return null;
+      if (judged.verdict === "full") { capped = true; return null; }
+      // The earlier card is only given up once this one has been read and kept (see pushCard).
+      return judged.verdict === "replace" ? { ...slot, replaces: judged.drop } : slot;
+    };
+    const pushCard = (card, cardCanvas, share = null, slot = null) => {
+      if (slot?.replaces != null) dropped.add(slot.replaces);
+      cards.push(wholePage && slot ? { ...card, docBox: slot.docBox } : card);
       crops.push(encodeCrop(cardCanvas));
       shares.push(share);
+      slots.push(slot);
     };
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
-    const preemptedPhotoKeys = new Set();
     let lackedSiteAccess = false;
 
-    // ── Multi-card photo split ────────────────────────────────────────────
-    // Walk every DOM-flagged photo candidate (any sufficiently large image),
-    // run YOLO inside it. When ≥ 2 cards are detected we treat it as a lot /
-    // multi-card photo and skip the single-card interpretation below.
-    // Outside a listing, a large image that is labelled as a sealed product is not scanned for cards.
-    const photos = focus.kind === "listing" ? focus.photos : focus.photos.filter((ph) => ph.ctx?.sealedLabel !== true);
-    if (photos.length) console.log("[BG]", photos.length, "photo candidates — running YOLO inside each");
-    const scanPhotos = async (list) => { for (const ph of list) {
-      let sx = Math.max(0, Math.round(ph.rect.vx * dpr));
-      let sy = Math.max(0, Math.round(ph.rect.vy * dpr));
-      let sw = Math.min(bitmap.width  - sx, Math.round(ph.rect.vw * dpr));
-      let sh = Math.min(bitmap.height - sy, Math.round(ph.rect.vh * dpr));
-      // A gallery slide that is not on screen can only be read from its source image.
-      const offscreenSlide = (sw < 150 || sh < 150) && (ph.rect.pvw || 0) >= 150 && (ph.rect.pvh || 0) >= 150;
-      if ((sw < 150 || sh < 150) && !offscreenSlide) continue;
-      let photoBitmap = null;
-      let fromSource = false;
-      let sourceTransform = null;
-      let upgrade = null;
-      try {
-        const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
-        // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
-        const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
-        if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
-        // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
-        const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(PHOTO_BUDGET_MS) };
-        upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
-        photoBitmap = upgrade ? upgrade.bitmap
-          : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
-        if (!photoBitmap && offscreenSlide) continue;
-        if (photoBitmap) {
-          sourceTransform = upgrade
-            ? rescaleTransform(
-              imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}),
-              ph.naturalWidth / photoBitmap.width, ph.naturalHeight / photoBitmap.height)
-            : imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
-          if (!sourceTransform) {
-            photoBitmap.close();
-            photoBitmap = null;
-          } else {
-            fromSource = true;
-          }
+    const stops = pageFocus.kind !== "listing" ? planScreens(domResp.documentHeight, domResp.viewportHeight) : [0];
+    const wholePage = stops.length > 1;
+    const origin = { x: domResp.scrollX || 0, y: domResp.scrollY || 0 };
+    let scrolled = false;
+    const startUrl = targetTab.url;
+    let navigated = false;
+    const stayOnPage = async () => {
+      if (typeof startUrl !== "string") return;
+      const now = await chrome.tabs.get(targetTab.id).catch(() => null);
+      if (!now || !samePage(startUrl, now.url)) {
+        navigated = true;
+        throw new Error(PAGE_CHANGED);
+      }
+    };
+    let stillLoading = domResp.pending || 0;
+    let srcWidth = 0;
+    let srcHeight = 0;
+    // Pictures that load while the page scrolls past must not start another scan.
+    if (wholePage) await sendToTab(chrome, targetTab.id, { action: "stopObserving" }).catch(() => {});
+    try {
+      for (const [stop, y] of stops.entries()) {
+        screenNo = stop;
+        let screenResp = domResp;
+        let focus = pageFocus;
+        let domCards = sealed ? [] : pageFocus.cards;
+        if (wholePage) {
+          if (cardRoom(cards.length - dropped.size) <= 0) { capped = true; break; }
+          chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length }).catch(() => {});
+          scrolled = true;
+          await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
+          await stayOnPage();
+          screenResp = await sendToTab(chrome, targetTab.id, { action: "findCards", keepAnchors: true });
+          await stayOnPage();
+          if (screenResp?.error) throw new Error("Could not query page for cards: " + screenResp.error);
+          const found = choosePageFocus({
+            viewport: { w: screenResp.viewportWidth, h: screenResp.viewportHeight },
+            photos: screenResp.photos || [],
+            cards: screenResp.cards || [],
+            ogImages: domResp?.page?.ogImages || [],
+            headings: screenResp?.page?.headings || [],
+          });
+          // One big picture lower down is still a tile of this page, not a listing's photo.
+          focus = found.kind === "listing" ? { ...found, kind: pageFocus.kind, photos: screenResp.photos || [], cards: screenResp.cards || [] } : found;
+          domCards = focus.cards;
+          offset = { x: screenResp.scrollX || 0, y: screenResp.scrollY || 0 };
+          stillLoading = Math.max(stillLoading, screenResp.pending || 0);
         }
-        if (!photoBitmap) {
-          // The listing's own photo: look at the picture, not at the bars around it in its slot.
-          const picture = focus.main && imageKey(ph) === imageKey(focus.main)
-            ? displayedRegion(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render, dpr) : null;
-          if (picture && sx + picture.x + picture.w <= bitmap.width && sy + picture.y + picture.h <= bitmap.height) {
-            sx += picture.x;
-            sy += picture.y;
-            sw = picture.w;
-            sh = picture.h;
-          }
-          photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
+        // Pixels the matcher can use for a card: what it is fed, no more than the picture holds. Grid tiles are
+        // small by design, so no size cap there.
+        const capFor = (fed, naturalPerFed) => capHeightFor(focus.kind, informationHeight(fed, naturalPerFed));
+
+        await sendToTab(chrome, targetTab.id, { action: "hideOverlay" }).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, captureWait(_lastCaptureAt, Date.now())));
+        await stayOnPage();
+        if (wholePage) {
+          const current = await chrome.tabs.get(targetTab.id).catch(() => null);
+          if (!current?.active || current.windowId !== targetTab.windowId) throw new Error("That tab is no longer in front. Scan again.");
         }
-        const previousThreshold = getConfThreshold();
-        setConfThreshold(0.12);
-        let detectedBoxes;
+        let dataUrl;
         try {
-          detectedBoxes = await detectCards(photoBitmap);
-        } finally {
-          setConfThreshold(previousThreshold);
+          dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
+        } catch (err) {
+          if (!isCaptureQuotaError(err)) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
         }
-        const imageW = photoBitmap.width;
-        const imageH = photoBitmap.height;
-        let boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
-        // dev-only:start
-        if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
-        // dev-only:end
-        // The listing's own photo may be one card that fills the frame, which the size filter drops, or
-        // one the detector cannot see at all. Read it as a card instead of reporting an empty listing.
-        let hero = null;
-        let heroStrict = false;
-        if (!boxes.length && focus.main && imageKey(ph) === imageKey(focus.main)) {
-          const plan = planHeroCard({ imageW, imageH, detections: detectedBoxes });
-          console.log("[BG]   hero photo, no usable boxes →", plan.kind, sealed ? "(sealed)" : "");
-          if (plan.kind === "large-box") {
-            boxes = [{ box: plan.box, score: plan.score }];
-            hero = plan.kind;
-          } else if (plan.kind === "whole-photo" && !sealed) {
-            // A squarish photo may be a lot of cards the detector misses at full size: look at tiles first.
-            const tiled = plan.strict ? await detectTiled(photoBitmap) : [];
-            // One tile hit is as likely a piece of the hero card as a lot: it takes two to call it a lot.
-            if (tiled.length >= 2) {
-              console.log("[BG]   tiles found", tiled.length, "cards");
-              boxes = tiled;
-            } else {
-              boxes = [{ box: await bestHeroCrop(photoBitmap, plan.crops), score: 0 }];
-              hero = plan.kind;
-              heroStrict = plan.strict === true;
+        _lastCaptureAt = Date.now();
+        const b64 = dataUrl.split(",")[1];
+        const bitmap = await b64ToBitmap(b64);
+        try {
+          // Prefer actual-vs-viewport ratio over DOM-reported devicePixelRatio — some
+          // environments (Playwright + Windows HiDPI) report dpr=1 but still capture at 1.5x.
+          const dprReported = Number(domResp.devicePixelRatio) || 1;
+          const dprMeasured = domResp.viewportWidth ? bitmap.width / domResp.viewportWidth : dprReported;
+          const dpr = Math.abs(dprMeasured - dprReported) < 0.05 ? dprReported : dprMeasured;
+          console.log("[BG] bitmap", bitmap.width + "x" + bitmap.height, "viewport", domResp.viewportWidth + "x" + domResp.viewportHeight, "dpr reported", dprReported, "measured", dprMeasured.toFixed(3), "using", dpr.toFixed(3));
+          const preemptedPhotoKeys = new Set();
+
+          // ── Multi-card photo split ────────────────────────────────────────────
+          // Walk every DOM-flagged photo candidate (any sufficiently large image),
+          // run YOLO inside it. When ≥ 2 cards are detected we treat it as a lot /
+          // multi-card photo and skip the single-card interpretation below.
+          // Outside a listing, a large image that is labelled as a sealed product is not scanned for cards.
+          const photos = focus.kind === "listing" ? focus.photos : focus.photos.filter((ph) => ph.ctx?.sealedLabel !== true);
+          if (photos.length) console.log("[BG]", photos.length, "photo candidates — running YOLO inside each");
+          const scanPhotos = async (list) => { for (const ph of list) {
+            let sx = Math.max(0, Math.round(ph.rect.vx * dpr));
+            let sy = Math.max(0, Math.round(ph.rect.vy * dpr));
+            let sw = Math.min(bitmap.width  - sx, Math.round(ph.rect.vw * dpr));
+            let sh = Math.min(bitmap.height - sy, Math.round(ph.rect.vh * dpr));
+            // A gallery slide that is not on screen can only be read from its source image.
+            const offscreenSlide = (sw < 150 || sh < 150) && (ph.rect.pvw || 0) >= 150 && (ph.rect.pvh || 0) >= 150;
+            if ((sw < 150 || sh < 150) && !offscreenSlide) continue;
+            let photoBitmap = null;
+            let fromSource = false;
+            let sourceTransform = null;
+            let upgrade = null;
+            try {
+              const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
+              // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
+              const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
+              if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
+              // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
+              const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+              upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
+              photoBitmap = upgrade ? upgrade.bitmap
+                : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
+              if (!photoBitmap && offscreenSlide) continue;
+              if (photoBitmap) {
+                sourceTransform = upgrade
+                  ? rescaleTransform(
+                    imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}),
+                    ph.naturalWidth / photoBitmap.width, ph.naturalHeight / photoBitmap.height)
+                  : imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
+                if (!sourceTransform) {
+                  photoBitmap.close();
+                  photoBitmap = null;
+                } else {
+                  fromSource = true;
+                }
+              }
+              if (!photoBitmap) {
+                // The listing's own photo: look at the picture, not at the bars around it in its slot.
+                const picture = focus.main && imageKey(ph) === imageKey(focus.main)
+                  ? displayedRegion(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render, dpr) : null;
+                if (picture && sx + picture.x + picture.w <= bitmap.width && sy + picture.y + picture.h <= bitmap.height) {
+                  sx += picture.x;
+                  sy += picture.y;
+                  sw = picture.w;
+                  sh = picture.h;
+                }
+                photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
+              }
+              const previousThreshold = getConfThreshold();
+              setConfThreshold(0.12);
+              let detectedBoxes;
+              try {
+                detectedBoxes = await detectCards(photoBitmap);
+              } finally {
+                setConfThreshold(previousThreshold);
+              }
+              const imageW = photoBitmap.width;
+              const imageH = photoBitmap.height;
+              let boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
+              // dev-only:start
+              if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
+              // dev-only:end
+              // The listing's own photo may be one card that fills the frame, which the size filter drops, or
+              // one the detector cannot see at all. Read it as a card instead of reporting an empty listing.
+              let hero = null;
+              let heroStrict = false;
+              if (!boxes.length && focus.main && imageKey(ph) === imageKey(focus.main)) {
+                const plan = planHeroCard({ imageW, imageH, detections: detectedBoxes });
+                console.log("[BG]   hero photo, no usable boxes →", plan.kind, sealed ? "(sealed)" : "");
+                if (plan.kind === "large-box") {
+                  boxes = [{ box: plan.box, score: plan.score }];
+                  hero = plan.kind;
+                } else if (plan.kind === "whole-photo" && !sealed) {
+                  // A squarish photo may be a lot of cards the detector misses at full size: look at tiles first.
+                  const tiled = plan.strict ? await detectTiled(photoBitmap) : [];
+                  // One tile hit is as likely a piece of the hero card as a lot: it takes two to call it a lot.
+                  if (tiled.length >= 2) {
+                    console.log("[BG]   tiles found", tiled.length, "cards");
+                    boxes = tiled;
+                  } else {
+                    boxes = [{ box: await bestHeroCrop(photoBitmap, plan.crops), score: 0 }];
+                    hero = plan.kind;
+                    heroStrict = plan.strict === true;
+                  }
+                }
+              }
+              const naturalPerFed = fromSource ? 1
+                : ph.naturalHeight > 0 && sourceTransform === null
+                  ? (() => {
+                    const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
+                    return shown ? 1 / (shown.scaleY * dpr) : undefined;
+                  })()
+                  : undefined;
+              console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
+                          imageW + "x" + imageH,
+                          fromSource ? upgrade ? "(source image, upgraded " + imageW + "x" + imageH + " from " + ph.naturalWidth + "x" + ph.naturalHeight + ")" : "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
+                          "boxes;", boxes.length, "passed card-size validation",
+                          boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
+
+              if (!boxes.length) continue;
+              console.log("[BG]   splitting", boxes.length, "cards");
+              if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
+              const photoPixels = readBitmap(photoBitmap);
+              const photoId = photoIdOf(photoPixels);
+              const photoFirst = cards.length;
+              for (const { box, score } of boxes) {
+                const [bx1, by1, bx2, by2] = box;
+                if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
+                const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
+                let viewportBox;
+                if (fromSource) {
+                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+                  if (!viewportBox) continue;
+                } else {
+                  viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
+                }
+                const rectify = (rect) => fromSource
+                  ? rectifyCard(photoBitmap, rect)
+                  : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
+                const cardCanvas = rectify(box);
+                // The hero fallback is never checked: it may be the listing's only card.
+                if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
+                // The number is read from the detector box. The stamp is scored on the
+                // box after a clipped yellow border is included, so the card is not stretched.
+                const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
+                // One card that fails to read must not drop the rest of the photo.
+                const claimed = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]));
+                if (!claimed) continue;
+                let read;
+                try {
+                  read = await identifyCard(cardCanvas, era, by2 - by1, stampCanvas, capFor(by2 - by1, naturalPerFed), { bitmap: photoBitmap, box });
+                } catch (err) {
+                  console.error("[BG] card read failed:", err?.message || err);
+                  read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
+                  // An unread view must not replace a card that was read from an earlier screen.
+                  if (claimed.replaces != null) continue;
+                }
+                if (hero === "whole-photo" && !acceptWholePhoto(read, { strict: heroStrict, croppedView: !fromSource && ph.render?.fit === "cover" })) {
+                  console.log("[BG]   whole photo does not look like one card (catalog top", read.catalogTop?.toFixed?.(2), ") — dropped");
+                  // Dropped here, so the single-card path below must not read the same picture again.
+                  preemptedPhotoKeys.add(_photoKey(ph));
+                  continue;
+                }
+                if (hero) preemptedPhotoKeys.add(_photoKey(ph));
+                // The framing was a guess, so the name is a suggestion for the picker, not an answer.
+                if (heroStrict && !read.abstain) read = { ...read, unsure: true };
+                pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
+                  shareOf(photoId, box, imageW, imageH, read), claimed);
+              }
+              cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
+              const photoReads = cards.slice(photoFirst);
+              const checked = markRepeatedNames(photoReads);
+              const repeated = checked.filter((card, i) => card !== photoReads[i]);
+              if (repeated.length) {
+                console.log("[BG]   ", repeated.length, "boxes named", JSON.stringify(repeated[0].identity?.name), "- held below high");
+                cards.splice(photoFirst, checked.length, ...checked);
+              }
+            } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
+            finally { photoBitmap?.close?.(); }
+          } };
+          await scanPhotos(photos);
+          // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
+          // Related-item carousels are never part of this.
+          if (!cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length) {
+            console.log("[BG] main photo held no card — trying", focus.fallback.length, "other gallery photos");
+            await scanPhotos(focus.fallback);
+          }
+
+          for (const dc of domCards) {
+            // Skip the single-card interpretation when this image was already split by YOLO
+            // into multiple cards (handled above). Compare by key constructed the same way.
+            if (preemptedPhotoKeys.has(_photoKey(dc))) continue;
+
+            // Crop the visible slice of this image in physical pixels.
+            const sx = Math.max(0, Math.round(dc.rect.vx * dpr));
+            const sy = Math.max(0, Math.round(dc.rect.vy * dpr));
+            const sw = Math.min(bitmap.width  - sx, Math.round(dc.rect.vw * dpr));
+            const sh = Math.min(bitmap.height - sy, Math.round(dc.rect.vh * dpr));
+            if (sw < 20 || sh < 30) continue;
+            const claimed = claim([dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h], dc.anchor, dc.rect.vw * dc.rect.vh);
+            if (!claimed) continue;
+
+            // Build the 750x1050 rectified canvas the embedder expects.
+            const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
+            const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
+            const read = await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed));
+            pushCard({
+              box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
+              score: 1.0,
+              ...read,
+            }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed);
+          }
+
+          // ── Fallback: YOLO viewport scan ───────────────────────────────────────
+          // Last resort — a page with no <img> cards and no photo candidates
+          // (CSS backgrounds, canvas renders, lightbox overlays).
+          // Not on a listing: the other pictures on that page are other people's cards.
+          if (cards.length === 0 && focus.kind !== "listing") {
+            try {
+              console.log("[BG] still nothing — running YOLO over whole viewport");
+              const yoloBoxes = await detectCards(bitmap);
+              console.log("[BG] YOLO found", yoloBoxes.length, "boxes in viewport");
+              let viewportId;
+              for (const { box, score } of yoloBoxes) {
+                const [x1, y1, x2, y2] = box;
+                if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
+                const claimed = claim([x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr], undefined, (x2 - x1) * (y2 - y1) / (dpr * dpr));
+                if (!claimed) continue;
+                const cardCanvas = rectifyCard(bitmap, box);
+                const read = await identifyCard(cardCanvas, era, y2 - y1, null, capFor(y2 - y1));
+                viewportId ??= photoIdOf(readBitmap(bitmap));
+                pushCard({
+                  box: [x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr],
+                  score,
+                  ...read,
+                  via: "yolo-viewport",
+                }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, read), claimed);
+              }
+            } catch (err) {
+              console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
             }
           }
+
+
+          // Read the size before closing the bitmap. A missing viewport size used to throw
+          // after close() and the scan died after the cards were already found.
+          srcWidth  = domResp.viewportWidth  || Math.round(bitmap.width  / dpr);
+          srcHeight = domResp.viewportHeight || Math.round(bitmap.height / dpr);
+        } finally {
+          bitmap.close();
         }
-        const naturalPerFed = fromSource ? 1
-          : ph.naturalHeight > 0 && sourceTransform === null
-            ? (() => {
-              const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
-              return shown ? 1 / (shown.scaleY * dpr) : undefined;
-            })()
-            : undefined;
-        console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
-                    imageW + "x" + imageH,
-                    fromSource ? upgrade ? "(source image, upgraded " + imageW + "x" + imageH + " from " + ph.naturalWidth + "x" + ph.naturalHeight + ")" : "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
-                    "boxes;", boxes.length, "passed card-size validation",
-                    boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
-
-        if (!boxes.length) continue;
-        console.log("[BG]   splitting", boxes.length, "cards");
-        if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
-        const photoPixels = readBitmap(photoBitmap);
-        const photoId = photoIdOf(photoPixels);
-        const photoFirst = cards.length;
-        for (const { box, score } of boxes) {
-          const [bx1, by1, bx2, by2] = box;
-          if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
-          const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
-          let viewportBox;
-          if (fromSource) {
-            viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
-            if (!viewportBox) continue;
-          } else {
-            viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
-          }
-          const rectify = (rect) => fromSource
-            ? rectifyCard(photoBitmap, rect)
-            : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
-          const cardCanvas = rectify(box);
-          // The hero fallback is never checked: it may be the listing's only card.
-          if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
-          // The number is read from the detector box. The stamp is scored on the
-          // box after a clipped yellow border is included, so the card is not stretched.
-          const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
-          // One card that fails to read must not drop the rest of the photo.
-          let read;
-          try {
-            read = await identifyCard(cardCanvas, era, by2 - by1, stampCanvas, capFor(by2 - by1, naturalPerFed), { bitmap: photoBitmap, box });
-          } catch (err) {
-            console.error("[BG] card read failed:", err?.message || err);
-            read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
-          }
-          if (hero === "whole-photo" && !acceptWholePhoto(read, { strict: heroStrict, croppedView: !fromSource && ph.render?.fit === "cover" })) {
-            console.log("[BG]   whole photo does not look like one card (catalog top", read.catalogTop?.toFixed?.(2), ") — dropped");
-            // Dropped here, so the single-card path below must not read the same picture again.
-            preemptedPhotoKeys.add(_photoKey(ph));
-            continue;
-          }
-          if (hero) preemptedPhotoKeys.add(_photoKey(ph));
-          // The framing was a guess, so the name is a suggestion for the picker, not an answer.
-          if (heroStrict && !read.abstain) read = { ...read, unsure: true };
-          pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
-            shareOf(photoId, box, imageW, imageH, read));
-        }
-        cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
-        const photoReads = cards.slice(photoFirst);
-        const checked = markRepeatedNames(photoReads);
-        const repeated = checked.filter((card, i) => card !== photoReads[i]);
-        if (repeated.length) {
-          console.log("[BG]   ", repeated.length, "boxes named", JSON.stringify(repeated[0].identity?.name), "- held below high");
-          cards.splice(photoFirst, checked.length, ...checked);
-        }
-      } catch (err) { console.error("[BG] YOLO-in-photo failed:", err?.message || err); }
-      finally { photoBitmap?.close?.(); }
-    } };
-    await scanPhotos(photos);
-    // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
-    // Related-item carousels are never part of this.
-    if (!cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length) {
-      console.log("[BG] main photo held no card — trying", focus.fallback.length, "other gallery photos");
-      await scanPhotos(focus.fallback);
-    }
-
-    for (const dc of domCards) {
-      // Skip the single-card interpretation when this image was already split by YOLO
-      // into multiple cards (handled above). Compare by key constructed the same way.
-      if (preemptedPhotoKeys.has(_photoKey(dc))) continue;
-
-      // Crop the visible slice of this image in physical pixels.
-      const sx = Math.max(0, Math.round(dc.rect.vx * dpr));
-      const sy = Math.max(0, Math.round(dc.rect.vy * dpr));
-      const sw = Math.min(bitmap.width  - sx, Math.round(dc.rect.vw * dpr));
-      const sh = Math.min(bitmap.height - sy, Math.round(dc.rect.vh * dpr));
-      if (sw < 20 || sh < 30) continue;
-
-      // Build the 750x1050 rectified canvas the embedder expects.
-      const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
-      const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
-      const read = await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed));
-      pushCard({
-        box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
-        score: 1.0,
-        ...read,
-      }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read));
-    }
-
-    // ── Fallback: YOLO viewport scan ───────────────────────────────────────
-    // Last resort — a page with no <img> cards and no photo candidates
-    // (CSS backgrounds, canvas renders, lightbox overlays).
-    // Not on a listing: the other pictures on that page are other people's cards.
-    if (cards.length === 0 && focus.kind !== "listing") {
-      try {
-        console.log("[BG] still nothing — running YOLO over whole viewport");
-        const yoloBoxes = await detectCards(bitmap);
-        console.log("[BG] YOLO found", yoloBoxes.length, "boxes in viewport");
-        let viewportId;
-        for (const { box, score } of yoloBoxes) {
-          const [x1, y1, x2, y2] = box;
-          if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
-          const cardCanvas = rectifyCard(bitmap, box);
-          const read = await identifyCard(cardCanvas, era, y2 - y1, null, capFor(y2 - y1));
-          viewportId ??= photoIdOf(readBitmap(bitmap));
-          pushCard({
-            box: [x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr],
-            score,
-            ...read,
-            via: "yolo-viewport",
-          }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, read));
-        }
-      } catch (err) {
-        console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
       }
+    } finally {
+      if (scrolled && !navigated) await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y: origin.y }).catch(() => {});
+      if (wholePage && !navigated) await sendToTab(chrome, targetTab.id, { action: "startObserving" }).catch(() => {});
     }
 
     // Cards outside any split photo (a single listing picture, a grid tile) still get a best guess.
+    if (dropped.size) {
+      const keep = (_, i) => !dropped.has(i);
+      cards.splice(0, cards.length, ...cards.filter(keep));
+      crops.splice(0, crops.length, ...crops.filter(keep));
+      shares.splice(0, shares.length, ...shares.filter(keep));
+    }
     cards.splice(0, cards.length, ...await withBestGuesses(cards, setHint));
     if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
 
-    // Read the bitmap before closing it. A missing viewport size used to throw
-    // after close() and the scan died after the cards were already found.
-    const srcWidth  = domResp.viewportWidth  || Math.round(bitmap.width  / dpr);
-    const srcHeight = domResp.viewportHeight || Math.round(bitmap.height / dpr);
-    bitmap.close();
     await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight }, targetTab.id);
     console.log("[BG] overlay relayed");
 
@@ -762,7 +874,7 @@ async function handleScanPage(sendResponse, era) {
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta, 5, era) } : card));
     const asked = applyTitlePrior(withCandidates, {
-      kind: focus.kind,
+      kind: pageFocus.kind,
       page: domResp?.page,
       knownNames: catalogNames(),
       log: (message) => console.log("[BG]", message),
@@ -770,12 +882,15 @@ async function handleScanPage(sendResponse, era) {
 
     // Offered only to someone who opted in; the exam photos themselves are held out of local learning either way.
     const shareExam = wantsExamPrompt(shares) && await _sharing.enabled().catch(() => false);
-    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: domResp.pending || 0, pageKind: focus.kind, sealedProduct: sealed, shareExam,
+    sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: stillLoading, pageKind: pageFocus.kind, sealedProduct: sealed, shareExam,
+      truncated: capped ? "cards" : wholePage && screensCapped(domResp.documentHeight, domResp.viewportHeight) ? "screens" : null,
       ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
+  } finally {
+    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(() => {});
   }
 }
 

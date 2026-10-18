@@ -30,7 +30,9 @@
   let _following   = false;
 
   // The page elements (and their rects) of the last findCards, so a box can be pinned to the picture it came from.
+  // Rects are in document coordinates so anchors from several scrolled screens can be matched at once.
   let _scanAnchors = [];
+  let _anchorIds   = new Map();
   let _scanScroll  = { x: 0, y: 0 };
 
   const MIN_ANCHOR_SHARE = 0.9;
@@ -210,6 +212,35 @@
     window.requestAnimationFrame(() => window.requestAnimationFrame(done));
   }
 
+  // Lazy pictures start loading only once they are near the screen; a capture before they finish shows blanks.
+  const SETTLE_MIN_MS = 150;
+  const SETTLE_MAX_MS = 800;
+
+  function cardImagesLoading() {
+    for (const img of document.querySelectorAll('img')) {
+      if (img.complete) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width < CARD_MIN_W || r.height < CARD_MIN_H) continue;
+      if (r.right <= 0 || r.bottom <= 0 || r.left >= window.innerWidth || r.top >= window.innerHeight) continue;
+      return true;
+    }
+    return false;
+  }
+
+  function scrollToAndSettle(x, y, done) {
+    window.scrollTo({ left: x, top: y, behavior: 'instant' });
+    const started = Date.now();
+    const poll = () => {
+      const waited = Date.now() - started;
+      if (waited >= SETTLE_MAX_MS || (waited >= SETTLE_MIN_MS && !cardImagesLoading())) {
+        done({ scrollX: window.scrollX, scrollY: window.scrollY });
+        return;
+      }
+      setTimeout(poll, 50);
+    };
+    window.requestAnimationFrame(() => window.requestAnimationFrame(poll));
+  }
+
   function restoreOverlay() {
     if (canvas) canvas.style.visibility = 'visible';
   }
@@ -223,12 +254,15 @@
     for (const card of cards) {
       if (!card.box || card.box.length < 4) continue;
       const [x1, y1, x2, y2] = card.box;
-      const box = [x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY];
-      const index = pickAnchor(box, _scanAnchors);
-      const rel = index >= 0 ? boxToRel(box, _scanAnchors[index].rect) : null;
+      // A whole-page scan reports document boxes; a single screen reports boxes in the viewport it was taken in.
+      const doc = card.docBox && card.docBox.length >= 4
+        ? card.docBox
+        : boxToDoc([x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY], _scanScroll);
+      const index = pickAnchor(doc, _scanAnchors);
+      const rel = index >= 0 ? boxToRel(doc, _scanAnchors[index].rect) : null;
       _placed.push(rel
         ? { card, el: _scanAnchors[index].el, rel }
-        : { card, doc: boxToDoc(box, _scanScroll) });
+        : { card, doc });
     }
     _drawOverlay();
   }
@@ -706,12 +740,28 @@
   }
 
   function snapshotRect(r) {
-    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    return { left: r.left + window.scrollX, top: r.top + window.scrollY, right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
+  }
+
+  // The same element keeps its id across screens, so the background can tell a card seen twice.
+  function registerAnchor(el, r) {
+    const rect = snapshotRect(r);
+    const known = _anchorIds.get(el);
+    if (known !== undefined) {
+      _scanAnchors[known].rect = rect;
+      return known;
+    }
+    _anchorIds.set(el, _scanAnchors.length);
+    _scanAnchors.push({ el, rect });
+    return _scanAnchors.length - 1;
   }
 
   function findCardImages(opts = {}) {
     resetScanCaches();
-    _scanAnchors = [];
+    if (!opts.keepAnchors) {
+      _scanAnchors = [];
+      _anchorIds = new Map();
+    }
     _scanScroll = { x: window.scrollX, y: window.scrollY };
     const found = [];
     const photos = [];  // large non-card-aspect images for YOLO-inside-image treatment
@@ -724,7 +774,7 @@
 
     for (const img of imgs) {
       const r = img.getBoundingClientRect();
-      if (r.width >= CARD_MIN_W && r.height >= CARD_MIN_H) _scanAnchors.push({ el: img, rect: snapshotRect(r) });
+      const anchor = r.width >= CARD_MIN_W && r.height >= CARD_MIN_H ? registerAnchor(img, r) : undefined;
       const ratio = r.height ? r.width / r.height : 0;
       const src = img.currentSrc || img.src || '';
 
@@ -785,6 +835,7 @@
       seen.add(key);
       const imageStyle = getComputedStyle(img);
       found.push({
+        anchor,
         rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh, pvw, pvh },
         naturalWidth:  img.naturalWidth,
         naturalHeight: img.naturalHeight,
@@ -816,7 +867,7 @@
       const key = 'bg:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
       if (ratio >= CARD_RATIO_MIN && ratio <= CARD_RATIO_MAX && !seen.has(key)) {
         seen.add(key);
-        found.push({ rect, naturalWidth: null, naturalHeight: null, ctx: candidate.ctx });
+        found.push({ anchor: candidate.anchor, rect, naturalWidth: null, naturalHeight: null, ctx: candidate.ctx });
       }
       if (rect.vw >= PHOTO_MIN_SIDE && rect.vh >= PHOTO_MIN_SIDE) {
         const photoKey = 'bgp:' + candidate.bg + ':' + Math.round(rect.x) + ':' + Math.round(rect.y);
@@ -864,8 +915,9 @@
               const urlMatch = bg.match(/url\((?:\s*["']?)(.*?)(?:["']?\s*)\)/i);
               let src = '';
               try { src = urlMatch ? new URL(urlMatch[1], document.baseURI).href : ''; } catch { /* unsupported URL */ }
-              _scanAnchors.push({ el: node, rect: snapshotRect(r) });
+              const anchor = registerAnchor(node, r);
               out.push({
+                anchor,
                 rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx, vy, vw, vh },
                 w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)),
                 tag: node.tagName, bg: bg.slice(0, 120),
@@ -891,22 +943,30 @@
     } else if (msg.action === 'hideOverlay') {
       hideOverlay(() => sendResponse({ hidden: true }));
       return true;
+    } else if (msg.action === 'scrollTo') {
+      scrollToAndSettle(msg.x, msg.y, (at) => sendResponse(at));
+      return true;
     } else if (msg.action === 'restoreOverlay') {
       restoreOverlay();
     } else if (msg.action === 'clearOverlay') {
       clearOverlay();
     } else if (msg.action === 'findCards') {
-      const { cards, photos, pending } = findCardImages();
+      const { cards, photos, pending } = findCardImages({ keepAnchors: msg.keepAnchors === true });
       sendResponse({
         cards,
         photos,
         pending,
+        documentHeight: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
         page: pageInfo(),
         viewportWidth:  window.innerWidth,
         viewportHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio || 1,
       });
       return false;
+    } else if (msg.action === 'stopObserving') {
+      stopObserving();
     } else if (msg.action === 'startObserving') {
       startObserving();
     // dev-only:start

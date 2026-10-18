@@ -1,3 +1,4 @@
+import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -221,6 +222,7 @@ async function scanPage() {
   showMessage("Capturing page and running detection…");
 
   let data;
+  chrome.runtime.onMessage.addListener(onScanProgress);
   try {
     data = await chrome.runtime.sendMessage({ action: "scanPage", era: eraSelect.value || null });
   } catch (err) {
@@ -254,7 +256,7 @@ async function scanPage() {
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
       : "";
-    showMessage(`${scanStatus(cards)}.${stillLoading}`);
+    showMessage(`${scanStatus(cards)}${truncationNote(data.truncated)}.${stillLoading}`);
   }
 
   // Push the overlay snapshot with current filter state baked in
@@ -301,7 +303,13 @@ accessRescan.addEventListener("click", () => {
   scanPage();
 });
 
+function onScanProgress(msg) {
+  if (msg.action !== "scanProgress") return;
+  showMessage(`Scanning screen ${msg.screen} of ${msg.screens}…`);
+}
+
 function finishScan() {
+  chrome.runtime.onMessage.removeListener(onScanProgress);
   isScanning = false;
   btnScan.classList.remove("scanning");
   btnLabel.textContent = "SCAN PAGE";
@@ -829,6 +837,7 @@ function pushOverlay() {
   if (!_lastResult) return;
   const cards = _lastResult.cards.map((c, idx) => ({
     box: c.box,
+    docBox: c.docBox,
     identity: c.identity,
     confidence: c.confidence,
     abstain: c.abstain,
