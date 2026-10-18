@@ -89,7 +89,7 @@ If this policy changes, we will update the effective date above.
 
 ## Contact
 
-[contact email]
+fabcrowd@gmail.com
 
 ## Not affiliated
 

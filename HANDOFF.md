@@ -180,11 +180,8 @@ Known weak spots (held-out):
 ## Owner decisions outstanding
 
 - Manual test of the store zip (rebuilt 2026-10-17 from the set-confirmation commit), including the site-access permission prompt.
-- Contact email for the privacy policy and listing.
-- Where to host the privacy policy (public URL).
+- Privacy policy URL: https://github.com/fabcrowd/pokemon-auto-lister/blob/main/docs/store/privacy-policy.md (repo is public; live once merged to main).
 - Chrome Web Store developer account.
-- Approve the extension name and the icon.
-- Push the 8 unpushed commits on `feat/card-picker-sealed-test`. `main` is already at `origin/main`.
 - Revoke the Cloudflare setup token and the GitHub token pasted into the Claude chat (see shared learning).
 
 ## Working rules
