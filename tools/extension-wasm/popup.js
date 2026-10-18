@@ -509,8 +509,8 @@ function renderAskRow(card, idx) {
   const ask = isUnsure(card) && !card.pricing
     ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
         <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
-        ${card.identity?.name || !card.candidates?.length ? "" : `<div class="picker-sub">Closest matches</div>`}
-        <div class="pick-row">${renderPickList(card.candidates, idx)}</div>
+        ${(card.identity?.name && !card.lowCertainty) || !card.candidates?.length ? "" : `<div class="picker-sub">${card.lowCertainty ? "Best guess first, then the closest matches" : "Closest matches"}</div>`}
+        <div class="pick-row">${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
         ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
       </div>`
     : "";

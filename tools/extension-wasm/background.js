@@ -24,7 +24,7 @@ import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedB
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
-import { candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
+import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
@@ -804,7 +804,8 @@ async function handleScanPage(sendResponse, era) {
             // Build the 750x1050 rectified canvas the embedder expects.
             const cardCanvas = rectifyCard(bitmap, [sx, sy, sx + sw, sy + sh]);
             const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
-            const read = await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed));
+            // A tile nothing could settle is shown as its best guess, unsure, with the closest cards to pick from.
+            const read = asLowCertaintyGuess(await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed)), catalogCard);
             pushCard({
               box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
               score: 1.0,
@@ -867,6 +868,8 @@ async function handleScanPage(sendResponse, era) {
     if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
+    const guessed = cards.filter((c) => c.lowCertainty).length;
+    if (guessed) console.log("[BG] best guesses (low certainty, user picks)", guessed, "of those", identified);
 
     await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight }, targetTab.id);
     console.log("[BG] overlay relayed");

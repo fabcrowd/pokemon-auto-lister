@@ -25,6 +25,35 @@ export function closestMatches(hits, meta, limit = 5) {
   return out;
 }
 
+// A grid tile the matcher could not settle is still shown as its best guess, unsure, with the closest cards to choose
+// from. The floor only keeps junk (a picture that resembles no card) from being named; it is not an accept threshold, the
+// reads that pass fusion are unchanged. Every abstained tile measured on the Base Set page had a top similarity of 0.66 or more.
+export const GUESS_FLOOR = 0.60;
+export const GUESS_CONFIDENCE_CAP = 0.49;
+
+/**
+ * An abstained read turned into a low-certainty best guess: the closest card is named, the row is unsure (the popup asks
+ * "Which card is this?" with the closest cards, best first) and carries no price until the user picks. Anything that is not
+ * an abstained read of something card-like is returned untouched.
+ * @param lookup id => catalog row
+ */
+export function asLowCertaintyGuess(read, lookup, floor = GUESS_FLOOR) {
+  if (!read || !read.abstain || read.cardBack) return read;
+  const card = read.nearest?.length ? lookup(read.nearest[0]) : null;
+  if (!card?.id || !(read.catalogTop >= floor)) return read;
+  return {
+    ...read,
+    identity: card,
+    abstain: false,
+    unsure: true,
+    lowCertainty: true,
+    confidence: Math.min(read.confidence || 0, GUESS_CONFIDENCE_CAP),
+    market_price: null,
+    price_variant: null,
+    price_grid: null,
+  };
+}
+
 /** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
 export function candidatesFor(card, meta, limit = 5, era = null) {
   if (!card) return [];
@@ -39,6 +68,13 @@ export function candidatesFor(card, meta, limit = 5, era = null) {
     out.push(row);
   };
   if (card.referencedId) add(catalog.find((row) => row.id === card.referencedId));
+  if (card.lowCertainty && card.identity?.id) {
+    // A best guess among the closest cards: the picture's own ranking, best first, before other printings of a name.
+    add(card.identity);
+    const rows = new Map(catalog.map((row) => [row.id, row]));
+    for (const id of card.nearest || []) add(rows.get(id));
+    return out;
+  }
   for (const choice of choices) add(byId.get(choice.id) ?? choice);
   if (card.identity?.id) add(byId.get(card.identity.id) ?? card.identity);
   const name = choiceName(card.identity?.name ?? choices[0]?.name);
@@ -216,15 +252,17 @@ function pickLabel(card) {
 }
 
 /** A row of thumbnail buttons. Each value is escaped here because the result goes into innerHTML. */
-export function renderPickList(cards, idx) {
+export function renderPickList(cards, idx, guessId = null) {
   return (cards || []).map((card) => {
+    const guess = guessId != null && card.id === guessId;
     const label = escHtml(pickLabel(card));
     const url = thumbUrl(card);
     const image = url
       ? `<img src="${escHtml(url)}" alt="${label}" loading="lazy" width="63" height="88">`
       : `<span class="pick-blank" aria-hidden="true"></span>`;
     const sub = [card.set || card.setCode, card.number ? `#${card.number}` : ""].filter(Boolean).join(" ");
-    return `<button type="button" class="pick-card" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${label}" title="${label}">${image}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
+    const tag = guess ? `<span class="pick-guess">Best guess</span>` : "";
+    return `<button type="button" class="pick-card${guess ? " pick-card-guess" : ""}" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${guess ? `Best guess: ${label}` : label}" title="${label}">${image}${tag}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
   }).join("");
 }
 

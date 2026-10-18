@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  GUESS_CONFIDENCE_CAP,
+  GUESS_FLOOR,
+  asLowCertaintyGuess,
   candidatesFor,
   closestMatches,
   correctionRecord,
@@ -361,4 +364,46 @@ test('candidatesFor: an abstained row with no name offers its closest matches', 
   const card = { identity: null, abstain: true, nearest: ['base1-4', 'base1-5'] };
   assert.deepEqual(candidatesFor(card, META).map((c) => c.id), ['base1-4', 'base1-5']);
   assert.deepEqual(candidatesFor({ abstain: true, cardBack: true }, META), []);
+});
+
+const lookup = (id) => META.find((r) => r.id === id);
+
+test('asLowCertaintyGuess: an abstained read becomes an unsure best guess with the closest card named', () => {
+  const read = { identity: null, abstain: true, confidence: 0.78, catalogTop: 0.78, nearest: ['base1-5', 'base1-4'], market_price: 5 };
+  const out = asLowCertaintyGuess(read, lookup);
+  assert.equal(out.identity.id, 'base1-5');
+  assert.equal(out.abstain, false);
+  assert.equal(out.unsure, true);
+  assert.equal(out.lowCertainty, true);
+  assert.ok(out.confidence <= GUESS_CONFIDENCE_CAP);
+  assert.equal(confTier(out.confidence), 'low');
+  assert.equal(out.market_price, null);
+  assert.deepEqual(out.nearest, ['base1-5', 'base1-4']);
+  assert.equal(isUnsure(out), true);
+});
+
+test('asLowCertaintyGuess: leaves accepted reads, card backs, junk and unknown ids alone', () => {
+  const accepted = { identity: lookup('base1-4'), abstain: false, confidence: 0.9, nearest: ['base1-5'], catalogTop: 0.9 };
+  assert.equal(asLowCertaintyGuess(accepted, lookup), accepted);
+  const back = { abstain: true, cardBack: true, nearest: ['base1-5'], catalogTop: 0.9 };
+  assert.equal(asLowCertaintyGuess(back, lookup), back);
+  const junk = { abstain: true, nearest: ['base1-5'], catalogTop: GUESS_FLOOR - 0.01 };
+  assert.equal(asLowCertaintyGuess(junk, lookup), junk);
+  const unknownId = { abstain: true, nearest: ['nope'], catalogTop: 0.8 };
+  assert.equal(asLowCertaintyGuess(unknownId, lookup), unknownId);
+  const noHits = { abstain: true, catalogTop: 0.8 };
+  assert.equal(asLowCertaintyGuess(noHits, lookup), noHits);
+  assert.equal(asLowCertaintyGuess(null, lookup), null);
+});
+
+test('candidatesFor: a low-certainty guess lists the guess, then the picture\'s closest cards in order', () => {
+  const guess = asLowCertaintyGuess({ abstain: true, confidence: 0.7, catalogTop: 0.7, nearest: ['base1-5', 'sv1-004', 'base1-6'] }, lookup);
+  assert.deepEqual(candidatesFor(guess, META, 5).map((c) => c.id), ['base1-5', 'sv1-004', 'base1-6']);
+});
+
+test('renderPickList: marks the best guess when asked and only then', () => {
+  const html = renderPickList([META[0], META[1]], 3, 'base1-5');
+  assert.equal((html.match(/pick-card-guess/g) || []).length, 1);
+  assert.ok(html.indexOf('Best guess') > html.indexOf('base1-4'));
+  assert.doesNotMatch(renderPickList([META[0]], 3), /Best guess/);
 });
