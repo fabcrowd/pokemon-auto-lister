@@ -7,6 +7,7 @@ import {
   captureWait,
   judgeDuplicate,
   claimSlot,
+  coveredByBetterView,
   createScanGate,
   isCaptureQuotaError,
   samePage,
@@ -201,4 +202,15 @@ test('an element whose view was dropped for a better one stays one card after th
   assert.deepEqual(claimSlot(slots, dropped, better, 1), { verdict: 'replace', drop: 1 });
   const unrelated = { docBox: [10, 400, 110, 540], anchor: 8, area: 15000 };
   assert.deepEqual(claimSlot(slots, dropped, unrelated, 1), { verdict: 'new' });
+});
+
+test('a grid tile seen as both <img> and slot is read once; the bigger view wins, then the earlier', () => {
+  const views = [
+    { docBox: [10, 10, 110, 150], area: 13000 },
+    { docBox: [12, 12, 112, 152], area: 14000 },
+    { docBox: [300, 10, 400, 150], area: 14000 },
+    { docBox: [300, 10, 400, 150], area: 14000 },
+  ];
+  assert.deepEqual([...coveredByBetterView(views)].sort(), [0, 3]);
+  assert.deepEqual([...coveredByBetterView([])], []);
 });

@@ -15,7 +15,7 @@ import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOpti
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
 import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
-import { cardRoom, captureWait, claimSlot, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
+import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
@@ -781,7 +781,13 @@ async function handleScanPage(sendResponse, era) {
             await scanPhotos(focus.fallback);
           }
 
-          for (const dc of domCards) {
+          // A grid tile is its <img> and the slot behind it: read the better view once, not both.
+          const betterView = pageFocus.kind === "listing" ? new Set() : coveredByBetterView(domCards.map((dc) => ({
+            docBox: toDocBox([dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h], offset),
+            area: dc.rect.vw * dc.rect.vh,
+          })));
+          for (const [dcIndex, dc] of domCards.entries()) {
+            if (betterView.has(dcIndex)) continue;
             // Skip the single-card interpretation when this image was already split by YOLO
             // into multiple cards (handled above). Compare by key constructed the same way.
             if (preemptedPhotoKeys.has(_photoKey(dc))) continue;

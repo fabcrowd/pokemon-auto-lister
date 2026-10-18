@@ -49,6 +49,23 @@ export function judgeDuplicate(seen, card) {
   return card.area > seen[index].area ? { verdict: "replace", index } : { verdict: "skip" };
 }
 
+/**
+ * Views on one screen that another view of the same card beats, so each card is read once. A grid tile is often
+ * two page elements, the <img> and the slot with the card-back background behind it; the one with more of the
+ * card in view wins and, on a tie, the earlier one, as in judgeDuplicate.
+ * @param views [{ docBox, area }]
+ * @returns Set of indexes in `views` not worth reading
+ */
+export function coveredByBetterView(views) {
+  const covered = new Set();
+  views.forEach((view, i) => {
+    const beaten = views.some((other, j) => j !== i && iou(view.docBox, other.docBox) > SAME_CARD_IOU
+      && (other.area > view.area || (other.area === view.area && j < i)));
+    if (beaten) covered.add(i);
+  });
+  return covered;
+}
+
 export function cardRoom(count, cap = MAX_CARDS) {
   return Math.max(0, cap - count);
 }
