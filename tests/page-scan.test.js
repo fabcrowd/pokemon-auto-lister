@@ -186,3 +186,19 @@ test('the capture rate limit is recognised by its Chrome message', () => {
   assert.equal(isCaptureQuotaError(new Error('No tab with id')), false);
   assert.equal(isCaptureQuotaError(null), false);
 });
+
+test('an element whose view was dropped for a better one stays one card after the page shifts', () => {
+  // Screen 1 read the tile twice (slot 0 = <img>, slot 1 = background slot, which won). Screen 2 sees the
+  // same element 90px lower, so no box overlaps any earlier one, but the element id says it is the same card.
+  const slots = [
+    { docBox: [10, 10, 110, 150], anchor: 7, area: 13000 },
+    { docBox: [10, 10, 110, 150], anchor: 9, area: 14000, replaces: 0 },
+  ];
+  const dropped = new Set([0]);
+  const shifted = { docBox: [10, 100, 110, 240], anchor: 7, area: 9000 };
+  assert.deepEqual(claimSlot(slots, dropped, shifted, 1), { verdict: 'skip' });
+  const better = { docBox: [10, 100, 110, 240], anchor: 7, area: 15000 };
+  assert.deepEqual(claimSlot(slots, dropped, better, 1), { verdict: 'replace', drop: 1 });
+  const unrelated = { docBox: [10, 400, 110, 540], anchor: 8, area: 15000 };
+  assert.deepEqual(claimSlot(slots, dropped, unrelated, 1), { verdict: 'new' });
+});

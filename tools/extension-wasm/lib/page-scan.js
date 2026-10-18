@@ -83,7 +83,26 @@ export function claimSlot(slots, dropped, slot, count) {
   const judged = judgeDuplicate(earlier, slot);
   if (judged.verdict === "skip") return { verdict: "skip" };
   if (judged.verdict === "replace") return { verdict: "replace", drop: earlier[judged.index].index };
+  // A page element whose earlier view was given up for a better one is still that card. Boxes alone cannot
+  // say so once the page has shifted between screens (an ad loading above the grid), but the element can.
+  const owner = slot.anchor == null ? null : ownerOfAnchor(slots, dropped, slot.anchor);
+  if (owner) return slot.area > owner.area ? { verdict: "replace", drop: owner.index } : { verdict: "skip" };
   return cardRoom(count) <= 0 ? { verdict: "full" } : { verdict: "new" };
+}
+
+/** The kept card that stands in for a dropped view of the page element `anchor`, or null when there is none. */
+function ownerOfAnchor(slots, dropped, anchor) {
+  for (let index = 0; index < slots.length; index++) {
+    if (!dropped.has(index) || slots[index]?.anchor !== anchor) continue;
+    // Follow the replacements to the card that is still kept.
+    let at = index;
+    for (let hops = 0; dropped.has(at) && hops <= slots.length; hops++) {
+      at = slots.findIndex((other) => other?.replaces === at);
+      if (at < 0) break;
+    }
+    if (at >= 0 && !dropped.has(at)) return { ...slots[at], index: at };
+  }
+  return null;
 }
 
 /** One scan per tab at a time. A request that arrives mid-scan may leave one follow-up for when it ends. */
