@@ -107,3 +107,8 @@ Box aspect 1.0–1.4 on lot photos was upright cards tilted 35–45°. Rotating 
 ## Finding more cards is not the goal; naming them is (2026-10-18)
 
 The v7b detector retrain passed its found-count gate offline (284→302 of 305, real-photo F1 .977 = shipped) but end-to-end in Chrome on 67 lot photos it added 7 confident wrong names for 1 right one (14→21 wrong, 106→107 right). Rule: always run the Chrome lot harness (`.tmp/lots/run.mjs` + `analyze2.py`) before promoting a detector, and gate on right/wrong names, not boxes.
+
+## Offline gains must be re-checked on the browser's own tiles, and live pages need same-layout pairs (2026-10-18)
+
+Multi-crop averaging raised accepted-right 73 -> 83 and cut accepted-wrong 10 -> 3 on offline screenshot tiles, but in the extension it added confident wrong names (12 -> 15 on the fixture) with no more right names, so it was reverted. Rule: after any matcher change, rerun the in-extension harness and count sure-wrong separately from guesses, not just the offline table. Also: live Pokellector alternates between two layouts (24 images "grid" vs 12 "unknown"), independent of the build, and live sure-wrong swings by several rows run to run. Compare a build against its own control (same change switched off) back to back, only within one layout, and use a deterministic fixture for gates. "Identified" counts wrong names too: report right and wrong separately (the 97-98 of 102 figure did not reproduce; about 65 were right at 130 px tiles).
+

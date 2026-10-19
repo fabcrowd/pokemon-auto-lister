@@ -1,3 +1,19 @@
+# Extension accuracy pass on grid pages (2026-10-18, fix/extension-only)
+
+- [x] Dedupe rows by page element across layout shifts (a1a93e6); read each grid tile once (bf83b31)
+- [x] Always show a best guess + pick-list on grid tiles (2ffb802)
+- [x] Soft multi-set page prior (da083e2)
+- [x] Re-read unsure grid tiles from the page's own picture, capped, degrades on failure (7f99f35)
+- [x] Multi-crop averaging tried and reverted (more confident wrong names, no more right names); see HANDOFF.md
+- [x] 108-vs-102 row count discrepancy: caused by ad-shifted layouts counting a tile twice (a1a93e6)
+- [ ] Owner's PC: `npm test` and lint on Windows incl. the Windows-only `tests/store-build.test.js`; real Chrome Pokellector run vs the old 97-98 figure
+- [ ] Store build: check the optional `<all_urls>` prompt covers source-picture refinement; update privacy text if needed
+- [ ] Test refinement on other grid sites
+- [ ] `hub-penalty.bin` missing from this checkout; confirm the store build ships it
+- [ ] Adapter retraining with small-tile augmentation and a tiles regression slice in the nightly gate (`card-scanner-data`)
+- [ ] GPU work: backbone bake-off, fine-tune, detector retrain (docs/improvement-plan.md Phase 8)
+- [ ] Self-improvement loop: 1 contributor, 0 promoted rows, 46-byte community pack; needs real contributors (opt-in off, store listing not submitted)
+
 # Store-build debug (2026-10-18)
 
 - [x] Page set hint: set in heading/breadcrumb/title is the best guess for open rows (1536670)
@@ -7,7 +23,7 @@
 
 - [x] Whole-page scan (d4f8c12): up to 12 screens / 200 cards, dedupe, scroll restored
 - [ ] Whole-page scans of big sets take ~3 min for 200 cards and need the popup open throughout: speed up per-card recognition or run the scan without the popup
-- [ ] Back-to-back whole-page scans found 108 then 102 on Pokellector Base Set; check what the first scan's extra 6 were (lazy images mid-scan?)
+- [x] Back-to-back whole-page scans found 108 then 102 on Pokellector Base Set: ad-shifted layouts counted a tile twice (a1a93e6)
 
 # Fix corner-as-front photo selection (2026-08-11)
 

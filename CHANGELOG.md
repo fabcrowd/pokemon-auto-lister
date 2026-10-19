@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-18 (evening)
+
+Extension accuracy pass on grid pages (branch `fix/extension-only`: 4ba6689, a1a93e6, bf83b31, 2ffb802, da083e2, 7f99f35). Details and numbers in `HANDOFF.md`; plan in `docs/improvement-plan.md`.
+
+### Added
+- Best guess on grid tiles: a tile the gate would call Unknown is shown as its best guess, marked unsure, pre-selected in the "Which card is this?" pick-list with the closest cards after it. Pokellector Base Set fixture: 0 Unknown (was 25), 13 of the 25 guesses right, sure-wrong unchanged at 12.
+- Soft multi-set page prior (`lib/set-prior.js`): re-orders unsure guesses toward the sets the page's settled cards share; a boost, not a filter. Mixed 3-set page: guesses right 10 -> 14.
+- Source-image refinement (`lib/refine.js`): unsure grid tiles are re-read from the page's own picture, fetched by the service worker with existing host access (max 40 tiles and 30 s per scan, stops after 3 failures, no manifest change). Live Pokellector Base Set, same page layout: right names shown 73-78 -> 88-94 of 102, wrong shown 24-31 -> 8-15, +6-16 s.
+
+### Fixed
+- Whole-page scan counted the same grid tile twice when live ads shifted the layout between screens: rows 102-120 -> 102 (a1a93e6).
+- Each grid tile was read twice (the image and its slot): fixture scan 82 s -> about 35-50 s (bf83b31).
+
+### Changed
+- Lint cleanup in `tools/extension-wasm` with no behavior change (repo lint 47 -> 41 problems).
+
+### Not reproduced
+- The 97-98 of 102 identified figure for Pokellector Base Set (2026-10-18 entry above) was not reproducible on a Linux box at DPR1: 68-77 identified of 102 with the same code (about 65 right). Real Chrome on the owner's PC is still to check. A multi-crop averaging experiment was tried and reverted (more confident wrong names, no more right names).
+
 ## 2026-10-18
 
 Store-build debug pass (1536670, 654a132, era-restricted search).
