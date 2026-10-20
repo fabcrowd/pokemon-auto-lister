@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  dropEdgeFragments,
   extendClippedBottom,
   filterPhotoDetections,
   imageToViewportTransform,
@@ -137,4 +138,18 @@ test('a sideways large box is a hero card; whole-image ratio branches are unchan
   const plan = planHeroCard({ imageW: 800, imageH: 600, detections: [{ box: [0, 0, 700, 500], score: 0.9 }] });
   assert.equal(plan.kind, 'large-box');
   assert.equal(planHeroCard({ imageW: 800, imageH: 600, detections: [] }).kind, 'none');
+});
+
+test('a piece of a card cut off by the photo edge is dropped; whole cards at the edge stay', () => {
+  const inside = [[100, 100, 200, 140 + 100], [250, 100, 350, 240], [100, 300, 200, 440]].map((box) => ({ box, score: 0.9 }));
+  const wholeAtEdge = { box: [0, 500, 95, 640], score: 0.9 };       // left edge, full width
+  const sliver = { box: [668, 300, 720, 370], score: 0.3 };         // right edge, half a card wide
+  const corner = { box: [681, 0, 720, 42], score: 0.4 };            // top-right corner piece
+  const kept = dropEdgeFragments([...inside, wholeAtEdge, sliver, corner], 720, 960);
+  assert.deepEqual(kept, [...inside, wholeAtEdge]);
+});
+
+test('edge pieces are kept when there are too few whole cards to compare with', () => {
+  const lone = [{ box: [0, 0, 300, 420], score: 0.9 }, { box: [400, 100, 500, 240], score: 0.8 }];
+  assert.deepEqual(dropEdgeFragments(lone, 720, 960), lone);
 });

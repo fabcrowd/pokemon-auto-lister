@@ -13,7 +13,7 @@ try {
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
-import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
+import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
@@ -716,7 +716,10 @@ async function handleScanPage(sendResponse, era) {
               }
               const imageW = photoBitmap.width;
               const imageH = photoBitmap.height;
-              let boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
+              const shaped = filterPhotoDetections(detectedBoxes, imageW, imageH);
+              // A card cut off by the photo edge reads as some other card: leave it out.
+              let boxes = dropEdgeFragments(shaped, imageW, imageH);
+              if (boxes.length < shaped.length) console.log("[BG]   dropped", shaped.length - boxes.length, "card piece(s) cut off by the photo edge");
               // dev-only:start
               if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
               // dev-only:end

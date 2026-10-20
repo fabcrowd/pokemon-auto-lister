@@ -196,6 +196,45 @@ export function filterPhotoDetections(detections, imageWidth, imageHeight) {
   });
 }
 
+// A box this close to the photo edge (fraction of the photo side, at least 2 px) is cut by that edge.
+const EDGE_TOUCH_FRACTION = 0.004;
+// A cut box whose side across the edge is under this share of the same side of the photo's whole cards
+// is a piece of a card. Measured on 11 Facebook Marketplace photos (2026-10-19): of 27 card-shaped boxes at
+// an edge, the 15 whole cards had a cut side 0.83 or more of the median; the 12 pieces (half cards cut at
+// the top or bottom, corners) had 0.09 to 0.63.
+export const EDGE_FRAGMENT_SHARE = 0.7;
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Drop boxes that are pieces of cards cut off by the photo edge. A box is a piece when it touches an
+ * edge and its side across that edge is well short of the cards wholly inside the photo. With fewer than
+ * two whole cards to compare against, nothing is dropped: a lone card may fill the frame.
+ */
+export function dropEdgeFragments(boxes, imageWidth, imageHeight) {
+  if (!Array.isArray(boxes) || !(imageWidth > 0) || !(imageHeight > 0)) return boxes;
+  const marginX = Math.max(2, imageWidth * EDGE_TOUCH_FRACTION);
+  const marginY = Math.max(2, imageHeight * EDGE_TOUCH_FRACTION);
+  const edges = ({ box: [x1, y1, x2, y2] }) => ({
+    across: x1 <= marginX || x2 >= imageWidth - marginX,
+    down: y1 <= marginY || y2 >= imageHeight - marginY,
+  });
+  const inside = boxes.filter((b) => { const e = edges(b); return !e.across && !e.down; });
+  if (inside.length < 2) return boxes;
+  const medianW = median(inside.map(({ box }) => box[2] - box[0]));
+  const medianH = median(inside.map(({ box }) => box[3] - box[1]));
+  return boxes.filter((b) => {
+    const { across, down } = edges(b);
+    const [x1, y1, x2, y2] = b.box;
+    if (across && x2 - x1 < medianW * EDGE_FRAGMENT_SHARE) return false;
+    if (down && y2 - y1 < medianH * EDGE_FRAGMENT_SHARE) return false;
+    return true;
+  });
+}
+
 // Zoomed centre crops tried when the detector sees nothing in a card-shaped hero photo.
 const HERO_ZOOMS = [1, 0.8, 0.65];
 // A whole-photo read that abstained is kept (as a guess for the picker) only when the catalog at
