@@ -66,3 +66,54 @@ export function shouldOfferSiteAccess({ scan, hasAll, dismissedAt, now }) {
   if (typeof dismissedAt === "number" && now - dismissedAt < SITE_ACCESS_DISMISS_MS) return false;
   return true;
 }
+
+// One site's grant: the page and the hosts its photos come from (Marketplace photos are on fbcdn.net, not on
+// facebook.com). All of these sit inside the optional <all_urls>, so asking for them needs no manifest change.
+export const MAX_SITE_ORIGINS = 6;
+
+/** Match patterns for the page and the photo hosts a scan could not read, page first, without repeats. */
+export function siteOrigins(pageUrl, photoUrls = []) {
+  const out = [];
+  for (const url of [pageUrl, ...photoUrls]) {
+    const pattern = originPattern(url);
+    if (pattern && !out.includes(pattern)) out.push(pattern);
+    if (out.length >= MAX_SITE_ORIGINS) break;
+  }
+  return out;
+}
+
+/** "facebook.com" for https://www.facebook.com/marketplace/item/1; empty for anything but http(s). */
+export function siteLabel(pageUrl) {
+  try {
+    const url = new URL(pageUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+    return url.hostname.replace(/^(?:www|m|web)\./, "");
+  } catch {
+    return "";
+  }
+}
+
+// Must be called straight from a click, like requestAllSites.
+export async function requestSites(permissions, origins) {
+  if (!Array.isArray(origins) || !origins.length) return false;
+  try {
+    return await permissions.request({ origins });
+  } catch {
+    return false;
+  }
+}
+
+/** Why the popup asks: what the scan could not read on this site, and what reading it gives. */
+export function accessOfferText({ site, galleryUnread = 0 }) {
+  const where = site ? ` on ${site}` : " on sites you scan";
+  const gallery = galleryUnread > 0
+    ? ` and the other ${galleryUnread} photo${galleryUnread === 1 ? "" : "s"} of this listing`
+    : "";
+  return `Card Scanner read a screenshot here. Allow it to read the original photos${where}${gallery}: small cards come out sharper, so more of them are named right.`;
+}
+
+/** Whether this site's offer was put off: by "Not now" on this site, or on any site before per-site answers. */
+export function dismissedFor({ site, dismissedSites, dismissedAt, now }) {
+  const at = site && dismissedSites && typeof dismissedSites[site] === "number" ? dismissedSites[site] : dismissedAt;
+  return typeof at === "number" && now - at < SITE_ACCESS_DISMISS_MS;
+}

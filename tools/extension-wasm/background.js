@@ -43,7 +43,7 @@ import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "
 import { sendToTab } from "./lib/tab-messaging.js";
 import { fullSizeCandidates, loadFullSize } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
-import { hasSiteAccess } from "./lib/site-access.js";
+import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
 import { isCardBack }                  from "./lib/card-back.js";
@@ -541,6 +541,10 @@ async function handleScanPage(sendResponse, era) {
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
     let lackedSiteAccess = false;
+    // Photos the scan wanted at full size but had no access to read, and how many of them were gallery photos it then
+    // skipped: the popup asks for exactly those sites and says what the access would add.
+    const unreadSources = new Set();
+    let galleryUnread = 0;
     // A grid tile the screenshot crop could not settle gets a second look at the page's own, larger picture of the card.
     // The service worker fetches it with the site access the extension already has (no new permission), so a site that
     // withholds access, a blocked or failed fetch, or a picture that is not card-shaped leaves the tile as it was.
@@ -685,7 +689,11 @@ async function handleScanPage(sendResponse, era) {
               const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
               // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
               const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
-              if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
+              if (sourceCanMap && !sourceReadable) {
+                lackedSiteAccess = true;
+                if (ph.src) unreadSources.add(ph.src);
+                if (gallery) galleryUnread += 1;
+              }
               // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
               const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(Math.min(PHOTO_BUDGET_MS, gallery ? gallery.budget.remaining() : Infinity)) };
               upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
@@ -1006,7 +1014,8 @@ async function handleScanPage(sendResponse, era) {
     const shareExam = wantsExamPrompt(shares) && await _sharing.enabled().catch(() => false);
     sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: stillLoading, pageKind: pageFocus.kind, sealedProduct: sealed, shareExam,
       truncated: capped ? "cards" : wholePage && screensCapped(domResp.documentHeight, domResp.viewportHeight) ? "screens" : null,
-      ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
+      ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access", accessSite: siteLabel(targetTab.url),
+        accessOrigins: siteOrigins(targetTab.url, [...unreadSources]), galleryUnread } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});

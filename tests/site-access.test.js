@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ALL_SITES, hasAllSites, hasSiteAccess, originPattern, releaseAllSites, requestAllSites, shouldOfferSiteAccess, watchAllSites,
+  ALL_SITES, SITE_ACCESS_DISMISS_MS, accessOfferText, dismissedFor, hasAllSites, hasSiteAccess, originPattern, releaseAllSites, requestAllSites, requestSites,
+  shouldOfferSiteAccess, siteLabel, siteOrigins, watchAllSites,
 } from '../tools/extension-wasm/lib/site-access.js';
 
 function fakePermissions({ granted = [], requestResult = true } = {}) {
@@ -102,4 +103,37 @@ test('after a grant the notice is not shown on the next popup open, whatever was
   for (const dismissedAt of [null, undefined, 5 * DAY]) {
     assert.equal(shouldOfferSiteAccess({ scan: NO_ACCESS_SCAN, hasAll: true, dismissedAt, now: 40 * DAY }), false);
   }
+});
+
+test('one site\'s grant covers the page and the hosts its photos come from', () => {
+  const origins = siteOrigins('https://www.facebook.com/marketplace/item/1/', [
+    'https://scontent-ord5-1.xx.fbcdn.net/v/t39/1.jpg?oh=1', 'https://scontent-ord5-1.xx.fbcdn.net/v/t39/2.jpg', 'data:image/png;base64,AA',
+  ]);
+  assert.deepEqual(origins, ['https://www.facebook.com/*', 'https://scontent-ord5-1.xx.fbcdn.net/*']);
+  assert.equal(siteLabel('https://www.facebook.com/marketplace/item/1/'), 'facebook.com');
+  assert.equal(siteLabel('chrome://extensions'), '');
+});
+
+test('asking for one site requests exactly its origins; a refusal or a throw is a no', async () => {
+  const permissions = fakePermissions();
+  assert.equal(await requestSites(permissions, ['https://www.facebook.com/*']), true);
+  assert.deepEqual(permissions.asked, [{ origins: ['https://www.facebook.com/*'] }]);
+  assert.equal(await requestSites(permissions, []), false);
+  assert.equal(await requestSites({ request: async () => { throw new Error('no gesture'); } }, ['https://a.example/*']), false);
+});
+
+test('the offer says where and what the access is for, counting the unread gallery photos', () => {
+  const text = accessOfferText({ site: 'facebook.com', galleryUnread: 8 });
+  assert.match(text, /on facebook\.com and the other 8 photos of this listing/);
+  assert.match(text, /more of them are named right/);
+  assert.doesNotMatch(accessOfferText({ site: 'ebay.com' }), /other/);
+});
+
+test('"Not now" on one site does not silence the offer on another', () => {
+  const now = 1_000_000_000_000;
+  const dismissedSites = { 'ebay.com': now - 1000 };
+  assert.equal(dismissedFor({ site: 'ebay.com', dismissedSites, now }), true);
+  assert.equal(dismissedFor({ site: 'facebook.com', dismissedSites, now }), false);
+  assert.equal(dismissedFor({ site: 'facebook.com', dismissedSites, dismissedAt: now - 1000, now }), true);
+  assert.equal(dismissedFor({ site: 'ebay.com', dismissedSites: { 'ebay.com': now - SITE_ACCESS_DISMISS_MS - 1 }, now }), false);
 });

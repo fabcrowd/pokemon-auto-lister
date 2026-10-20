@@ -4,7 +4,7 @@ import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
-import { hasAllSites, requestAllSites, shouldOfferSiteAccess } from "./lib/site-access.js";
+import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
@@ -34,6 +34,7 @@ const accessNotice  = document.getElementById("access-notice");
 const accessText    = document.getElementById("access-text");
 const accessOutcome = document.getElementById("access-outcome");
 const accessAllow   = document.getElementById("access-allow");
+const accessAllowAll = document.getElementById("access-allow-all");
 const accessSkip    = document.getElementById("access-skip");
 const accessRescan  = document.getElementById("access-rescan");
 
@@ -265,36 +266,63 @@ async function scanPage() {
 
 /* ─── Site access offer ─── */
 
+// The site the offer is about, and the origins "Allow" asks for: the page and the hosts of the photos it could not read.
+let _accessOffer = { site: "", origins: [] };
+
 async function maybeOfferSiteAccess(scan) {
-  const { siteAccessDismissedAt } = await chrome.storage.local.get("siteAccessDismissedAt");
-  const offer = shouldOfferSiteAccess({
-    scan, hasAll: await hasAllSites(chrome.permissions), dismissedAt: siteAccessDismissedAt, now: Date.now(),
-  });
+  const { siteAccessDismissedAt, siteAccessDismissed } = await chrome.storage.local.get(["siteAccessDismissedAt", "siteAccessDismissed"]);
+  const now = Date.now();
+  const site = typeof scan?.accessSite === "string" ? scan.accessSite : "";
+  const dismissed = dismissedFor({ site, dismissedSites: siteAccessDismissed, dismissedAt: siteAccessDismissedAt, now });
+  const offer = shouldOfferSiteAccess({ scan, hasAll: await hasAllSites(chrome.permissions), dismissedAt: dismissed ? now : undefined, now });
+  _accessOffer = { site, origins: Array.isArray(scan?.accessOrigins) ? scan.accessOrigins : [] };
+  accessText.textContent = accessOfferText({ site, galleryUnread: Number(scan?.galleryUnread) || 0 });
   accessText.hidden = false;
   accessOutcome.textContent = "";
+  const oneSite = Boolean(site) && _accessOffer.origins.length > 0;
+  accessAllow.textContent = oneSite ? `Allow on ${site}` : "Allow";
   accessAllow.hidden = false;
+  accessAllowAll.hidden = !oneSite;
   accessSkip.hidden = false;
   accessRescan.hidden = true;
   accessNotice.hidden = !offer;
 }
 
+async function dismissAccessOffer() {
+  const { siteAccessDismissed } = await chrome.storage.local.get("siteAccessDismissed");
+  if (!_accessOffer.site) return chrome.storage.local.set({ siteAccessDismissedAt: Date.now() });
+  return chrome.storage.local.set({ siteAccessDismissed: { ...(siteAccessDismissed || {}), [_accessOffer.site]: Date.now() } });
+}
+
+function accessGranted() {
+  accessText.hidden = true;
+  accessAllow.hidden = true;
+  accessAllowAll.hidden = true;
+  accessSkip.hidden = true;
+  accessOutcome.textContent = "Done — scan again to read the original photos";
+  accessRescan.hidden = false;
+  accessRescan.focus();
+}
+
 // Must run straight from the click: the browser refuses a permission request made later.
 accessAllow.addEventListener("click", async () => {
-  const granted = await requestAllSites(chrome.permissions);
+  // Called first thing in the click, before any other await: the browser refuses a request made later.
+  const granted = _accessOffer.site && _accessOffer.origins.length
+    ? await requestSites(chrome.permissions, _accessOffer.origins)
+    : await requestAllSites(chrome.permissions);
   if (!granted) {
-    chrome.storage.local.set({ siteAccessDismissedAt: Date.now() });
+    dismissAccessOffer().catch(() => {});
     accessNotice.hidden = true;
     return;
   }
-  accessText.hidden = true;
-  accessAllow.hidden = true;
-  accessSkip.hidden = true;
-  accessOutcome.textContent = "Done — scan again for full-size photos";
-  accessRescan.hidden = false;
-  accessRescan.focus();
+  accessGranted();
+});
+accessAllowAll.addEventListener("click", async () => {
+  if (!(await requestAllSites(chrome.permissions))) return;
+  accessGranted();
 });
 accessSkip.addEventListener("click", () => {
-  chrome.storage.local.set({ siteAccessDismissedAt: Date.now() });
+  dismissAccessOffer().catch(() => {});
   accessNotice.hidden = true;
   btnScan.focus();
 });
