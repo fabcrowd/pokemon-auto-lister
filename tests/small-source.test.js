@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MIN_RELIABLE_HEIGHT, SMALL_SOURCE_CONFIDENCE_CAP, capHeightFor, capSmallSource, informationHeight } from '../tools/extension-wasm/lib/fusion.js';
+import { BELOW_HIGH_CONFIDENCE, MIN_NAME_HEIGHT, MIN_RELIABLE_HEIGHT, SMALL_SOURCE_CONFIDENCE_CAP, capHeightFor, capSmallSource, informationHeight } from '../tools/extension-wasm/lib/fusion.js';
 import { confTier } from '../tools/extension-wasm/lib/card-display.js';
 import { isUnsure } from '../tools/extension-wasm/lib/card-picker.js';
 
 const named = { identity: { id: 'a-1', name: 'Mewtwo V-UNION' }, confidence: 0.91, abstain: false, market_price: 10.94 };
 
 test('a card read from a tiny crop is never returned above the unsure level', () => {
-  const capped = capSmallSource(named, MIN_RELIABLE_HEIGHT - 1);
+  const capped = capSmallSource(named, MIN_NAME_HEIGHT - 1);
   assert.equal(capped.confidence, SMALL_SOURCE_CONFIDENCE_CAP);
   assert.equal(confTier(capped.confidence), 'low');
   assert.equal(isUnsure(capped), true);
@@ -49,4 +49,18 @@ test('the size cap is not applied on grid pages, where small tiles are normal', 
   assert.equal(capHeightFor('grid', 120), 0);
   assert.equal(capHeightFor('listing', 120), 120);
   assert.equal(capHeightFor('unknown', 120), 120);
+});
+
+test('a read from a mid-size crop keeps its name, below high, and is not unsure', () => {
+  const kept = capSmallSource(named, MIN_NAME_HEIGHT);
+  assert.equal(kept.confidence, BELOW_HIGH_CONFIDENCE);
+  assert.equal(confTier(kept.confidence), 'medium');
+  assert.equal(kept.unsure, undefined);
+  assert.equal(kept.smallSource, true);
+  assert.equal(kept.confidenceBeforeSmallCap, 0.91);
+  assert.equal(isUnsure(kept), false);
+  const medium = { ...named, confidence: 0.7 };
+  const same = capSmallSource(medium, MIN_RELIABLE_HEIGHT - 1);
+  assert.equal(same.confidence, 0.7);
+  assert.equal(same.smallSource, true);
 });

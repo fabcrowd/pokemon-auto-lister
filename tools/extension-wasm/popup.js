@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -467,6 +467,9 @@ function renderPrice(card, idx) {
   if (card.priceError) return cell("—", card.priceError);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
   const conditions = enabledConditions();
+  // Name sure, printing open: the range across the printings it could be, until the user picks one.
+  const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
+  if (openSpan) return cell(openSpan, "Printing not picked — pick it for one price");
   const printing = chosenPrinting(card, idx);
   const quote = quotedPrice(card, printing, conditions);
   if (quote) {
@@ -726,7 +729,7 @@ function renderSetRow(card, idx) {
     return `<option value="${escHtml(c.id)}" ${c.id === picked ? "selected" : ""}>${escHtml(label)}</option>`;
   }).join("");
   return `<div class="variant-select-row set-select-row">
-    <span class="lbl">Set?</span>
+    <span class="lbl${needsPrinting(card) ? " pick-printing" : ""}">${needsPrinting(card) ? "Pick printing" : "Set?"}</span>
     <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
   </div>`;
 }

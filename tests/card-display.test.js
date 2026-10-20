@@ -21,6 +21,7 @@ import {
   setRangeOf,
   setRangeSummary,
   setRangeNote,
+  needsPrinting,
 } from '../tools/extension-wasm/lib/card-display.js';
 
 const charizard = {
@@ -210,6 +211,19 @@ test('splitByRecognition keeps page order and original indexes', () => {
   assert.deepEqual(shown, [0, 1, 2, 3]);
   assert.deepEqual(hidden, []);
   assert.deepEqual(splitByRecognition([named(), { cardBack: true, abstain: true }]).hidden, [1]);
+});
+
+test('a sure name with its printing open counts as identified, with the printing to pick', () => {
+  const open = { identity: { id: 'base1-4', name: 'Charizard' }, confidence: 0.79, abstain: false,
+    setChoices: [{ id: 'base1-4' }, { id: 'base4-4' }], setRange: { low: 120, high: 950, count: 2 } };
+  assert.equal(needsPrinting(open), true);
+  // A guessed printing keeps its own price and the "Set?" menu.
+  assert.equal(needsPrinting({ ...open, bestGuess: { id: 'base1-4', reason: 'page' } }), false);
+  assert.equal(classifyCard(open), 'identified');
+  assert.equal(needsPrinting({ ...open, setConfirmed: true }), false);
+  assert.equal(needsPrinting({ ...open, setChoices: [{ id: 'base1-4' }] }), false);
+  assert.equal(needsPrinting({ ...open, unsure: true }), false);
+  assert.equal(scanStatus([open, named()]), 'Found 2 cards: 2 identified (1 to pick printing)');
 });
 
 test('scanStatus words every count and drops empty parts', () => {

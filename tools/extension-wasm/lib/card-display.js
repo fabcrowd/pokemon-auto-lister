@@ -237,6 +237,16 @@ export function isIdentified(card) {
 }
 
 /**
+ * Named for sure, but which printing is still the user's call: several sets print the same art and nothing on the
+ * card (number, symbol, stamp) has settled it, and no printing is guessed. Shown as identified with a price range and a
+ * "Pick printing" menu. A card with a guessed printing keeps that printing's price and the "Set?" menu.
+ */
+export function needsPrinting(card) {
+  if (!isIdentified(card) || card.setConfirmed === true || card.bestGuess) return false;
+  return (card.setChoices?.length || 0) > 1;
+}
+
+/**
  * identified: named and settled. pick: the user is asked "Which card is this?", with the closest matches
  * when there are any. unrecognised: only a card back, which is not a card to identify.
  */
@@ -258,14 +268,18 @@ export function splitByRecognition(cards) {
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 
-/** "Found 15 cards: 2 identified, 13 need your pick". Empty when nothing was found. */
+/** "Found 15 cards: 2 identified (1 to pick printing), 13 need your pick". Empty when nothing was found. */
 export function scanStatus(cards) {
   const list = cards || [];
   if (list.length === 0) return '';
   const counts = { identified: 0, pick: 0, unrecognised: 0 };
-  for (const card of list) counts[classifyCard(card)] += 1;
+  let printing = 0;
+  for (const card of list) {
+    counts[classifyCard(card)] += 1;
+    if (needsPrinting(card)) printing += 1;
+  }
   const parts = [
-    counts.identified ? `${counts.identified} identified` : '',
+    counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick printing)` : ''}` : '',
     counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
     counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
   ].filter(Boolean);
