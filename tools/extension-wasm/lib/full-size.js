@@ -15,6 +15,47 @@ const IMAGE_EXTENSION = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 // Rough size each kind of hint is expected to have, only used to order the tries.
 const ASSUMED = { rewrite: TARGET_SIDE, original: 1500, attribute: 1400, link: 1300, og: 1200 };
 
+// Facebook's CDN. Its signed URLs refuse any change to the size in `stp`, but the `ctp` resize on the og:image is
+// outside the signature: without it the same URL serves the upload itself (a Marketplace photo shown at 720x960 came
+// back at 1537x2048 on 2026-10-20). `cstp=mx<w>x<h>` names that size.
+const FACEBOOK_CDN = /(?:^|\.)fbcdn\.net$/i;
+export const FACEBOOK_MAX_SIDE = 2048;
+
+export function isFacebookCdn(host) {
+  return FACEBOOK_CDN.test(String(host || ""));
+}
+
+/** The Facebook CDN URL with its `ctp` resize removed, or null when it is not one or has none. */
+export function facebookOriginal(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || !isFacebookCdn(url.hostname) || !url.searchParams.has("ctp")) return null;
+  url.searchParams.delete("ctp");
+  return url.href;
+}
+
+function facebookSize(href) {
+  const match = String(href).match(/[?&]cstp=mx(\d{2,5})x(\d{2,5})(?:&|$)/);
+  return match ? Math.max(Number(match[1]), Number(match[2])) : ASSUMED.original;
+}
+
+// Two Facebook CDN URLs of the same upload: the file name carries the photo id, the query only the rendition.
+function sameFacebookImage(a, b) {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    if (!isFacebookCdn(x.hostname) || !isFacebookCdn(y.hostname)) return false;
+    const name = (url) => url.pathname.split("/").pop();
+    return name(x).length > 8 && name(x) === name(y);
+  } catch {
+    return false;
+  }
+}
+
 function parseSrcset(text, naturalWidth) {
   const out = [];
   for (const match of String(text || "").matchAll(/(\S+?)(?:\s+(\d+(?:\.\d+)?)([wx]))?\s*(?:,|$)/g)) {
@@ -78,9 +119,12 @@ export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0
   const hostSet = allowedHosts ? new Set([...allowedHosts].map((host) => String(host).toLowerCase())) : null;
   const shown = new Set([src, currentSrc].map((raw) => resolve(raw, base)?.href).filter(Boolean));
   const found = new Map();
+  // A page that loaded its photos from one Facebook CDN host may name the same upload on another.
+  const facebookPage = hostSet ? [...hostSet].some(isFacebookCdn) : false;
   const add = (href, size) => {
     if (!href || shown.has(href) || (found.get(href) ?? -1) >= size) return;
-    if (hostSet && !hostSet.has(new URL(href).hostname.toLowerCase())) return;
+    const host = new URL(href).hostname.toLowerCase();
+    if (hostSet && !hostSet.has(host) && !(facebookPage && isFacebookCdn(host))) return;
     found.set(href, size);
   };
   const addUrl = (url, size) => { if (url) add(url.href, size); };
@@ -88,6 +132,8 @@ export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0
   for (const raw of [src, currentSrc]) {
     const url = resolve(raw, base);
     if (url) rewrites(url).forEach((entry) => add(entry.href, entry.size));
+    const original = url && facebookOriginal(url.href);
+    if (original) add(original, facebookSize(original));
   }
   for (const entry of parseSrcset(srcset, naturalWidth)) {
     if (naturalWidth > 0 && entry.size < naturalWidth * MIN_GROWTH) continue;
@@ -99,6 +145,10 @@ export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0
   for (const raw of Array.isArray(ogImages) ? ogImages : []) {
     const og = resolve(raw, base);
     if (og && sameImageUrl(og.href, src || currentSrc)) addUrl(og, ASSUMED.og);
+    if (og && sameFacebookImage(og.href, src || currentSrc)) {
+      const original = facebookOriginal(og.href);
+      if (original) add(original, facebookSize(original));
+    }
   }
 
   return [...found.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_CANDIDATES).map(([href]) => href);

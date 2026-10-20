@@ -41,7 +41,7 @@ import { createUploader } from "./lib/upload-queue.js";
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 // dev-only:end
 import { sendToTab } from "./lib/tab-messaging.js";
-import { fullSizeCandidates, loadFullSize } from "./lib/full-size.js";
+import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, loadFullSize } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -776,7 +776,7 @@ async function handleScanPage(sendResponse, era) {
                   }
                 }
               }
-              const naturalPerFed = fromSource ? 1
+              const naturalPerFed = fromSource ? upgrade?.naturalPerFed ?? 1
                 : ph.naturalHeight > 0 && sourceTransform === null
                   ? (() => {
                     const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
@@ -2311,7 +2311,22 @@ async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget 
   }
   if (!candidates.length) return null;
   return loadFullSize(candidates, { width: ph.naturalWidth, height: ph.naturalHeight },
-    (url) => loadPhotoSource(url, { timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE, allowedHosts, budget }));
+    (url) => {
+      // A Facebook original is kept up to 2048 px: its lot photos hold 50 cards, each ~100 px tall at the shown size.
+      const host = new URL(url).hostname.toLowerCase();
+      const facebook = isFacebookCdn(host);
+      // fullSizeCandidates only names another Facebook CDN host when the page loaded its photos from that CDN.
+      const hosts = facebook && allowedHosts && !allowedHosts.has(host) ? new Set([...allowedHosts, host]) : allowedHosts;
+      return loadPhotoSource(url, { timeoutMs: PHOTO_TIMEOUT_MS, maxSide: facebook ? FACEBOOK_MAX_SIDE : PHOTO_MAX_SIDE, allowedHosts: hosts, budget });
+    }).then((found) => {
+      if (found && isFacebookCdn(new URL(found.url).hostname)) {
+        console.log("[BG] reading the Facebook original:", found.bitmap.width + "x" + found.bitmap.height, "(shown", ph.naturalWidth + "x" + ph.naturalHeight + ")");
+        // The original sharpens the match, but how sure a card is shown stays judged on the photo the seller's
+        // buyers see: at 2048 px, 50-card lots put many crops just past the size cap, and those were the wrong ones.
+        return { ...found, naturalPerFed: ph.naturalWidth / found.bitmap.width };
+      }
+      return found;
+    });
 }
 
 function photoRejected(reason, url) {
