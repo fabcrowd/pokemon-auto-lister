@@ -437,8 +437,9 @@ function renderCardRow(card, idx) {
     ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
     : "";
 
-  const thumb = id.name ? null : cropThumb(card);
-  return `<div class="card-row" data-idx="${idx}">
+  // An asked card shows its picture in the question instead.
+  const thumb = id.name || askRow ? null : cropThumb(card);
+  return `<div class="card-row${askRow ? " asking" : ""}" data-idx="${idx}">
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
@@ -510,11 +511,20 @@ function renderAskRow(card, idx) {
     ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
         <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
         ${(card.identity?.name && !card.lowCertainty) || !card.candidates?.length ? "" : `<div class="picker-sub">${card.lowCertainty ? "Best guess first, then the closest matches" : "Closest matches"}</div>`}
-        <div class="pick-row">${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
+        <div class="pick-row">${renderScannedCard(card, idx)}${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
         ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
       </div>`
     : "";
   return ask + renderSearchPanel(idx);
+}
+
+// The picture the question is about; pressing it scrolls the page to that card.
+function renderScannedCard(card, idx) {
+  const crop = cropThumb(card);
+  return `<button type="button" class="scanned-card" data-show-on-page data-idx="${idx}" title="Show this card on the page" aria-label="The card on the page. Show it on the page.">
+    ${crop ? `<img src="${escHtml(crop)}" alt="">` : `<span class="pick-blank" aria-hidden="true"></span>`}
+    <span class="scanned-label">On the page</span>
+  </button>`;
 }
 
 function renderSearchPanel(idx) {
@@ -657,8 +667,27 @@ resultsEl.addEventListener("click", (e) => {
     openSearch(idx, button.dataset.via);
   } else if ("closeSearch" in button.dataset) {
     closeSearch(idx);
+  } else if ("showOnPage" in button.dataset) {
+    highlightOnPage(idx, true);
   }
 });
+
+let _highlighted = null;
+
+function highlightOnPage(idx, scroll = false) {
+  if (idx === _highlighted && !scroll) return;
+  _highlighted = idx;
+  chrome.runtime.sendMessage({ action: "highlightCard", index: idx, scroll }).catch(() => {});
+}
+
+function rowIndex(target) {
+  const row = target?.closest?.(".card-row[data-idx]");
+  return row && resultsEl.contains(row) ? Number(row.dataset.idx) : null;
+}
+
+resultsEl.addEventListener("mouseover", (e) => highlightOnPage(rowIndex(e.target)));
+resultsEl.addEventListener("focusin", (e) => highlightOnPage(rowIndex(e.target)));
+resultsEl.addEventListener("mouseleave", () => highlightOnPage(null));
 
 resultsEl.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && e.target.classList.contains("picker-input")) {

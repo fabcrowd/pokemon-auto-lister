@@ -1,3 +1,17 @@
+# Overlay / extension UI smoke (2026-10-19)
+
+- [x] QA auditor: Chromium click-through of popup, settings, overlay; report in `tasks/qa-smoke-report.md`
+- [x] QA-1: overlay labels clamped to the card; price-only under 140 px (`content.js`; Chromium `overlay-wide-fixed.png` / `overlay-narrow-fixed.png`)
+- [x] PM re-verify QA-1 in Chromium (labels only; live scan still untested)
+- [ ] QA-2 deferred: price-snapshot 404 `console.error` on popup open until the data-repo nightly publishes `prices.json`
+- [ ] Do not commit Playwright profiles under `tasks/qa-smoke/*-profile-*`
+
+# Daily prices from the data repo (2026-10-18)
+
+- [x] Nightly writes `prices.json` and the sign job publishes it on the `prices` pre-release (not `latest`)
+- [x] The extension downloads that one file once a day and overlays TCGdex markets by TCGPlayer product id
+- [ ] The live nightly is the copy of `tools/shared-data` on `fabcrowd/card-scanner-data`. Until that copy includes this job, scans still show TCGdex's date
+
 # Extension accuracy pass on grid pages (2026-10-18, fix/extension-only)
 
 - [x] Dedupe rows by page element across layout shifts (a1a93e6); read each grid tile once (bf83b31)
@@ -17,7 +31,7 @@
 # Store-build debug (2026-10-18)
 
 - [x] Page set hint: set in heading/breadcrumb/title is the best guess for open rows (1536670)
-- [x] Overlay labels clamped to card width; price-only under 140 px (654a132)
+- [x] Overlay labels clamped to card width; price-only under 140 px (restored 2026-10-19 after QA-1)
 - [x] Era-restricted search; store build no longer requests variant.onnx
 - [x] Site access and toolbar click tested on the unmodified store build via CDP `Extensions.triggerAction` (`--enable-unsafe-extension-debugging`) and Windows UI Automation on the permission dialog (`.tmp/debug-store/plib.mjs`, `p8.mjs`, `accept.ps1`)
 

@@ -1,8 +1,36 @@
 # Handoff
 
-Last updated: 2026-10-18 (evening). Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
+Last updated: 2026-10-19 (evening). Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
 
-State: `main` includes the extension accuracy pass below (branch `fix/extension-only`, merged 2026-10-18; the commit list is in "Extension accuracy pass"). Before it, `feat/card-picker-sealed-test` and `main` were both at `b6c6749`. Nothing is uncommitted except the untracked detector candidates `tools/vellum-ai/models/card_detect_v7/` and `card_detect_v7b/` (parked; do not commit weights). `dist/extension-wasm-store.zip` was last rebuilt before the accuracy pass: rebuild it from `main` before any store upload.
+## Continue from here (2026-10-19)
+
+Ship-smoke of the overlay and extension UI ran on this dirty tree. The product is **not signed off**. Cloud QA never launched (the Cursor workspace is `cardscanner`, which has no git remote; the repo with `origin` is this nested folder). [QA auditor](c980dd19-3450-473c-a741-5b89aba4d7cd) ran locally in headed Chromium 153 / Playwright 1.63.0, unpacked `tools/extension-wasm`, id `glelmmehhcnicljmgmhkaddndalaeelg`. Report: `tasks/qa-smoke-report.md`. Screenshots: `tasks/qa-smoke/*.png`. Do not commit the leftover Playwright profiles under `tasks/qa-smoke/chrome-profile-*` and `tasks/qa-smoke/label-profile-*`.
+
+HEAD at audit: `48e2b76` plus uncommitted extension/docs/pricing work. Overlay, popup, and settings were exercised with screenshots and console listeners. Live scan was blocked (models not downloaded).
+
+### This smoke — done vs remaining
+
+The named-model engineer agent could not start (plan only allows Auto). QA-1 was fixed in this session in `content.js` (`badgeLayout`, compact under 140 px, clamp to card width). `tests/content-pure.test.js` 30/30. Chromium re-shot the same 200/110 fixture: `tasks/qa-smoke/overlay-wide-fixed.png` (name ellipsized on the card), `overlay-narrow-fixed.png` (price-only `$420.50` on the 110 px card). Overlay QA-1 is accepted. No commit.
+
+Still open:
+
+1. **QA-2 (deferred).** Popup and service worker `console.error`: `[prices] snapshot not updated: price snapshot answered 404`. Needs the `prices` pre-release on `fabcrowd/card-scanner-data`, or a quieter log for an expected miss.
+
+2. **Live SCAN PAGE** still untested (models not downloaded, ~140 MB). Wizard `#btn-wiz-access-skip` never shown on the unpacked `<all_urls>` manifest. Wizard Allow / post-scan Allow not clicked. Store-build optional-permission wording not exercised.
+
+3. Playwright profiles under `tasks/qa-smoke/*-profile-*` — delete; do not commit.
+
+4. Owner PC / store / accuracy items below are unchanged.
+
+### Still to do (from before this smoke)
+
+Owner PC / store / accuracy items below are unchanged: Windows `npm test` including `tests/store-build.test.js`, real Chrome Pokellector vs the old 97–98 figure, rebuild `dist/extension-wasm-store.zip` from current sources, `hub-penalty.bin`, refinement on other grid sites, adapter `tiles` slice, community loop, revoke leaked chat tokens.
+
+Working-tree warning: many files are already dirty (`popup.js`, `content.js`, `background.js`, pricing snapshot, store docs). Do not `git add -A`. Do not commit detector weights under `tools/vellum-ai/models/card_detect_v7/`. Do not read `data/sealed-test`.
+
+Daily prices: TCGdex's TCGPlayer block was stuck on 2026-10-14 (Venusaur ex `sv03.5-198` $92.29 there, $88.85 in the same day's tcgcsv snapshot). The extension does not fetch that snapshot itself. `pipeline/prices.py` writes `prices.json` (product id to subtype price, plus `updatedAt`). The nightly publishes it on the `prices` pre-release of `fabcrowd/card-scanner-data`, which is not `latest`, so the learning bundle is unchanged. `lib/price-snapshot.js` downloads that file once a day and replaces a TCGdex market only when the product id matches. Until `tools/shared-data` is copied onto the data repo and the nightly runs, the URL 404s and scans keep the TCGdex date.
+
+State: `main` includes the extension accuracy pass below (branch `fix/extension-only`, merged 2026-10-18; the commit list is in "Extension accuracy pass"). The working tree is dirty (extension, pricing snapshot, store docs, this smoke). Untracked detector candidates `tools/vellum-ai/models/card_detect_v7/` and `card_detect_v7b/` stay parked; do not commit weights. `dist/extension-wasm-store.zip` was last rebuilt before the accuracy pass: rebuild it from current sources before any store upload.
 
 ## Done 2026-10-17/18
 

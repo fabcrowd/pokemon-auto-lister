@@ -78,6 +78,9 @@ Receives the opt-in contributions of "Help improve recognition for everyone" and
 **github.com/fabcrowd/pokemon-auto-lister/releases/download/*, objects.githubusercontent.com, release-assets.githubusercontent.com**
 Download the recognition models and lookup data on first run (about 140 MB). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
 
+**github.com/fabcrowd/card-scanner-data/releases/***
+Once a day, the shared TCGPlayer price snapshot, and the signed learning pack when shared learning is on. The request is for a public file. Nothing about you is sent.
+
 ## Data usage (Privacy practices tab)
 
 Collected, in the store's wording:

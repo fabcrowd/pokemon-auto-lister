@@ -34,3 +34,7 @@ test-results/
 
 # onnxruntime-web, fetched by scripts/setup_vendor.ps1 and verified against scripts/vendor-hashes.json
 tools/extension-wasm/vendor/
+
+# Local QA browser profiles and parked detector weights: never commit
+tasks/qa-smoke/*-profile-*/
+tools/vellum-ai/models/card_detect_v7*/

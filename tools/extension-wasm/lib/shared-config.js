@@ -6,4 +6,6 @@
 
 export const RELAY_URL = "https://card-scanner-relay.fabcrowd.workers.dev/v1/contributions";
 export const PACK_MANIFEST_URL = "https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json";
+// One file for every install. A pre-release tag, so it never becomes the "latest" learning bundle.
+export const PRICE_SNAPSHOT_URL = "https://github.com/fabcrowd/card-scanner-data/releases/download/prices/prices.json";
 export const PACK_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYB9mRPR+1EEbhhjN0J/jW7O1dC5u0zFAKJ8K/BldEQdexjtksgxQK+xIA/C4JDZgHxleMomi8BBgWHjHKvL7yw==";

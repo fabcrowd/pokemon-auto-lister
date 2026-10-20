@@ -58,6 +58,7 @@ import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-
 import { choiceForStamp, finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
 import { PROMO_STAR_MIN, choicesForSymbol, promoStarScore, symbolFromScores, symbolScores } from "./lib/set-symbol.js";
 import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
+import { applySnapshot, currentSnapshot, refreshPriceSnapshot } from "./lib/price-snapshot.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
 } from "./lib/condition-pricing.js";
@@ -308,7 +309,7 @@ async function numberReaderReady() {
 // send newCardsDetected and nothing else.
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage",
-  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear",
+  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard",
 ]);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -371,6 +372,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case "relayClear":
       relayToTab(msg);
+      sendResponse({ ok: true });
+      return false;
+
+    case "highlightCard":
+      relayToTab({ action: "relayHighlight", index: Number.isInteger(msg.index) ? msg.index : null, scroll: msg.scroll === true });
       sendResponse({ ok: true });
       return false;
 
@@ -934,7 +940,10 @@ async function handleScanPage(sendResponse, era) {
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
-    const withCandidates = cards.map((card) => (isUnsure(card) ? { ...card, candidates: candidatesFor(card, _meta, 5, era) } : card));
+    // An asked card carries the picture it was read from, so the user can see which card the question is about.
+    const withCandidates = cards.map((card, i) => (isUnsure(card)
+      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), crop: encoded[i] ?? null }
+      : card));
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
       page: domResp?.page,
@@ -1257,6 +1266,9 @@ checkBundle({
   else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] bundle not used:", result.status);
 }).catch((err) => console.error("[BG] bundle check failed:", err?.message || err));
 
+// The data repo publishes one price file a day. A failed download keeps the copy already stored.
+refreshPriceSnapshot().catch((err) => console.error("[BG] price snapshot not updated:", err?.message || err));
+
 const HUB_PENALTY_PATH = "data/hub-penalty.bin";
 
 // "Experimental: reduce look-alike matches" in the options page. Off until a sealed-set score shows a gain.
@@ -1443,7 +1455,9 @@ async function relayToTab(msg, tabId = null) {
   if (_targetTabId === null) return;
   const relayMsg = msg.action === "relayOverlay"
     ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight }
-    : { action: "clearOverlay" };
+    : msg.action === "relayHighlight"
+      ? { action: "highlightCard", index: msg.index, scroll: msg.scroll }
+      : { action: "clearOverlay" };
   // A page the extension may not touch (no access granted, or a browser page) just gets no overlay.
   await sendToTab(chrome, _targetTabId, relayMsg).catch(() => {});
 }
@@ -2104,8 +2118,9 @@ async function priceIdentity(identity) {
   const full = tcgdexGrid ? null : await getFullCardPayload(identity.id);
   const prices = full?.tcgplayer?.prices;
   const tcgPlayerId = tcgPlayerIdFromTcgdex(tcgdex) ?? extractTcgPlayerId(full?.tcgplayer?.url);
-  // Prefer the richer grid from condition-pricing (backend/PPT), then TCGdex, then pokemontcg.io.
+  // Prefer the richer grid from condition-pricing (backend/PPT), then the shared daily snapshot, then TCGdex, then pokemontcg.io.
   let grid = await getConditionGrid({ ...identity, tcgPlayerId });
+  if (!grid && tcgdexGrid) grid = applySnapshot(tcgdexGrid, await currentSnapshot());
   if (!grid) grid = tcgdexGrid || fromPokemontcgPayload(prices, full?.tcgplayer?.updatedAt);
   const legacyPrice = extractLegacyPrice(prices);
   return {

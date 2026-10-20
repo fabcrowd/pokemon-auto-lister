@@ -1,5 +1,9 @@
 # Lessons
 
+## Prices are one file on the data repo
+
+Each install must not fetch TCGPlayer on its own. The nightly job writes `prices.json`; the extension downloads that file from `fabcrowd/card-scanner-data` (the `prices` pre-release, not `latest`, so it does not replace the learning bundle). Join only by TCGPlayer product id. Do not put prices in the learning manifest: that file is withheld when `improved` is false, and prices still have to move on those nights.
+
 ## The photo is the card signal, not the title
 
 Only identify a card after PokeGrade (or VellumAI) confirms a card in the photo (`identity.name`). 422 "could not identify a card" is a skip, not a retry.

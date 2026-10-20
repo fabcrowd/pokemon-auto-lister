@@ -134,9 +134,14 @@ function normalizeBackend(j) {
 
 // ---- source 2: PokemonPriceTracker ----
 
+/** One card by TCGPlayer product id; limit=1 is billed as a single card instead of a 50-card page. */
+export function pptCardUrl(tcgPlayerId) {
+  return `${PPT_BASE}?tcgPlayerId=${encodeURIComponent(tcgPlayerId)}&limit=1`;
+}
+
 async function fetchPpt(identity, apiKey) {
   try {
-    const url = `${PPT_BASE}?tcgPlayerIds=${encodeURIComponent(identity.tcgPlayerId)}`;
+    const url = pptCardUrl(identity.tcgPlayerId);
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(6000),
@@ -151,18 +156,37 @@ async function fetchPpt(identity, apiKey) {
   }
 }
 
-function normalizePpt(card) {
+// prices.variants keys a printing's prices by "<condition> <printing>", e.g. "Near Mint Holofoil".
+// A printing's conditionUsed names which of these its marketPrice is.
+const PPT_CONDITION_PREFIX = [
+  ["NM", "near mint"],
+  ["LP", "lightly played"],
+  ["MP", "moderately played"],
+  ["HP", "heavily played"],
+  ["DMG", "damaged"],
+];
+
+function pptCondition(label) {
+  const key = String(label || "").toLowerCase();
+  return PPT_CONDITION_PREFIX.find(([, prefix]) => key.startsWith(prefix))?.[0] ?? null;
+}
+
+export function normalizePpt(card) {
   const variants = {};
-  for (const [printing, printingData] of Object.entries(card.variants || {})) {
-    const cu = printingData?.conditionUsed || printingData;
-    const conds = {
-      NM:  numOrNull(cu.marketNearMint),
-      LP:  numOrNull(cu.marketLightlyPlayed),
-      MP:  numOrNull(cu.marketModeratelyPlayed),
-      HP:  numOrNull(cu.marketHeavilyPlayed),
-      DMG: numOrNull(cu.marketDamaged),
-    };
-    variants[printing] = { conditions: conds, market: conds.NM ?? firstNonNull(conds) };
+  const priced = card?.prices?.variants && typeof card.prices.variants === "object" ? card.prices.variants : {};
+  const printings = new Set([...Object.keys(priced), ...Object.keys(card?.variants || {})]);
+  for (const printing of printings) {
+    const conds = { NM: null, LP: null, MP: null, HP: null, DMG: null };
+    for (const [label, row] of Object.entries(priced[printing] || {})) {
+      const cond = pptCondition(label);
+      if (cond && conds[cond] == null) conds[cond] = numOrNull(row?.price);
+    }
+    const used = card.variants?.[printing];
+    const usedCond = pptCondition(used?.conditionUsed);
+    if (usedCond && conds[usedCond] == null) conds[usedCond] = numOrNull(used?.marketPrice);
+    const market = conds.NM ?? firstNonNull(conds);
+    if (market == null) continue;
+    variants[printing] = { conditions: conds, market };
   }
 
   // Graded block — PPT returns ebay-sourced data per grader
@@ -178,6 +202,7 @@ function normalizePpt(card) {
     }
   }
 
+  if (Object.keys(variants).length === 0) return null;
   return {
     source: "ppt",
     variants,
@@ -257,6 +282,7 @@ export function fromTcgdexPayload(card, identity) {
     variants[TCGDEX_PRINTING[key] || key] = {
       conditions: { NM: market, LP: null, MP: null, HP: null, DMG: null },
       market,
+      productId: Number.isInteger(row.productId) ? row.productId : null,
     };
   }
   if (Object.keys(variants).length === 0) return null;

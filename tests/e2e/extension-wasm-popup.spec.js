@@ -183,14 +183,20 @@ test.describe('Consumer extension popup', () => {
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.evaluate(() => {
       const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      window.__highlights = [];
       const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
       const near = [{ id: 'a-1', name: 'Pidgey', set: 'Set A', setCode: 'a', number: '1' }, { id: 'b-2', name: 'Rattata', set: 'Set B', setCode: 'b', number: '2' }];
+      const crop = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
       const cards = [
         { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
         { identity: { id: 'x-2', name: 'Raichu', set: 'Base', setCode: 'base1', number: '14' }, confidence: 0.9, abstain: false, market_price: 7.5, price_grid: grid(7.5), box: [0, 0, 1, 1] },
-        { identity: null, confidence: 0.3, abstain: true, candidates: near, box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.3, abstain: true, candidates: near, crop, box: [0, 0, 1, 1] },
       ];
-      chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanPage' ? { cards, scanId: 'y', srcWidth: 10, srcHeight: 10, pending: 0 } : real(msg));
+      chrome.runtime.sendMessage = async (msg) => {
+        if (msg?.action === 'scanPage') return { cards, scanId: 'y', srcWidth: 10, srcHeight: 10, pending: 0 };
+        if (msg?.action === 'highlightCard') { window.__highlights.push(msg); return { ok: true }; }
+        return real(msg);
+      };
     });
     await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
     await expect(page.locator('#s-value')).toHaveText('$12.50');
@@ -201,6 +207,16 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.picker-sub')).toHaveText('Closest matches');
     await expect(page.locator('.pick-card')).toHaveCount(2);
     await expect(page.locator('.unrec-toggle')).toHaveCount(0);
+
+    const scanned = page.locator('.card-row.asking .scanned-card');
+    await expect(scanned).toHaveCount(1);
+    await expect(scanned.locator('img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+    await expect(scanned).toContainText('On the page');
+    await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
+    await page.screenshot({ path: path.join(__dirname, 'screenshots', 'ext-wasm-popup-ask.png') });
+    await scanned.evaluate((b) => b.click());
+    const sent = await page.evaluate(() => window.__highlights);
+    expect(sent.at(-1)).toEqual({ action: 'highlightCard', index: 2, scroll: true });
     await page.close();
   });
 

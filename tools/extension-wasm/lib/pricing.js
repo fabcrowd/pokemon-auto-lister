@@ -80,7 +80,7 @@ export async function getFullCardPayload(id) {
 const TCGDEX_BASE = "https://api.tcgdex.net/v2/en/cards";
 const _tcgdexInflight = new Map();
 
-/** TCGdex card (keyed by our catalog id, prices updated daily), or null. */
+/** TCGdex card keyed by our catalog id, or null. Daily TCGPlayer numbers come from the shared snapshot. */
 export async function getTcgdexCard(id) {
   if (!id) return null;
   const cacheKey = `tcgdex1_${id}`;

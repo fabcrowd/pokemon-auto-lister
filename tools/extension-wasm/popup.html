@@ -8,6 +8,9 @@
 
     body {
       width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
       background: #08090d;
       color: #dde1ee;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -15,6 +18,7 @@
       overflow: hidden;
       user-select: none;
     }
+    body > * { flex-shrink: 0; }
     .results { user-select: text; }
 
     /* HEADER */
@@ -207,11 +211,17 @@
 
     /* RESULTS PANEL */
     .results {
-      max-height: 500px;
+      flex: 1 1 auto;
+      min-height: 0;
       overflow-y: auto;
       background: #07080c;
       border-top: 1px solid #1a1d2a;
     }
+    /* Rows grow with a widened or maximized scanner window. */
+    @media (min-width: 640px)  { .results > * { zoom: 1.25; } }
+    @media (min-width: 900px)  { .results > * { zoom: 1.5; } }
+    @media (min-width: 1200px) { .results > * { zoom: 1.8; } }
+    @media (min-width: 1600px) { .results > * { zoom: 2.1; } }
     .results::-webkit-scrollbar { width: 3px; }
     .results::-webkit-scrollbar-thumb { background: #1e2130; border-radius: 2px; }
 
@@ -401,7 +411,25 @@
       font-size: 11px;
     }
     .picker-input::placeholder { color: #8b92ab; }
-    .link-btn:focus-visible, .pick-card:focus-visible, .picker-input:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .link-btn:focus-visible, .pick-card:focus-visible, .picker-input:focus-visible, .scanned-card:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .scanned-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      width: 72px;
+      padding: 4px;
+      margin-right: 6px;
+      background: #6366f114;
+      border: 2px solid #6366f1;
+      border-radius: 6px;
+      color: #c7c9ff;
+      font: inherit;
+      cursor: pointer;
+    }
+    .scanned-card img, .scanned-card .pick-blank { display: block; width: 62px; height: 87px; border-radius: 3px; background: #14172a; object-fit: cover; }
+    .scanned-label { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+    .card-row.asking:hover, .card-row.asking:focus-within { background: #0c0d16; }
 
     /* SETUP OVERLAY */
     .setup-overlay {

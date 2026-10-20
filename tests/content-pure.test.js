@@ -225,6 +225,36 @@ test('image hosts work without the performance API and stop at a bound', () => {
   assert.deepEqual([...loadPage({}).pure.collectImageHosts()], []);
 });
 
+test('a card label shows only its name and one price', () => {
+  const id = { name: 'Charmeleon', set: 'Base Set', number: '24' };
+  const label = (card) => ({ ...pure.labelText(card) });
+  assert.deepEqual(label({ identity: id, display: { price: 4.5, printing: 'Normal', condition: 'NM', footer: 'TCGPlayer' } }), { name: 'Charmeleon', price: '$4.50' });
+  assert.deepEqual(label({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63' } }), { name: 'Charmeleon', price: '$0.71–$8.63' });
+  const grid = { variants: { normal: { market: 1.25 }, holofoil: { market: 38.99 } } };
+  assert.deepEqual(label({ identity: id, price_grid: grid }), { name: 'Charmeleon', price: '$1.25–$38.99' });
+  assert.deepEqual(label({ identity: id, market_price: 2 }), { name: 'Charmeleon', price: '$2.00' });
+  assert.equal(label({ identity: id }).price, '—');
+  assert.equal(label({ identity: null, abstain: true }).name, 'Not recognised');
+});
+
+test('hovering picks the smallest card frame under the pointer', () => {
+  const frame = (x, y, w, h) => ({ rect: { x, y, w, h } });
+  const targets = [frame(0, 0, 600, 400), frame(10, 10, 100, 140), frame(200, 10, 100, 140)];
+  assert.equal(pure.hoveredTarget(targets, null, null), null);
+  assert.equal(pure.hoveredTarget(targets, null, { x: 50, y: 50 }), 1);
+  assert.equal(pure.hoveredTarget(targets, null, { x: 250, y: 50 }), 2);
+  assert.equal(pure.hoveredTarget(targets, null, { x: 400, y: 300 }), 0);
+  assert.equal(pure.hoveredTarget(targets, null, { x: 900, y: 900 }), null);
+});
+
+test('an open label stays open while the pointer is on it, even past a small card', () => {
+  const targets = [{ rect: { x: 10, y: 10, w: 60, h: 90 } }];
+  const hover = { target: 0, rect: { x: 14, y: 14, w: 200, h: 48 } };
+  assert.equal(pure.hoveredTarget(targets, hover, { x: 180, y: 40 }), 0);
+  assert.equal(pure.hoveredTarget(targets, hover, { x: 400, y: 40 }), null);
+  assert.equal(pure.hoveredTarget([], hover, { x: 180, y: 40 }), null);
+});
+
 test('narrow boxes get a compact label and no label is wider than its box', () => {
   assert.equal(pure.badgeLayout(100).compact, true);
   assert.equal(pure.badgeLayout(139).compact, true);
@@ -288,7 +318,7 @@ function loadWithMessages() {
   const source = fs.readFileSync(new URL('../tools/extension-wasm/content.js', import.meta.url), 'utf8');
   const frames = [];
   const window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1100, innerHeight: 800, scrollX: 0, scrollY: 0, requestAnimationFrame: (fn) => frames.push(fn) && frames.length, cancelAnimationFrame() {} };
-  const canvas = { style: {}, remove() {}, getContext: () => ({ clearRect() {} }) };
+  const canvas = { style: {}, remove() {}, getContext: () => ({ clearRect() {}, setTransform() {} }) };
   const document = { getElementById: () => null, createElement: () => canvas, documentElement: { appendChild() {} }, querySelectorAll: () => [] };
   let listener;
   const chrome = { runtime: { onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: () => Promise.resolve() } };

@@ -28,6 +28,13 @@
   let _placed      = [];
   let _raf         = 0;
   let _following   = false;
+  // Scan index of the card the popup is asking about; its box is outlined until the pointer leaves that row.
+  let _highlight   = null;
+  // Card frames drawn in the last pass (viewport rects). A card's label shows only while the pointer is on it; the
+  // canvas never takes the pointer, so that is a hit test against these on the page's own mousemove.
+  let _targets     = [];
+  let _hover       = null; // { target: index into _targets, index: scan index, rect: label rect }
+  let _mouse       = null;
 
   // The page elements (and their rects) of the last findCards, so a box can be pinned to the picture it came from.
   // Rects are in document coordinates so anchors from several scrolled screens can be matched at once.
@@ -102,6 +109,8 @@
     _following = true;
     window.addEventListener('scroll', scheduleDraw, { capture: true, passive: true });
     window.addEventListener('resize', onResize, { passive: true });
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mouseout', onMouseOut, { passive: true });
   }
 
   function unfollowPage() {
@@ -109,6 +118,10 @@
     _following = false;
     window.removeEventListener('scroll', scheduleDraw, { capture: true });
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseout', onMouseOut);
+    _mouse = null;
+    _hover = null;
     if (_raf) window.cancelAnimationFrame(_raf);
     _raf = 0;
   }
@@ -125,11 +138,50 @@
     fitCanvas();
   }
 
+  function onMouseMove(e) {
+    _mouse = { x: e.clientX, y: e.clientY };
+    if (hoveredTarget(_targets, _hover, _mouse) !== (_hover?.target ?? null)) scheduleDraw();
+  }
+
+  // No relatedTarget: the pointer left the window, so no later mousemove will close the panel.
+  function onMouseOut(e) {
+    if (e.relatedTarget) return;
+    _mouse = null;
+    if (_hover) scheduleDraw();
+  }
+
+  function inRect(rect, point) {
+    return Boolean(rect && point) && point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h;
+  }
+
+  /**
+   * Which card the pointer is on: the smallest frame under it (a card inside a larger photo box wins), or the open
+   * one while the pointer is still on its label, which may stick out past a small card. Null when on neither.
+   */
+  function hoveredTarget(targets, hover, point) {
+    if (!point) return null;
+    if (hover && targets[hover.target] && inRect(hover.rect, point)) return hover.target;
+    let best = null;
+    let bestArea = Infinity;
+    targets.forEach((t, i) => {
+      if (!inRect(t.rect, point)) return;
+      const area = t.rect.w * t.rect.h;
+      if (area < bestArea) { best = i; bestArea = area; }
+    });
+    return best;
+  }
+
+  // Drawing is in CSS pixels; the backing store is device pixels so text stays sharp on high-DPI screens.
+  function viewW() { return window.innerWidth; }
+  function viewH() { return window.innerHeight; }
+
   function fitCanvas() {
     if (!canvas) return;
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(viewW() * dpr);
+    canvas.height = Math.round(viewH() * dpr);
     ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Resizing a canvas clears it — repaint the last known overlay state.
     _drawOverlay();
   }
@@ -138,6 +190,7 @@
     stopObserving();
     unfollowPage();
     _placed = [];
+    _highlight = null;
     if (!canvas) return;
     canvas.remove();
     canvas = null;
@@ -248,23 +301,39 @@
   function renderOverlay(cards, srcWidth, srcHeight) {
     ensureCanvas();
     canvas.style.visibility = 'visible';
-    const scaleX = canvas.width  / srcWidth;
-    const scaleY = canvas.height / srcHeight;
+    const scaleX = viewW() / srcWidth;
+    const scaleY = viewH() / srcHeight;
     _placed = [];
-    for (const card of cards) {
+    for (const [index, card] of cards.entries()) {
       if (!card.box || card.box.length < 4) continue;
       const [x1, y1, x2, y2] = card.box;
       // A whole-page scan reports document boxes; a single screen reports boxes in the viewport it was taken in.
       const doc = card.docBox && card.docBox.length >= 4
         ? card.docBox
         : boxToDoc([x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY], _scanScroll);
-      const index = pickAnchor(doc, _scanAnchors);
-      const rel = index >= 0 ? boxToRel(doc, _scanAnchors[index].rect) : null;
+      const anchor = pickAnchor(doc, _scanAnchors);
+      const rel = anchor >= 0 ? boxToRel(doc, _scanAnchors[anchor].rect) : null;
       _placed.push(rel
-        ? { card, el: _scanAnchors[index].el, rel }
-        : { card, doc });
+        ? { card, index, el: _scanAnchors[anchor].el, rel }
+        : { card, index, doc });
     }
     _drawOverlay();
+  }
+
+  function highlightCard(index, scroll) {
+    _highlight = Number.isInteger(index) ? index : null;
+    const p = _highlight == null ? null : _placed.find((q) => q.index === _highlight);
+    if (scroll && p) {
+      const box = _placedBox(p);
+      if (box && !boxFullyInView(box, window.innerWidth, window.innerHeight)) {
+        window.scrollBy({ left: 0, top: (box[1] + box[3]) / 2 - window.innerHeight / 2, behavior: 'smooth' });
+      }
+    }
+    _drawOverlay();
+  }
+
+  function boxFullyInView(box, width, height) {
+    return box[0] >= 0 && box[1] >= 0 && box[2] <= width && box[3] <= height;
   }
 
   function _placedBox(p) {
@@ -275,22 +344,49 @@
 
   function _drawOverlay() {
     if (!canvas) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, viewW(), viewH());
 
+    const previous = _hover;
+    _targets = [];
     for (const p of _placed) {
       const box = _placedBox(p);
-      if (!box || !boxInView(box, canvas.width, canvas.height)) continue;
+      if (!box || !boxInView(box, viewW(), viewH())) continue;
       const [sx1, sy1, sx2, sy2] = box;
       const card = p.card;
       const tier  = card.abstain ? 'abstain' : confTier(card.confidence);
       const color = CONF_COLORS[tier];
+      if (p.index === _highlight) drawHighlight(sx1, sy1, sx2, sy2);
       ctx.save();
       drawCornerBox(sx1, sy1, sx2, sy2, color, card.abstain);
-      if (card.identity && !card.abstain) {
-        drawBadge(sx1, sy1, sx2, sy2, card, color);
-      }
       ctx.restore();
+      _targets.push({ rect: { x: sx1, y: sy1, w: sx2 - sx1, h: sy2 - sy1 }, box, card, color, index: p.index });
     }
+
+    // Labels are drawn last so they sit over neighbouring cards: the hovered card, and the one the popup points at.
+    const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect } : null;
+    const hit = hoveredTarget(_targets, kept, _mouse);
+    _hover = null;
+    for (const [i, t] of _targets.entries()) {
+      if (i !== hit && t.index !== _highlight) continue;
+      ctx.save();
+      const rect = drawLabel(t.box, t.card, t.color);
+      ctx.restore();
+      if (i === hit) _hover = { target: i, index: t.index, rect };
+    }
+  }
+
+  const HIGHLIGHT_COLOR = '#6366f1';
+
+  function drawHighlight(x1, y1, x2, y2) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(99,102,241,0.18)';
+    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.strokeStyle = HIGHLIGHT_COLOR;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = HIGHLIGHT_COLOR;
+    ctx.shadowBlur = 12;
+    ctx.strokeRect(x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4);
+    ctx.restore();
   }
 
   function drawCornerBox(x1, y1, x2, y2, color, dashed) {
@@ -299,10 +395,8 @@
     const arm = Math.min(w, h) * 0.18;
 
     ctx.strokeStyle = color;
-    ctx.lineWidth   = 2.5;
+    ctx.lineWidth   = 2;
     ctx.lineCap     = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur  = dashed ? 0 : 6;
     if (dashed) ctx.setLineDash([5, 4]);
 
     ctx.beginPath();
@@ -319,122 +413,83 @@
     ctx.stroke();
   }
 
-  function overlayPrintingNote(card) {
-    if (card.display?.printingNote) return card.display.printingNote;
-    if (card.display?.price != null) return null;
-    const variants = card.price_grid?.variants;
-    const names = variants ? Object.keys(variants) : [];
-    if (names.length <= 1) return null;
-    const values = names
-      .map((name) => variants[name]?.market)
-      .filter((price) => typeof price === 'number' && price > 0);
-    if (values.length < 2) return names.length + ' variants';
-    const low = Math.min(...values);
-    const high = Math.max(...values);
-    return names.length + ' variants · $' + low.toFixed(2) + '–$' + high.toFixed(2);
+  const money = (n) => '$' + Number(n).toFixed(2);
+
+  /** The two lines a card's label shows: its name and one price (or a price range while the set is open). */
+  function labelText(card) {
+    if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Pick it in the scanner', muted: true };
+    const disp = card.display || null;
+    if (disp?.price != null) return { name: card.identity.name, price: money(disp.price) };
+    const note = disp?.printingNote || '';
+    if (note.includes('$')) return { name: card.identity.name, price: note.slice(note.indexOf('$')) };
+    const values = Object.values(card.price_grid?.variants || {})
+      .map((v) => v?.market)
+      .filter((n) => typeof n === 'number' && n > 0);
+    if (values.length > 1) return { name: card.identity.name, price: money(Math.min(...values)) + '–' + money(Math.max(...values)) };
+    if (card.market_price != null) return { name: card.identity.name, price: money(card.market_price) };
+    return { name: card.identity.name, price: '—', muted: true };
   }
 
-  function drawBadge(x1, y1, x2, y2, card, accentColor) {
-    const id    = card.identity || {};
-    const disp  = card.display || null;
-    const name  = (id.name || 'Unknown').slice(0, 28);
-
-    // Line 2: set + number — always rendered so the user knows what the price refers to.
-    const setName = id.set     || disp?.set     || '';
-    const number  = id.number  || disp?.number  || '';
-    const line2Parts = [];
-    if (setName) line2Parts.push(setName);
-    if (number)  line2Parts.push('#' + number);
-    const line2 = line2Parts.join(' · ');
-
-    // Line 3: printing + price
-    const note = overlayPrintingNote(card);
-    const price = disp?.price != null
-      ? '$' + Number(disp.price).toFixed(2)
-      : (!note && card.market_price != null ? '$' + Number(card.market_price).toFixed(2) : null);
-    const printing = disp?.printing || null;
-    const cond     = disp?.condition || null;
-    const priceLine = price
-      ? [printing, cond, price].filter(Boolean).join(' · ')
-      : null;
-
-    const footer = disp?.footer || null;
-    const spread = disp?.spreadRatio || 1;
-    const warn   = !note && spread > 10 ? `⚠ ${spread.toFixed(1)}× spread` : null;
-
-    const boxW = x2 - x1;
-    const layout = badgeLayout(boxW);
-    const PAD      = layout.compact ? 5 : 9;
-    const ACCENT_W = 4;
-    const NAME_PX  = 14;
-    const SUB_PX   = 11;
-    const PRICE_PX = 17;
-    const WARN_PX  = 10;
-    const GAP      = 3;
-    const FONT     = '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-    const frameW   = ACCENT_W + PAD * 2 + 4;
-    const textMax  = layout.maxWidth - frameW;
-
-    // Compact tiles only have room for the price; the rest stays in the popup.
-    const lines = layout.compact
-      ? [{ text: price || '—', px: PRICE_PX, weight: 800, color: '#10b981' }]
-      : [
-          { text: name,      px: NAME_PX,  weight: 700, color: '#dde1ee' },
-          { text: line2,     px: SUB_PX,   weight: 500, color: '#8b92ab' },
-          { text: priceLine, px: PRICE_PX, weight: 800, color: '#10b981' },
-          { text: note,      px: WARN_PX,  weight: 700, color: '#f59e0b' },
-          { text: footer,    px: WARN_PX,  weight: 500, color: '#8b92ab' },
-          { text: warn,      px: WARN_PX,  weight: 700, color: '#f59e0b' },
-        ].filter((l) => l.text);
-
-    let height = PAD * 2 - GAP;
-    let widest = 0;
-    for (const l of lines) {
-      ctx.font = `${l.weight} ${l.px}px ${FONT}`;
-      l.text = fitText(l.text, textMax, (t) => ctx.measureText(t).width);
-      widest = Math.max(widest, ctx.measureText(l.text).width);
-      height += GAP + l.px;
-    }
-    const WIDTH = Math.min(Math.ceil(widest) + frameW, layout.maxWidth);
-
-    const vy1 = Math.max(0, y1);
-    const vy2 = Math.min(canvas.height, y2);
-    const vx1 = Math.max(0, x1);
-    const inset = layout.compact ? 3 : 6;
-    const bx = Math.max(0, Math.min(vx1 + inset, canvas.width - WIDTH - inset, x2 - WIDTH));
-    const by = Math.max(6, Math.min(vy1 + 6, vy2 - height - 6));
-
-    ctx.save();
-    ctx.shadowColor  = 'rgba(0,0,0,0.65)';
-    ctx.shadowBlur   = 14;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = 'rgba(10,12,18,0.95)';
-    ctx.beginPath();
-    ctx.roundRect(bx, by, WIDTH, height, 6);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.fillStyle = accentColor;
-    ctx.beginPath();
-    ctx.roundRect(bx, by, ACCENT_W, height, [6, 0, 0, 6]);
-    ctx.fill();
-
-    const textLeft = bx + ACCENT_W + PAD;
-    let cy = by + PAD;
-    ctx.textBaseline = 'top';
-    for (const l of lines) {
-      ctx.font      = `${l.weight} ${l.px}px ${FONT}`;
-      ctx.fillStyle = l.color;
-      ctx.fillText(l.text, textLeft, cy);
-      cy += l.px + GAP;
-    }
-  }
-
-  // Below this box width a full label cannot fit beside its neighbours.
+  const LABEL_MAX_W = 260;
   const COMPACT_BOX_W = 140;
+  const LABEL_FONT  = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
   function badgeLayout(boxWidth) {
     return { compact: boxWidth < COMPACT_BOX_W, maxWidth: Math.max(0, boxWidth) };
+  }
+
+  /** Draws the name and price label at the top of a card's frame, kept inside the card; returns its rect. */
+  function drawLabel(box, card, accentColor) {
+    const { name, price, muted } = labelText(card);
+    const PAD_X = 10;
+    const PAD_Y = 7;
+    const ACCENT_W = 3;
+    const NAME_PX = 15;
+    const PRICE_PX = muted ? 12 : 17;
+    const GAP = 3;
+    const layout = badgeLayout(box[2] - box[0]);
+    const maxW = Math.min(layout.maxWidth, LABEL_MAX_W, viewW() - 12);
+    const textMax = Math.max(0, maxW - ACCENT_W - PAD_X * 2);
+    const priceLine = { text: price || '—', font: `700 ${PRICE_PX}px ${LABEL_FONT}`, px: PRICE_PX, color: muted ? '#a3a9bf' : '#34d399' };
+    const lines = layout.compact
+      ? [priceLine]
+      : [
+          { text: name, font: `600 ${NAME_PX}px ${LABEL_FONT}`, px: NAME_PX, color: '#f3f4f8' },
+          priceLine,
+        ];
+    let widest = 0;
+    for (const l of lines) {
+      ctx.font = l.font;
+      l.text = fitText(l.text, textMax, (t) => ctx.measureText(t).width);
+      widest = Math.max(widest, ctx.measureText(l.text).width);
+    }
+    const w = Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, maxW);
+    const h = PAD_Y * 2 + lines.reduce((sum, l) => sum + l.px, 0) + GAP * Math.max(0, lines.length - 1);
+    const x = Math.max(6, Math.min(box[0] + 4, viewW() - w - 6));
+    const y = Math.max(6, Math.min(box[1] + 4, viewH() - h - 6));
+
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = 'rgba(12,14,20,0.96)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 6);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.roundRect(x, y, ACCENT_W, h, [6, 0, 0, 6]);
+    ctx.fill();
+
+    ctx.textBaseline = 'top';
+    let cy = y + PAD_Y;
+    for (const l of lines) {
+      ctx.font = l.font;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, x + ACCENT_W + PAD_X, cy);
+      cy += l.px + GAP;
+    }
+    return { x, y, w, h };
   }
 
   function fitText(text, maxPx, measure) {
@@ -949,6 +1004,8 @@
       restoreOverlay();
     } else if (msg.action === 'clearOverlay') {
       clearOverlay();
+    } else if (msg.action === 'highlightCard') {
+      highlightCard(msg.index, msg.scroll === true);
     } else if (msg.action === 'findCards') {
       const { cards, photos, pending } = findCardImages({ keepAnchors: msg.keepAnchors === true });
       sendResponse({
@@ -984,6 +1041,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { badgeLayout, fitText, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

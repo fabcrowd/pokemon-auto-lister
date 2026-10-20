@@ -192,6 +192,10 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
    cards; wrong "high" answers not up). The gate in `pipeline/gate.py` decides the rest. A bundle the gate did not
    approve is published as a pre-release, so "latest" is always the live bundle. `STATUS.md` and `status.json` go to
    the rolling `status` pre-release (the data repo's `main` is admin-only, so the nightly never commits there).
+   The same night writes `prices.json` (`python -m pipeline.prices`, TCGPlayer's daily public snapshot) and the sign
+   job publishes it on the rolling `prices` pre-release. It is not a bundle part and not gated on `improved`, so a
+   night the gate rejects still updates prices, and `latest` stays the live learning bundle. The extension downloads
+   that one file; installs do not fetch prices themselves. A failed price fetch does not fail the pack.
 
 ### manifest.json (v2)
 

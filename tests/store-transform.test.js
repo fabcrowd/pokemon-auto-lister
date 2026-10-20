@@ -93,9 +93,10 @@ test('applyStorePackage strips, drops excluded files, and rejects imports of wha
   }
 });
 
-const configWith = (relay, manifest) => `export const RELAY_URL = "${relay}";
+const configWith = (relay, manifest, prices = '') => `export const RELAY_URL = "${relay}";
 export const PACK_MANIFEST_URL = "${manifest}";
 export const PACK_PUBLIC_KEY = "";
+export const PRICE_SNAPSHOT_URL = "${prices}";
 `;
 
 test('the shipped shared-config adds exactly the relay origin and the data repo release pattern', () => {
@@ -121,6 +122,10 @@ test('a configured relay and pack address add their origins once, and only those
 test('a github.com pack address is scoped to that repository release downloads, never all of github.com', () => {
   const url = 'https://github.com/fabcrowd/card-scanner-data/releases/latest/download/manifest.json';
   assert.deepEqual(configuredOrigins(configWith('', url)), ['https://github.com/fabcrowd/card-scanner-data/releases/*']);
+  assert.deepEqual(
+    configuredOrigins(configWith('', '', 'https://github.com/fabcrowd/card-scanner-data/releases/download/prices/prices.json')),
+    ['https://github.com/fabcrowd/card-scanner-data/releases/*'],
+  );
   assert.throws(() => configuredOrigins(configWith('', 'https://github.com/fabcrowd/card-scanner-data/raw/main/manifest.json')), /releases/);
   assert.throws(() => configuredOrigins(configWith('', 'https://github.com/manifest.json')), /releases/);
 });

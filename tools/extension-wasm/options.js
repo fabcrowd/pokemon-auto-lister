@@ -1,3 +1,4 @@
+import { pptCardUrl } from "./lib/condition-pricing.js";
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
 import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
 import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
@@ -56,8 +57,7 @@ function showTest(text, kind = "info") {
 }
 
 async function probePpt(apiKey) {
-  // Known-good card lookup: Base Set Charizard tcgPlayerId=1319. Smallest-possible probe.
-  const url = "https://www.pokemonpricetracker.com/api/v2/cards?tcgPlayerIds=1319";
+  const url = pptCardUrl(42382); // Base Set Charizard
   try {
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },

@@ -1,0 +1,1082 @@
+{
+  "startedAt": "2026-10-19T02:26:48.428Z",
+  "extensionPath": "C:\\Users\\daroo\\Desktop\\Repos\\cardscanner\\pokemon-auto-lister\\tools\\extension-wasm",
+  "headed": true,
+  "flows": [
+    {
+      "name": "popup initial paint",
+      "status": "fail",
+      "screenshot": "popup-empty.png",
+      "detail": "logo=\"CARD SCANNER\" scan=\"SCAN PAGE\" disabled=true wizard=flex step=wiz-step-1 match=true"
+    },
+    {
+      "name": "popup CLEAR on empty while wizard covers it",
+      "status": "blocked",
+      "screenshot": "popup-clear-while-wizard.png",
+      "detail": "Wizard covers CLEAR. Click did not land. Download was not pressed."
+    },
+    {
+      "name": "wizard Not now",
+      "status": "blocked",
+      "screenshot": "popup-wizard-after-ready-stub.png",
+      "detail": "Access step not shown after checkReady stub. active=wiz-step-2 overlay=flex. Dev host permission may already include <all_urls>, so the access step is skipped. Download was not clicked."
+    },
+    {
+      "name": "wizard I will do this later",
+      "status": "pass",
+      "screenshot": "popup-wizard-later.png",
+      "detail": "overlay display=none"
+    },
+    {
+      "name": "era picker choose non-default",
+      "status": "pass",
+      "screenshot": "popup-era-open.png, popup-era-selected.png",
+      "detail": "{\"value\":\"wotc\",\"label\":\"1999–2003 · Base Set to e-Card\",\"stored\":\"wotc\",\"rect\":{\"w\":96,\"h\":42,\"right\":332.9895935058594}}"
+    },
+    {
+      "name": "era picker sticks after reload",
+      "status": "pass",
+      "screenshot": "popup-era-after-reload.png",
+      "detail": "value=wotc"
+    },
+    {
+      "name": "CLEAR on empty state",
+      "status": "pass",
+      "screenshot": "popup-clear-empty.png",
+      "detail": "{\"hint\":\"Open a page with Pokémon cards, then press Scan Page. Detections and prices appear here and overlay on the page.\",\"hintVisible\":true,\"msg\":\"\",\"value\":\"—\"}"
+    },
+    {
+      "name": "injected results: priced, no price, unsure, scroll",
+      "status": "pass",
+      "screenshot": "popup-results.png",
+      "detail": "{\"rowCount\":11,\"names\":[\"Charizard base1Base #4 $420.00 Wrong card?\",\"Blastoise base1Base #2 — Wrong card?\",\"Zapdos base1Base #15 — Wrong card? WHICH CARD IS THIS? Best guess first, then the closest matches ON THE PAGE BEST GUESS\",\"Longname Card 1 Illustration Rare sv1Scarlet & Violet #10 $3.50 Wrong card?\",\"Longname Card 2 Illustration Rare sv1Scarlet & Violet #11 $4.50 Wrong card?\",\"Longname Card 3 Illustration Rare sv1Scarlet & Violet #12 $5.50 Wrong card?\"],\"hintPresent\":false,\"msg\":\"Found 11 cards: 10 identified, 1 needs your pick.\",\"examHidden\":false,\"value\":\"$476.00\",\"scroll\":true,\"scrollHeight\":830,\"clientHeight\":460,\"scanLabel\":\"SCAN PAGE\",\"prices\":[\"$420.00\",\"—\",\"—\",\"$3.50\"]}"
+    },
+    {
+      "name": "results list scrolls",
+      "status": "pass",
+      "screenshot": "popup-results-scrolled.png",
+      "detail": "scrollHeight=830 client=460"
+    },
+    {
+      "name": "hover row sends highlight",
+      "status": "pass",
+      "screenshot": "popup-row-hover.png",
+      "detail": "[{\"action\":\"highlightCard\",\"index\":0,\"scroll\":false}]"
+    },
+    {
+      "name": "exam dismiss",
+      "status": "pass",
+      "screenshot": "popup-exam-strip.png",
+      "detail": "hidden=true"
+    },
+    {
+      "name": "exam All right",
+      "status": "pass",
+      "screenshot": "popup-exam-yes.png",
+      "detail": "{\"hidden\":false,\"msg\":\"Couldn't send that. Try again later.\"}"
+    },
+    {
+      "name": "CLEAR after results restores empty hint",
+      "status": "pass",
+      "screenshot": "popup-cleared.png",
+      "detail": "{\"hint\":\"Open a page with Pokémon cards, then press Scan Page. Detections and prices appear here and overlay on the page.\",\"rows\":0,\"value\":\"—\",\"examHidden\":true}"
+    },
+    {
+      "name": "access notice Not now",
+      "status": "pass",
+      "screenshot": "popup-access-notice.png",
+      "detail": "Allow reading full-size photos on sites you scan — finds more cards in lots and binders. Allow Not now"
+    },
+    {
+      "name": "options initial 1100x800",
+      "status": "pass",
+      "screenshot": "options-initial.png",
+      "detail": "{\"title\":\"Card Scanner — Settings\",\"ppt\":\"Not connected\",\"condition\":\"NM\",\"psa\":false,\"site\":true,\"siteStatus\":\"On\",\"lookalikeDisabled\":false,\"lookalikeChecked\":false,\"lookalikeNote\":\"\",\"shareDisabled\":false,\"shareChecked\":false,\"shareStatus\":\"\",\"corrections\":\"Corrections: 0 saved\",\"references\":\"0 references\",\"photos\":\"Test photos: 0 saved (about 0 MB)\",\"exportCorrectionsDisabled\":true,\"exportPhotosDisabled\":true,\"clearCorrectionsDisabled\":true,\"clearPhotosDisabled\":true,\"backend\":\"Not detected\",\"backendDetail\":\"\",\"backendOpen\":false}"
+    },
+    {
+      "name": "options 480x700 overflow",
+      "status": "pass",
+      "screenshot": "options-480.png",
+      "detail": "scrollWidth=465 clientWidth=465"
+    },
+    {
+      "name": "price condition LP and PSA on/off",
+      "status": "pass",
+      "screenshot": "options-psa-off.png",
+      "detail": "{\"condition\":\"LP\",\"psa\":false,\"stored\":{\"graded\":{\"BGS\":false,\"CGC\":false,\"PSA\":false,\"SGC\":false},\"raw\":{\"DMG\":false,\"HP\":false,\"LP\":true,\"MP\":false,\"NM\":false}}}"
+    },
+    {
+      "name": "site-access toggle off",
+      "status": "pass",
+      "screenshot": "options-site-access.png",
+      "detail": "clicked {\"checked\":true,\"status\":\"On\"} -> {\"checked\":true,\"status\":\"On\",\"note\":\"Chrome would not remove it here. You can remove it in chrome://extensions under Details, Site access.\"}"
+    },
+    {
+      "name": "save empty price key",
+      "status": "pass",
+      "screenshot": "options-empty-key.png",
+      "detail": "message=\"Paste a key first.\""
+    },
+    {
+      "name": "reduce lookalikes toggle",
+      "status": "pass",
+      "screenshot": "options-lookalikes.png",
+      "detail": "{\"on\":{\"checked\":true,\"note\":\"Scans will steer away from look-alike cards.\"},\"off\":false}"
+    },
+    {
+      "name": "share opt-in toggle",
+      "status": "pass",
+      "screenshot": "options-share-on.png",
+      "detail": "clicked {\"checked\":true,\"status\":\"On. Thank you.\"}"
+    },
+    {
+      "name": "advanced local dashboard",
+      "status": "pass",
+      "screenshot": "options-dashboard.png",
+      "detail": "{\"open\":true,\"status\":\"Not detected\",\"detail\":\"Not reachable. If you installed the dashboard, make sure npm start is running and JUSTTCG_API_KEY is set in your .env.\",\"newConsole\":[]}"
+    },
+    {
+      "name": "export corrections",
+      "status": "pass",
+      "screenshot": "options-corrections.png",
+      "detail": "Export disabled at count: Corrections: 0 saved. Clear was not clicked."
+    },
+    {
+      "name": "export test photos",
+      "status": "pass",
+      "screenshot": "options-corrections.png",
+      "detail": "Export disabled at count: Test photos: 0 saved (about 0 MB). Clear was not clicked."
+    },
+    {
+      "name": "overlay three cards showOverlay",
+      "status": "pass",
+      "screenshot": "overlay-three-cards.png",
+      "detail": "find={\"ok\":true,\"resp\":{\"cards\":[{\"anchor\":0,\"rect\":{\"x\":32,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":32,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[1,2,3,4,5],\"hscroll\":false}},{\"anchor\":1,\"rect\":{\"x\":337.59375,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":337.59375,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[6,7,3,4,5],\"hscroll\":false}},{\"anchor\":2,\"rect\":{\"x\":643.1875,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":643.1875,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[8,9,3,4,5],\"hscroll\":false}}],\"photos\":[{\"rect\":{\"x\":32,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":32,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[1,2,3,4,5],\"hscroll\":false},\"sources\":{\"srcset\":\"\",\"attrs\":[],\"link\":\"\"}},{\"rect\":{\"x\":337.59375,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":337.59375,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[6,7,3,4,5],\"hscroll\":false},\"sources\":{\"srcset\":\"\",\"attrs\":[],\"link\":\"\"}},{\"rect\":{\"x\":643.1875,\"y\":86.66667175292969,\"w\":281.59375,\"h\":393.3333435058594,\"vx\":643.1875,\"vy\":86.66667175292969,\"vw\":281.59375,\"vh\":393.3333435058594,\"pvw\":281.59375,\"pvh\":393.3333435058594},\"naturalWidth\":63,\"naturalHeight\":88,\"src\":\"http://127.0.0.1:8766/card.png\",\"render\":{\"fit\":\"fill\",\"position\":\"50% 50%\"},\"ctx\":{\"landmarks\":[],\"headings\":[\"Three card fixture\"],\"labels\":[],\"sealedLabel\":false,\"chain\":[8,9,3,4,5],\"hscroll\":false},\"sources\":{\"srcset\":\"\",\"attrs\":[],\"link\":\"\"}}],\"pending\":0,\"documentHeight\":1923,\"scrollX\":0,\"scrollY\":0,\"page\":{\"title\":\"card fixture\",\"ogTitle\":\"\",\"h1\":\"Three card fixture\",\"breadcrumb\":\"\",\"ogImages\":[],\"headings\":[{\"text\":\"Three card fixture\",\"chain\":[10,4,5]}],\"imageHosts\":[\"127.0.0.1\"]},\"viewportWidth\":1280,\"viewportHeight\":800,\"devicePixelRatio\":1.0000000298023224}} show={\"ok\":true,\"resp\":null} boxes=[{\"id\":\"c0\",\"w\":282,\"h\":393},{\"id\":\"c1\",\"w\":282,\"h\":393},{\"id\":\"c2\",\"w\":282,\"h\":393}]"
+    },
+    {
+      "name": "overlay follows resize",
+      "status": "pass",
+      "screenshot": "overlay-after-resize.png",
+      "detail": "{\"canvas\":true,\"dpr\":1.0000000298023224,\"visibility\":\"visible\",\"cards\":[{\"id\":\"c0\",\"card\":{\"w\":220,\"h\":307.3,\"x\":32,\"y\":86.7},\"greenBox\":{\"x\":30.999999076128034,\"y\":85.99999743700035,\"right\":251.99999248981499,\"bottom\":393.9999882578853,\"green\":640},\"label\":{\"x\":282.999991565943,\"y\":90.99999728798875,\"w\":8.999999731779106,\"h\":47.99999856948857,\"dark\":488},\"labelOutside\":{\"left\":-251,\"right\":40,\"top\":-4.3,\"bottom\":-255},\"align\":{\"dLeft\":-1,\"dTop\":-0.7,\"dRight\":0,\"dBottom\":0}},{\"id\":\"c1\",\"card\":{\"w\":220,\"h\":307.3,\"x\":276,\"y\":86.7},\"greenBox\":{\"x\":235.99999296665212,\"y\":85.99999743700035,\"right\":344.99998971819906,\"bottom\":393.9999882578853,\"green\":546},\"label\":{\"x\":282.999991565943,\"y\":90.99999728798875,\"w\":78.9999976456166,\"h\":47.99999856948857,\"dark\":3059},\"labelOutside\":{\"left\":-7,\"right\":-134,\"top\":-4.3,\"bottom\":-255},\"align\":{\"dLeft\":-40,\"dTop\":-0.7,\"dRight\":-151,\"dBottom\":0}},{\"id\":\"c2\",\"card\":{\"w\":220,\"h\":307.3,\"x\":520,\"y\":86.7},\"greenBox\":null,\"label\":null,\"labelOutside\":null,\"align\":null}]}"
+    },
+    {
+      "name": "overlay follows scroll",
+      "status": "pass",
+      "screenshot": "overlay-after-scroll.png",
+      "detail": "{\"canvas\":true,\"dpr\":1.0000000298023224,\"visibility\":\"visible\",\"cards\":[{\"id\":\"c0\",\"card\":{\"w\":220,\"h\":307.3,\"x\":32,\"y\":-133.3},\"greenBox\":{\"x\":30.999999076128034,\"y\":133.9999960064889,\"right\":251.99999248981499,\"bottom\":173.99999481439605,\"green\":320},\"label\":{\"x\":282.999991565943,\"y\":5.999999821186071,\"w\":8.999999731779106,\"h\":47.99999856948857,\"dark\":487},\"labelOutside\":{\"left\":-251,\"right\":40,\"top\":-139.3,\"bottom\":-120},\"align\":{\"dLeft\":-1,\"dTop\":267.3,\"dRight\":0,\"dBottom\":0}},{\"id\":\"c1\",\"card\":{\"w\":220,\"h\":307.3,\"x\":276,\"y\":-133.3},\"greenBox\":{\"x\":235.99999296665212,\"y\":29.999999105930353,\"right\":344.99998971819906,\"bottom\":173.99999481439605,\"green\":411},\"label\":{\"x\":282.999991565943,\"y\":5.999999821186071,\"w\":78.9999976456166,\"h\":47.99999856948857,\"dark\":3059},\"labelOutside\":{\"left\":-7,\"right\":-134,\"top\":-139.3,\"bottom\":-120},\"align\":{\"dLeft\":-40,\"dTop\":163.3,\"dRight\":-151,\"dBottom\":0}},{\"id\":\"c2\",\"card\":{\"w\":220,\"h\":307.3,\"x\":520,\"y\":-133.3},\"greenBox\":null,\"label\":null,\"labelOutside\":null,\"align\":null}]}"
+    },
+    {
+      "name": "clearOverlay",
+      "status": "pass",
+      "screenshot": "overlay-cleared.png",
+      "detail": "canvasGone=true {\"ok\":true,\"resp\":null}"
+    },
+    {
+      "name": "hideOverlay then restoreOverlay",
+      "status": "pass",
+      "screenshot": "overlay-hidden.png",
+      "detail": "hide={\"ok\":true,\"resp\":{\"hidden\":true}} vis=hidden restore={\"ok\":true,\"resp\":null} vis=visible"
+    },
+    {
+      "name": "overlay narrow card under 140px",
+      "status": "pass",
+      "screenshot": "overlay-narrow.png",
+      "detail": "width=110 measure={\"canvas\":true,\"dpr\":1.0000000298023224,\"visibility\":\"visible\",\"cards\":[{\"id\":\"cn\",\"card\":{\"w\":110,\"h\":154,\"x\":32,\"y\":614},\"greenBox\":{\"x\":30.999999076128034,\"y\":612.999981731177,\"right\":141.99999576807033,\"bottom\":767.9999771118171,\"green\":827},\"label\":{\"x\":38.99999883770946,\"y\":617.9999815821653,\"w\":142.999995738268,\"h\":47.99999856948857,\"dark\":5679},\"labelOutside\":{\"left\":-7,\"right\":40,\"top\":-4,\"bottom\":-102},\"align\":{\"dLeft\":-1,\"dTop\":-1,\"dRight\":0,\"dBottom\":0}}]}"
+    }
+  ],
+  "console": {
+    "popup": [
+      {
+        "kind": "error",
+        "url": "chrome-extension://glelmmehhcnicljmgmhkaddndalaeelg/popup.html",
+        "text": "[prices] snapshot not updated: price snapshot answered 404",
+        "location": {
+          "url": "chrome-extension://glelmmehhcnicljmgmhkaddndalaeelg/lib/price-snapshot.js",
+          "line": 131,
+          "column": 14,
+          "lineNumber": 131,
+          "columnNumber": 14
+        }
+      }
+    ],
+    "options": [
+      {
+        "kind": "error",
+        "url": "chrome-extension://glelmmehhcnicljmgmhkaddndalaeelg/options.html",
+        "text": "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+        "location": {
+          "url": "http://127.0.0.1:3000/api/health",
+          "line": 0,
+          "column": 0,
+          "lineNumber": 0,
+          "columnNumber": 0
+        }
+      }
+    ],
+    "serviceWorker": [
+      {
+        "kind": "error",
+        "url": "chrome-extension://glelmmehhcnicljmgmhkaddndalaeelg/background.js",
+        "text": "[prices] snapshot not updated: price snapshot answered 404",
+        "location": {
+          "url": "chrome-extension://glelmmehhcnicljmgmhkaddndalaeelg/lib/price-snapshot.js",
+          "line": 131,
+          "column": 14,
+          "lineNumber": 131,
+          "columnNumber": 14
+        }
+      }
+    ],
+    "fixture": [
+      {
+        "kind": "warning",
+        "url": "http://127.0.0.1:8766/",
+        "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+        "location": {
+          "url": "",
+          "line": 5,
+          "column": 0,
+          "lineNumber": 5,
+          "columnNumber": 0
+        }
+      }
+    ]
+  },
+  "measurements": {
+    "popupInitial": {
+      "logo": "CARD SCANNER",
+      "scanLabel": "SCAN PAGE",
+      "scanDisabled": true,
+      "overlayDisplay": "flex",
+      "overlayText": "Download the AI models One-time download, about 140 MB (1–3 minutes). After this, scanning runs fully on your device — no server, no account. DOWNLOAD MODELS",
+      "activeStep": "wiz-step-1",
+      "hintText": "Open a page with Pokémon cards, then press Scan Page. Detections and prices appear here and overlay on the page.",
+      "hintInDom": true,
+      "eraOptions": [
+        {
+          "value": "",
+          "label": "Any era"
+        },
+        {
+          "value": "wotc",
+          "label": "1999–2003 · Base Set to e-Card"
+        },
+        {
+          "value": "ex-dp",
+          "label": "2003–2009 · EX, POP, Diamond & Pearl"
+        },
+        {
+          "value": "pl-col",
+          "label": "2009–2011 · Platinum to Call of Legends"
+        },
+        {
+          "value": "bw-xy",
+          "label": "2011–2016 · Black & White, XY"
+        },
+        {
+          "value": "sm-swsh",
+          "label": "2017–2022 · Sun & Moon, Sword & Shield"
+        },
+        {
+          "value": "sv-me",
+          "label": "2023 on · Scarlet & Violet, Mega Evolution"
+        }
+      ],
+      "eraValue": "",
+      "controls": {
+        "scan": true,
+        "clear": true,
+        "era": true,
+        "options": true,
+        "setup": true,
+        "step1": true,
+        "stepAccess": true,
+        "step2": true,
+        "access": true,
+        "results": true,
+        "hint": true,
+        "msg": true,
+        "exam": true,
+        "download": true,
+        "notNow": true,
+        "later": true
+      }
+    },
+    "popupOverflowInitial": {
+      "scrollWidth": 420,
+      "clientWidth": 420,
+      "overflowX": 0,
+      "bodyScrollWidth": 420,
+      "bodyClientWidth": 420,
+      "clipped": []
+    },
+    "wizardAfterReadyStub": {
+      "activeStep": "wiz-step-2",
+      "overlayDisplay": "flex",
+      "text": "Unlock full prices (optional) Out of the box, you'll see one market price per card. Add a free API key to also see: NM / LP / MP / HP / DMG per card Graded prices ( PSA / BGS / CGC / SGC ) Takes 30 seconds. No credit card. Free tier: 100 cards/day. Get free key → I'll do this later",
+      "scanDisabled": false
+    },
+    "era": {
+      "value": "wotc",
+      "label": "1999–2003 · Base Set to e-Card",
+      "stored": "wotc",
+      "rect": {
+        "w": 96,
+        "h": 42,
+        "right": 332.9895935058594
+      }
+    },
+    "results": {
+      "rowCount": 11,
+      "names": [
+        "Charizard base1Base #4 $420.00 Wrong card?",
+        "Blastoise base1Base #2 — Wrong card?",
+        "Zapdos base1Base #15 — Wrong card? WHICH CARD IS THIS? Best guess first, then the closest matches ON THE PAGE BEST GUESS",
+        "Longname Card 1 Illustration Rare sv1Scarlet & Violet #10 $3.50 Wrong card?",
+        "Longname Card 2 Illustration Rare sv1Scarlet & Violet #11 $4.50 Wrong card?",
+        "Longname Card 3 Illustration Rare sv1Scarlet & Violet #12 $5.50 Wrong card?"
+      ],
+      "hintPresent": false,
+      "msg": "Found 11 cards: 10 identified, 1 needs your pick.",
+      "examHidden": false,
+      "value": "$476.00",
+      "scroll": true,
+      "scrollHeight": 830,
+      "clientHeight": 460,
+      "scanLabel": "SCAN PAGE",
+      "prices": [
+        "$420.00",
+        "—",
+        "—",
+        "$3.50"
+      ]
+    },
+    "popupOverflowResults": {
+      "scrollWidth": 420,
+      "clientWidth": 420,
+      "overflowX": 0,
+      "bodyScrollWidth": 420,
+      "bodyClientWidth": 420,
+      "clipped": []
+    },
+    "optionsOverflow1100": {
+      "scrollWidth": 1085,
+      "clientWidth": 1085,
+      "overflowX": 0,
+      "bodyScrollWidth": 720,
+      "bodyClientWidth": 720,
+      "clipped": []
+    },
+    "optionsInitial": {
+      "title": "Card Scanner — Settings",
+      "ppt": "Not connected",
+      "condition": "NM",
+      "psa": false,
+      "site": true,
+      "siteStatus": "On",
+      "lookalikeDisabled": false,
+      "lookalikeChecked": false,
+      "lookalikeNote": "",
+      "shareDisabled": false,
+      "shareChecked": false,
+      "shareStatus": "",
+      "corrections": "Corrections: 0 saved",
+      "references": "0 references",
+      "photos": "Test photos: 0 saved (about 0 MB)",
+      "exportCorrectionsDisabled": true,
+      "exportPhotosDisabled": true,
+      "clearCorrectionsDisabled": true,
+      "clearPhotosDisabled": true,
+      "backend": "Not detected",
+      "backendDetail": "",
+      "backendOpen": false
+    },
+    "optionsOverflow480": {
+      "scrollWidth": 465,
+      "clientWidth": 465,
+      "overflowX": 0,
+      "bodyScrollWidth": 465,
+      "bodyClientWidth": 465,
+      "clipped": []
+    },
+    "correctionCounts": {
+      "corrections": "Corrections: 0 saved",
+      "references": "0 references",
+      "photos": "Test photos: 0 saved (about 0 MB)",
+      "exportCorrectionsDisabled": true,
+      "exportPhotosDisabled": true
+    },
+    "inject": {
+      "id": 1131246877
+    },
+    "contentLoaded": {
+      "loaded": false,
+      "api": "undefined"
+    },
+    "findCards": {
+      "ok": true,
+      "resp": {
+        "cards": [
+          {
+            "anchor": 0,
+            "rect": {
+              "x": 32,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 32,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            }
+          },
+          {
+            "anchor": 1,
+            "rect": {
+              "x": 337.59375,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 337.59375,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                6,
+                7,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            }
+          },
+          {
+            "anchor": 2,
+            "rect": {
+              "x": 643.1875,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 643.1875,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                8,
+                9,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            }
+          }
+        ],
+        "photos": [
+          {
+            "rect": {
+              "x": 32,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 32,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            },
+            "sources": {
+              "srcset": "",
+              "attrs": [],
+              "link": ""
+            }
+          },
+          {
+            "rect": {
+              "x": 337.59375,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 337.59375,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                6,
+                7,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            },
+            "sources": {
+              "srcset": "",
+              "attrs": [],
+              "link": ""
+            }
+          },
+          {
+            "rect": {
+              "x": 643.1875,
+              "y": 86.66667175292969,
+              "w": 281.59375,
+              "h": 393.3333435058594,
+              "vx": 643.1875,
+              "vy": 86.66667175292969,
+              "vw": 281.59375,
+              "vh": 393.3333435058594,
+              "pvw": 281.59375,
+              "pvh": 393.3333435058594
+            },
+            "naturalWidth": 63,
+            "naturalHeight": 88,
+            "src": "http://127.0.0.1:8766/card.png",
+            "render": {
+              "fit": "fill",
+              "position": "50% 50%"
+            },
+            "ctx": {
+              "landmarks": [],
+              "headings": [
+                "Three card fixture"
+              ],
+              "labels": [],
+              "sealedLabel": false,
+              "chain": [
+                8,
+                9,
+                3,
+                4,
+                5
+              ],
+              "hscroll": false
+            },
+            "sources": {
+              "srcset": "",
+              "attrs": [],
+              "link": ""
+            }
+          }
+        ],
+        "pending": 0,
+        "documentHeight": 1923,
+        "scrollX": 0,
+        "scrollY": 0,
+        "page": {
+          "title": "card fixture",
+          "ogTitle": "",
+          "h1": "Three card fixture",
+          "breadcrumb": "",
+          "ogImages": [],
+          "headings": [
+            {
+              "text": "Three card fixture",
+              "chain": [
+                10,
+                4,
+                5
+              ]
+            }
+          ],
+          "imageHosts": [
+            "127.0.0.1"
+          ]
+        },
+        "viewportWidth": 1280,
+        "viewportHeight": 800,
+        "devicePixelRatio": 1.0000000298023224
+      }
+    },
+    "fixtureView": {
+      "w": 1280,
+      "h": 800,
+      "dpr": 1.0000000298023224
+    },
+    "showOverlay": {
+      "ok": true,
+      "resp": null
+    },
+    "highlight": {
+      "ok": true,
+      "resp": null
+    },
+    "overlayInitial": {
+      "boxes": [
+        {
+          "id": "c0",
+          "box": [
+            32,
+            86.66667175292969,
+            313.59375,
+            480.00001525878906
+          ],
+          "w": 281.59375,
+          "h": 393.3333435058594
+        },
+        {
+          "id": "c1",
+          "box": [
+            337.59375,
+            86.66667175292969,
+            619.1875,
+            480.00001525878906
+          ],
+          "w": 281.59375,
+          "h": 393.3333435058594
+        },
+        {
+          "id": "c2",
+          "box": [
+            643.1875,
+            86.66667175292969,
+            924.78125,
+            480.00001525878906
+          ],
+          "w": 281.59375,
+          "h": 393.3333435058594
+        }
+      ],
+      "measure": {
+        "summary": {
+          "canvas": true,
+          "dpr": 1.0000000298023224,
+          "visibility": "visible",
+          "cards": [
+            {
+              "id": "c0",
+              "card": {
+                "w": 281.6,
+                "h": 393.3,
+                "x": 32,
+                "y": 86.7
+              },
+              "greenBox": {
+                "x": 30.999999076128034,
+                "y": 85.99999743700035,
+                "right": 313.99999064207105,
+                "bottom": 479.99998569488565,
+                "green": 1359
+              },
+              "label": {
+                "x": 38.99999883770946,
+                "y": 90.99999728798875,
+                "w": 313.99999064207105,
+                "h": 47.99999856948857,
+                "dark": 9611
+              },
+              "labelOutside": {
+                "left": -7,
+                "right": 39.4,
+                "top": -4.3,
+                "bottom": -341
+              },
+              "align": {
+                "dLeft": -1,
+                "dTop": -0.7,
+                "dRight": 0.4,
+                "dBottom": 0
+              }
+            },
+            {
+              "id": "c1",
+              "card": {
+                "w": 281.6,
+                "h": 393.3,
+                "x": 337.6,
+                "y": 86.7
+              },
+              "greenBox": {
+                "x": 296.99999114871054,
+                "y": 85.99999743700035,
+                "right": 406.99998787045513,
+                "bottom": 479.99998569488565,
+                "green": 583
+              },
+              "label": {
+                "x": 344.99998971819906,
+                "y": 90.99999728798875,
+                "w": 77.99999767541892,
+                "h": 47.99999856948857,
+                "dark": 3019
+              },
+              "labelOutside": {
+                "left": -7.4,
+                "right": -196.2,
+                "top": -4.3,
+                "bottom": -341
+              },
+              "align": {
+                "dLeft": -40.6,
+                "dTop": -0.7,
+                "dRight": -212.2,
+                "dBottom": 0
+              }
+            },
+            {
+              "id": "c2",
+              "card": {
+                "w": 281.6,
+                "h": 393.3,
+                "x": 643.2,
+                "y": 86.7
+              },
+              "greenBox": null,
+              "label": null,
+              "labelOutside": null,
+              "align": null
+            }
+          ]
+        }
+      }
+    },
+    "overlayResize": {
+      "summary": {
+        "canvas": true,
+        "dpr": 1.0000000298023224,
+        "visibility": "visible",
+        "cards": [
+          {
+            "id": "c0",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 32,
+              "y": 86.7
+            },
+            "greenBox": {
+              "x": 30.999999076128034,
+              "y": 85.99999743700035,
+              "right": 251.99999248981499,
+              "bottom": 393.9999882578853,
+              "green": 640
+            },
+            "label": {
+              "x": 282.999991565943,
+              "y": 90.99999728798875,
+              "w": 8.999999731779106,
+              "h": 47.99999856948857,
+              "dark": 488
+            },
+            "labelOutside": {
+              "left": -251,
+              "right": 40,
+              "top": -4.3,
+              "bottom": -255
+            },
+            "align": {
+              "dLeft": -1,
+              "dTop": -0.7,
+              "dRight": 0,
+              "dBottom": 0
+            }
+          },
+          {
+            "id": "c1",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 276,
+              "y": 86.7
+            },
+            "greenBox": {
+              "x": 235.99999296665212,
+              "y": 85.99999743700035,
+              "right": 344.99998971819906,
+              "bottom": 393.9999882578853,
+              "green": 546
+            },
+            "label": {
+              "x": 282.999991565943,
+              "y": 90.99999728798875,
+              "w": 78.9999976456166,
+              "h": 47.99999856948857,
+              "dark": 3059
+            },
+            "labelOutside": {
+              "left": -7,
+              "right": -134,
+              "top": -4.3,
+              "bottom": -255
+            },
+            "align": {
+              "dLeft": -40,
+              "dTop": -0.7,
+              "dRight": -151,
+              "dBottom": 0
+            }
+          },
+          {
+            "id": "c2",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 520,
+              "y": 86.7
+            },
+            "greenBox": null,
+            "label": null,
+            "labelOutside": null,
+            "align": null
+          }
+        ]
+      }
+    },
+    "overlayScroll": {
+      "summary": {
+        "canvas": true,
+        "dpr": 1.0000000298023224,
+        "visibility": "visible",
+        "cards": [
+          {
+            "id": "c0",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 32,
+              "y": -133.3
+            },
+            "greenBox": {
+              "x": 30.999999076128034,
+              "y": 133.9999960064889,
+              "right": 251.99999248981499,
+              "bottom": 173.99999481439605,
+              "green": 320
+            },
+            "label": {
+              "x": 282.999991565943,
+              "y": 5.999999821186071,
+              "w": 8.999999731779106,
+              "h": 47.99999856948857,
+              "dark": 487
+            },
+            "labelOutside": {
+              "left": -251,
+              "right": 40,
+              "top": -139.3,
+              "bottom": -120
+            },
+            "align": {
+              "dLeft": -1,
+              "dTop": 267.3,
+              "dRight": 0,
+              "dBottom": 0
+            }
+          },
+          {
+            "id": "c1",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 276,
+              "y": -133.3
+            },
+            "greenBox": {
+              "x": 235.99999296665212,
+              "y": 29.999999105930353,
+              "right": 344.99998971819906,
+              "bottom": 173.99999481439605,
+              "green": 411
+            },
+            "label": {
+              "x": 282.999991565943,
+              "y": 5.999999821186071,
+              "w": 78.9999976456166,
+              "h": 47.99999856948857,
+              "dark": 3059
+            },
+            "labelOutside": {
+              "left": -7,
+              "right": -134,
+              "top": -139.3,
+              "bottom": -120
+            },
+            "align": {
+              "dLeft": -40,
+              "dTop": 163.3,
+              "dRight": -151,
+              "dBottom": 0
+            }
+          },
+          {
+            "id": "c2",
+            "card": {
+              "w": 220,
+              "h": 307.3,
+              "x": 520,
+              "y": -133.3
+            },
+            "greenBox": null,
+            "label": null,
+            "labelOutside": null,
+            "align": null
+          }
+        ]
+      }
+    },
+    "overlayNarrow": {
+      "narrowBox": {
+        "box": [
+          32,
+          614,
+          142,
+          768
+        ],
+        "w": 110,
+        "h": 154
+      },
+      "narrowMeasure": {
+        "summary": {
+          "canvas": true,
+          "dpr": 1.0000000298023224,
+          "visibility": "visible",
+          "cards": [
+            {
+              "id": "cn",
+              "card": {
+                "w": 110,
+                "h": 154,
+                "x": 32,
+                "y": 614
+              },
+              "greenBox": {
+                "x": 30.999999076128034,
+                "y": 612.999981731177,
+                "right": 141.99999576807033,
+                "bottom": 767.9999771118171,
+                "green": 827
+              },
+              "label": {
+                "x": 38.99999883770946,
+                "y": 617.9999815821653,
+                "w": 142.999995738268,
+                "h": 47.99999856948857,
+                "dark": 5679
+              },
+              "labelOutside": {
+                "left": -7,
+                "right": 40,
+                "top": -4,
+                "bottom": -102
+              },
+              "align": {
+                "dLeft": -1,
+                "dTop": -1,
+                "dRight": 0,
+                "dBottom": 0
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "notes": [
+    "CLEAR click while wizard visible: locator.click: Timeout 1500ms exceeded.",
+    "Allow was not clicked. It calls chrome.permissions.request and can raise a browser permission prompt. Not now was clicked instead."
+  ],
+  "chromium": "153.0.8010.12",
+  "extensionId": "glelmmehhcnicljmgmhkaddndalaeelg",
+  "finishedAt": "2026-10-19T02:27:37.154Z"
+}

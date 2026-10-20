@@ -128,15 +128,18 @@ What it does on a page:
 
 - **Listing-photo focus.** It scans the listing's own photo, not recommendation carousels or thumbnail strips: related-item sections are found from their headings, and a single hero card that fills its photo is read directly. Square photos with no detections are tiled for lots, and sealed product gives no cards.
 - **Full-size photo upgrade.** It looks for the largest rendition of the photo (srcset, zoom/original attributes, image links, `og:image`, known size markers) and detects on that. Without site access it falls back to a screenshot crop. After a screenshot-only scan the popup offers site access once ("Not now" hides it for 14 days); the options page has the same toggle, "Read full-size photos on sites you scan (more accurate)". Photos are fetched without cookies and only from hosts the page already loaded images from.
-- **Picker, set and version choices.** When unsure it shows close matches and remembers the pick. When only the set is open it keeps the name and shows a price range with a "Set?" menu; when look-alike versions (ex / V / VSTAR / Dark) are close it shows an "Other version?" menu with each version's price. The listing title only reorders choices. "High" confidence needs similarity >= 0.82 and a clear lead; three or more boxes with the same name in one photo go to the picker.
-- **Optional shared learning** ("Help improve recognition for everyone", off by default, inert until the owner fills `lib/shared-config.js`). Opted-in picks upload as small card crops plus the chosen card through a relay to a public data repo, and a signed community pack comes back. See `docs/plans/shared-learning.md`, `docs/plans/self-learning.md` and `tools/shared-data/README.md`.
+- **Whole-page scan.** A long page is walked up to 12 screens or 200 cards, duplicates are dropped, and the scroll position is restored. The popup has to stay open for the scan.
+- **Era.** Choosing an era limits the name, the set choices, and the suggestions to that era's cards.
+- **Best guess.** A card whose printing is still open is priced as one printing: the set named in the page heading, breadcrumb, or title, else the set most settled cards on the page share, else the printing the picture matched best. That guess stays below "high". A "?" next to the name confirms it, and the "Set?" menu stays. Confirming or picking saves a correction. The popup shows one price per card and one estimated lot value; condition chips live in Settings.
+- **Picker and version choices.** When unsure it shows close matches and remembers the pick. When look-alike versions (ex / V / VSTAR / Dark) are close it shows an "Other version?" menu with each version's price. The listing title only reorders choices. "High" confidence needs similarity >= 0.82 and a clear lead; three or more boxes with the same name in one photo go to the picker.
+- **Optional shared learning** ("Help improve recognition for everyone", off until the user turns it on). `lib/shared-config.js` points at the deployed relay and the signed community pack. Opted-in picks upload as small card crops plus the chosen card, and a signed pack comes back. See `docs/plans/shared-learning.md`, `docs/plans/self-learning.md` and `tools/shared-data/README.md`.
 - **Experimental look-alike penalty** is off; it needs a locally built penalty file (`scripts/build-hub-penalty.py`).
 
-Tests: `npm test` (Node unit tests, including the store-build and extension tests; 955 pass), `npx playwright test tests/e2e/extension-wasm-popup.spec.js --project=extension` (popup, needs real Chrome and a fresh dev build), and `scripts/realworld-run.mjs <pages.json>` for the real-world harness (see `HANDOFF.md`).
+Tests: `npm test` (Node unit tests, including the store-build and extension tests). The last recorded full run is in `HANDOFF.md` (1033 pass, 0 fail on 2026-10-17; not rerun for later doc-only commits). Popup: `npx playwright test tests/e2e/extension-wasm-popup.spec.js --project=extension` (needs real Chrome and a fresh dev build). Real-world harness: `scripts/realworld-run.mjs <pages.json>` (see `HANDOFF.md`).
 
 The scanner's content script collects large page-image candidates, including CSS background images, and records each image URL and rendering geometry. The service worker attempts detection against the original HTTPS image when browser access permits; unsupported CSS mappings, inaccessible sources, or failed fetches fall back to a crop from the visible-tab screenshot. Detected source-image boxes are mapped back to viewport coordinates for the overlay. Screenshot scale is measured from the captured bitmap and page viewport rather than relying only on `devicePixelRatio`.
 
-**Model quality:** the detector was retrained on 2026-10-10 with binder, flat-lay and single-card composites plus reviewed sealed-product negatives. On the reviewed real-photo set it scores precision 0.91 / recall 1.00 at the shipped threshold (the previous model scored 0.17 / 0.14). That set is small (5 positive photos, 12 sealed lots), so see `HANDOFF.md` for caveats. Score a model with:
+**Model quality:** the shipped detector was retrained on 2026-10-10 with binder, flat-lay and single-card composites plus reviewed sealed-product negatives. On the reviewed real-photo set it scores precision 0.91 / recall 1.00 at the shipped threshold (the previous model scored 0.17 / 0.14). That set is small (5 positive photos, 12 sealed lots), so see `HANDOFF.md` for caveats. A tilted-card retrain on 2026-10-18 (`card_detect_v7b`) was not shipped: on 67 HiBid lot photos it added confident wrong names. Score a model with:
 
 ```powershell
 cd tools/vellum-ai
@@ -145,7 +148,7 @@ cd tools/vellum-ai
 .venv\Scripts\python detect/synth_binder.py --count 700 --split train      # binder / flat-lay / single-card synth
 ```
 
-`detect/retrain.py` only promotes a model whose real-photo F1 is ≥ 0.90 and no worse than the current one.
+`detect/retrain.py` only promotes a model whose real-photo F1 is ≥ 0.90 and no worse than the current one. That offline gate is not enough on its own: also run the Chrome lot harness and require right names to rise without confident wrong names rising (`tasks/lessons.md`).
 
 Marketplace examples may only enter retraining after review. Place a JSON sidecar beside each source image, for example `photo.jpg` and `photo.json`:
 
