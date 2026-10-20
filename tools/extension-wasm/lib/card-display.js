@@ -236,6 +236,18 @@ export function isIdentified(card) {
   return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && (isSetConfirmed(card) || hasSetRange(card));
 }
 
+/** True when the scan read more than one photo of a listing (its gallery). */
+export function fromSeveralPhotos(cards) {
+  return (cards || []).some((card) => card?.photo > 1 || card?.photos?.length > 1);
+}
+
+/** Which listing photo a card was read from: "Photo 3", or "Photos 1, 3" when it was seen in more than one. */
+export function photoLabel(card) {
+  const seen = Array.isArray(card?.photos) && card.photos.length > 1 ? card.photos : null;
+  if (seen) return `Photos ${seen.join(", ")}`;
+  return card?.photo > 0 ? `Photo ${card.photo}` : "";
+}
+
 /**
  * Named for sure, but which printing is still the user's call: several sets print the same art and nothing on the
  * card (number, symbol, stamp) has settled it, and no printing is guessed. Shown as identified with a price range and a

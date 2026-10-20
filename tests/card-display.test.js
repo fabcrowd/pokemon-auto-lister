@@ -22,6 +22,8 @@ import {
   setRangeSummary,
   setRangeNote,
   needsPrinting,
+  fromSeveralPhotos,
+  photoLabel,
 } from '../tools/extension-wasm/lib/card-display.js';
 
 const charizard = {
@@ -514,4 +516,13 @@ test('setRangeSpan: the span for the first enabled condition, null when there is
   assert.equal(setRangeSpan(range, ['HP']), null);
   assert.equal(setRangeSpan({ low: 2, high: 9, count: 2 }, ['NM']), '$2.00–$9.00');
   assert.equal(setRangeSpan(undefined, ['NM']), null);
+});
+
+test('a card from another photo of the listing says which photo', () => {
+  assert.equal(photoLabel({ photo: 3 }), 'Photo 3');
+  assert.equal(photoLabel({ photo: 1, photos: [1, 4] }), 'Photos 1, 4');
+  assert.equal(photoLabel({}), '');
+  assert.equal(fromSeveralPhotos([{ photo: 1 }, { photo: 1 }]), false);
+  assert.equal(fromSeveralPhotos([{ photo: 1 }, { photo: 2 }]), true);
+  assert.equal(fromSeveralPhotos([{ photo: 1, photos: [1, 2] }]), true);
 });

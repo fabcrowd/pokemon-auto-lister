@@ -306,6 +306,8 @@
     _placed = [];
     for (const [index, card] of cards.entries()) {
       if (!card.box || card.box.length < 4) continue;
+      // A card read from another photo of the gallery is not on the page; the popup lists it with its photo.
+      if (card.inGallery) continue;
       const [x1, y1, x2, y2] = card.box;
       // A whole-page scan reports document boxes; a single screen reports boxes in the viewport it was taken in.
       const doc = card.docBox && card.docBox.length >= 4
@@ -941,6 +943,33 @@
     return { cards: found, photos, pending, rejected, bgCandidates, totalImgs: imgs.length };
   }
 
+  // The small pictures of a page (a listing's thumbnail strip): the background keeps the ones that belong to the
+  // listing's own gallery and reads their source images. Large ones are already photo candidates.
+  const THUMB_MIN_SIDE = 32;
+  const MAX_THUMBS = 80;
+  function galleryThumbnails() {
+    const out = [];
+    for (const img of document.querySelectorAll('img')) {
+      if (out.length >= MAX_THUMBS) break;
+      const src = img.currentSrc || img.src || '';
+      if (!/^https?:/i.test(src) || !img.complete || !(img.naturalWidth > 0)) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width < THUMB_MIN_SIDE || r.height < THUMB_MIN_SIDE) continue;
+      if (r.width >= PHOTO_MIN_SIDE && r.height >= PHOTO_MIN_SIDE) continue;
+      const style = getComputedStyle(img);
+      out.push({
+        rect: { x: r.left, y: r.top, w: r.width, h: r.height, vx: 0, vy: 0, vw: 0, vh: 0, pvw: r.width, pvh: r.height },
+        naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+        src,
+        render: { fit: style.objectFit || 'fill', position: style.objectPosition || '50% 50%' },
+        ctx: contextOf(img),
+        sources: sourceHints(img),
+        thumb: true,
+      });
+    }
+    return out;
+  }
+
   // Scan for card-sized elements that use CSS background-image instead of <img>.
   // These are a common failure mode on image viewers (Facebook, HiBid lightboxes).
   function scanBackgroundImages() {
@@ -1012,6 +1041,7 @@
         cards,
         photos,
         pending,
+        thumbs: msg.thumbs === true ? galleryThumbnails() : [],
         documentHeight: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
         scrollX: window.scrollX,
         scrollY: window.scrollY,

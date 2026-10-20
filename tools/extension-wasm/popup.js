@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -425,6 +425,8 @@ function renderCardRow(card, idx) {
   const subHtml = setKnown
     ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
     : "Set not sure";
+  const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
+  const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
 
   const askRow     = renderAskRow(card, idx);
   // The candidates already include the set choices; a second menu would ask the same question twice.
@@ -445,7 +447,7 @@ function renderCardRow(card, idx) {
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
         <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
-        <div class="card-sub">${subHtml}</div>
+        <div class="card-sub">${subHtml}${photoHtml}</div>
       </div>
       ${renderPrice(card, idx)}
       <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
@@ -488,7 +490,8 @@ function renderPrice(card, idx) {
 // Nothing is known about this card, so no name, price or picker: just a way to look it up.
 function renderUnrecognisedRow(card, idx) {
   const thumb = cropThumb(card);
-  const label = card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`;
+  const inPhoto = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
+  const label = (card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
   const search = card.cardBack || _picker.get(idx)
     ? ""
     : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="Search for card ${idx + 1}">Search for this card</button>`;
@@ -526,7 +529,7 @@ function renderScannedCard(card, idx) {
   const crop = cropThumb(card);
   return `<button type="button" class="scanned-card" data-show-on-page data-idx="${idx}" title="Show this card on the page" aria-label="The card on the page. Show it on the page.">
     ${crop ? `<img src="${escHtml(crop)}" alt="">` : `<span class="pick-blank" aria-hidden="true"></span>`}
-    <span class="scanned-label">On the page</span>
+    <span class="scanned-label">${card.inGallery ? escHtml(photoLabel(card) || "Another photo") : "On the page"}</span>
   </button>`;
 }
 
@@ -873,6 +876,7 @@ function pushOverlay() {
     identity: c.identity,
     confidence: c.confidence,
     abstain: c.abstain,
+    ...(c.inGallery ? { inGallery: true } : {}),
     display: computeDisplayForOverlay(c, idx),
   }));
   chrome.runtime.sendMessage({

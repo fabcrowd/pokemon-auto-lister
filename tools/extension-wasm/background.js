@@ -15,6 +15,7 @@ import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOpti
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
 import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
+import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
 import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
@@ -462,7 +463,7 @@ async function handleScanPage(sendResponse, era) {
 
   try {
     // Ask the page which images look like cards; sendToTab injects the content script if it is not there yet.
-    let domResp = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+    let domResp = await sendToTab(chrome, targetTab.id, { action: "findCards", thumbs: true }).catch((e) => ({ error: e.message }));
     if (domResp?.error) {
       sendResponse({ error: "Could not query page for cards: " + domResp.error });
       return;
@@ -471,7 +472,7 @@ async function handleScanPage(sendResponse, era) {
     // Scanning then would report "no cards" and run detection on a blank image.
     if ((domResp.pending || 0) > 0 && !(domResp.cards?.length) && !(domResp.photos?.length)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      const again = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+      const again = await sendToTab(chrome, targetTab.id, { action: "findCards", thumbs: true }).catch((e) => ({ error: e.message }));
       if (!again?.error) domResp = again;
     }
     if (!(domResp.cards?.length) && !(domResp.photos?.length) && (domResp.pending || 0) > 0) {
@@ -514,6 +515,9 @@ async function handleScanPage(sendResponse, era) {
     const slots = [];
     const hints = []; // per card: where the page keeps its own picture of a grid tile, for the second look (lib/refine.js)
     const dropped = new Set();
+    // Per card read from a listing photo: which photo, how tall it was there, and its embedding, so a card shown in
+    // two photos of the gallery is kept once (lib/gallery.js).
+    const photoMeta = [];
     let screenNo = 0;
     let offset = { x: 0, y: 0 };
     let capped = false;
@@ -658,14 +662,21 @@ async function handleScanPage(sendResponse, era) {
           // Outside a listing, a large image that is labelled as a sealed product is not scanned for cards.
           const photos = focus.kind === "listing" ? focus.photos : focus.photos.filter((ph) => ph.ctx?.sealedLabel !== true);
           if (photos.length) console.log("[BG]", photos.length, "photo candidates — running YOLO inside each");
-          const scanPhotos = async (list) => { for (const ph of list) {
+          // gallery: the listing's other photos, read from their source images only, within one time budget.
+          const scanPhotos = async (list, { gallery = null, firstPhoto = 1 } = {}) => { for (const [listIndex, ph] of list.entries()) {
+            const photoNo = focus.kind === "listing" ? firstPhoto + listIndex : undefined;
+            if (gallery && gallery.budget.remaining() <= 0) {
+              console.log("[BG]   gallery out of time:", list.length - listIndex, "photo(s) left unread");
+              break;
+            }
             let sx = Math.max(0, Math.round(ph.rect.vx * dpr));
             let sy = Math.max(0, Math.round(ph.rect.vy * dpr));
             let sw = Math.min(bitmap.width  - sx, Math.round(ph.rect.vw * dpr));
             let sh = Math.min(bitmap.height - sy, Math.round(ph.rect.vh * dpr));
             // A gallery slide that is not on screen can only be read from its source image.
             const offscreenSlide = (sw < 150 || sh < 150) && (ph.rect.pvw || 0) >= 150 && (ph.rect.pvh || 0) >= 150;
-            if ((sw < 150 || sh < 150) && !offscreenSlide) continue;
+            const sourceOnly = offscreenSlide || (gallery !== null && (sw < 150 || sh < 150));
+            if ((sw < 150 || sh < 150) && !sourceOnly) continue;
             let photoBitmap = null;
             let fromSource = false;
             let sourceTransform = null;
@@ -676,11 +687,15 @@ async function handleScanPage(sendResponse, era) {
               const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
               if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
               // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
-              const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+              const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(Math.min(PHOTO_BUDGET_MS, gallery ? gallery.budget.remaining() : Infinity)) };
               upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
               photoBitmap = upgrade ? upgrade.bitmap
                 : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
-              if (!photoBitmap && offscreenSlide) continue;
+              if (!photoBitmap && sourceOnly) continue;
+              if (gallery && photoBitmap && Math.max(photoBitmap.width, photoBitmap.height) < MIN_GALLERY_SIDE) {
+                console.log("[BG]   gallery photo", photoNo, "too small to read:", photoBitmap.width + "x" + photoBitmap.height);
+                continue;
+              }
               if (photoBitmap) {
                 sourceTransform = upgrade
                   ? rescaleTransform(
@@ -772,7 +787,9 @@ async function handleScanPage(sendResponse, era) {
                 const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
                 let viewportBox;
                 if (fromSource) {
-                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+                  // A card in a gallery thumbnail may lie outside its cropped view: the thumbnail stands for it.
+                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect)
+                    || (gallery ? [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h] : null);
                   if (!viewportBox) continue;
                 } else {
                   viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
@@ -807,7 +824,12 @@ async function handleScanPage(sendResponse, era) {
                 if (hero) preemptedPhotoKeys.add(_photoKey(ph));
                 // The framing was a guess, so the name is a suggestion for the picker, not an answer.
                 if (heroStrict && !read.abstain) read = { ...read, unsure: true };
-                pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
+                if (gallery && read.cardBack) continue;
+                if (photoNo !== undefined) {
+                  photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: await embedSerial(cardCanvas).catch(() => null) };
+                }
+                pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length,
+                  ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }, cardCanvas,
                   shareOf(photoId, box, imageW, imageH, read), claimed);
               }
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
@@ -824,9 +846,10 @@ async function handleScanPage(sendResponse, era) {
           await scanPhotos(photos);
           // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
           // Related-item carousels are never part of this.
-          if (!cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length) {
-            console.log("[BG] main photo held no card — trying", focus.fallback.length, "other gallery photos");
-            await scanPhotos(focus.fallback);
+          const triedFallback = !cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
+          if (triedFallback.length) {
+            console.log("[BG] main photo held no card — trying", triedFallback.length, "other gallery photos");
+            await scanPhotos(triedFallback, { firstPhoto: 2 });
           }
 
           // A grid tile is its <img> and the slot behind it: read the better view once, not both.
@@ -859,12 +882,29 @@ async function handleScanPage(sendResponse, era) {
             const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
             // A tile nothing could settle is shown as its best guess, unsure, with the closest cards to pick from.
             const read = asLowCertaintyGuess(await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed)), catalogCard);
+            if (focus.kind === "listing") photoMeta[cards.length] = { photo: 1, height: sh, embedding: await embedSerial(cardCanvas).catch(() => null) };
             pushCard({
               box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
               score: 1.0,
               ...read,
+              ...(focus.kind === "listing" ? { photo: 1 } : {}),
             }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed,
             read.lowCertainty ? tileHint(dcIndex, sh) : null);
+          }
+
+          // The listing's other photos: close-ups of a lot are where its cards can be read. Related-item carousels are
+          // never part of this. Without site access their sources cannot be fetched and only the main photo is read.
+          if (!sealed && focus.kind === "listing" && focus.main) {
+            const gallery = galleryPhotos({
+              main: focus.main,
+              candidates: [...(focus.fallback || []), ...(screenResp.thumbs || [])].filter((ph) => !triedFallback.includes(ph)),
+              headings: screenResp?.page?.headings || [],
+              pageUrl: targetTab.url,
+            });
+            if (gallery.length) {
+              console.log("[BG] gallery:", gallery.length, "more photo(s) of this listing");
+              await scanPhotos(gallery, { gallery: { budget: createBudget(GALLERY_BUDGET_MS) }, firstPhoto: 2 + triedFallback.length });
+            }
           }
 
           // ── Fallback: YOLO viewport scan ───────────────────────────────────────
@@ -911,6 +951,14 @@ async function handleScanPage(sendResponse, era) {
       if (wholePage && !navigated) await sendToTab(chrome, targetTab.id, { action: "startObserving" }).catch(() => {});
     }
 
+    // A card shown in more than one photo of the listing is kept once, as its best read.
+    if (pageFocus.kind === "listing" && new Set(photoMeta.filter(Boolean).map((r) => r.photo)).size > 1) {
+      const indexes = photoMeta.map((r, i) => (r && !dropped.has(i) ? i : -1)).filter((i) => i >= 0);
+      const { drop, photos: seenIn, similar } = mergeAcrossPhotos(indexes.map((i) => ({ ...photoMeta[i], card: cards[i] })));
+      for (const k of drop) dropped.add(indexes[k]);
+      for (const [k, seen] of seenIn) cards[indexes[k]] = { ...cards[indexes[k]], photos: seen };
+      console.log("[BG] gallery:", drop.size, "card(s) seen in more than one photo kept once", similar?.length ? "(closest cross-photo pairs " + similar.join(" ") + ")" : "");
+    }
     // Cards outside any split photo (a single listing picture, a grid tile) still get a best guess.
     if (dropped.size) {
       const keep = (_, i) => !dropped.has(i);
