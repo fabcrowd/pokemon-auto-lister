@@ -387,7 +387,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // A scan already running on that tab leaves one follow-up for when it ends.
       if (_popupWinId !== null && _ready) {
         const tabId = sender.tab?.id ?? _targetTabId;
-        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(() => {});
+        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(sendRescanResult);
       }
       return false;
 
@@ -419,6 +419,11 @@ function readBitmap(bitmap) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
   return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+}
+
+// A rescan nobody clicked for (pictures that loaded later): the open popup gets its result like a scan it started.
+function sendRescanResult(data) {
+  if (data && !data.error) chrome.runtime.sendMessage({ action: "rescanResult", data }).catch(() => {});
 }
 
 async function handleScanPage(sendResponse, era) {
@@ -1021,7 +1026,7 @@ async function handleScanPage(sendResponse, era) {
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
   } finally {
-    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(() => {});
+    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult);
   }
 }
 

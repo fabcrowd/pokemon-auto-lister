@@ -9,19 +9,6 @@
   const _stale = document.getElementById('__card-scanner-overlay__');
   if (_stale) _stale.remove();
 
-  const CONF_COLORS = {
-    high:    '#10b981',
-    medium:  '#f59e0b',
-    low:     '#4b5563',
-    abstain: '#4b5563',
-  };
-
-  function confTier(confidence) {
-    if (confidence >= 0.80) return 'high';
-    if (confidence >= 0.50) return 'medium';
-    return 'low';
-  }
-
   let canvas       = null;
   let ctx          = null;
   // Boxes the overlay draws, each pinned to a page element or to a document position. Survives resize.
@@ -30,7 +17,7 @@
   let _following   = false;
   // Scan index of the card the popup is asking about; its box is outlined until the pointer leaves that row.
   let _highlight   = null;
-  // Card frames drawn in the last pass (viewport rects). A card's label shows only while the pointer is on it; the
+  // Card frames drawn in the last pass (viewport rects). Every card has a small tag; its full label shows only while the pointer is on it; the
   // canvas never takes the pointer, so that is a hit test against these on the page's own mousemove.
   let _targets     = [];
   let _hover       = null; // { target: index into _targets, index: scan index, rect: label rect }
@@ -355,18 +342,28 @@
       if (!box || !boxInView(box, viewW(), viewH())) continue;
       const [sx1, sy1, sx2, sy2] = box;
       const card = p.card;
-      const tier  = card.abstain ? 'abstain' : confTier(card.confidence);
-      const color = CONF_COLORS[tier];
+      const state = cardState(card);
+      const color = STATE_COLORS[state];
       if (p.index === _highlight) drawHighlight(sx1, sy1, sx2, sy2);
       ctx.save();
-      drawCornerBox(sx1, sy1, sx2, sy2, color, card.abstain);
+      drawFrame(sx1, sy1, sx2, sy2, color, state === 'none');
       ctx.restore();
       _targets.push({ rect: { x: sx1, y: sy1, w: sx2 - sx1, h: sy2 - sy1 }, box, card, color, index: p.index });
     }
 
-    // Labels are drawn last so they sit over neighbouring cards: the hovered card, and the one the popup points at.
     const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect } : null;
     const hit = hoveredTarget(_targets, kept, _mouse);
+    // Every card carries a small tag (name and number, price): placed where it overlaps no other tag, else left to hover.
+    const taken = [];
+    for (const [i, t] of _targets.entries()) {
+      if (i === hit || t.index === _highlight) continue;
+      ctx.save();
+      const rect = drawTag(t.box, t.card, taken);
+      ctx.restore();
+      if (rect) taken.push(rect);
+    }
+
+    // The full label is drawn last so it sits over neighbouring cards: the hovered card, and the one the popup points at.
     _hover = null;
     for (const [i, t] of _targets.entries()) {
       if (i !== hit && t.index !== _highlight) continue;
@@ -391,28 +388,116 @@
     ctx.restore();
   }
 
-  function drawCornerBox(x1, y1, x2, y2, color, dashed) {
-    const w   = x2 - x1;
-    const h   = y2 - y1;
-    const arm = Math.min(w, h) * 0.18;
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 2;
-    ctx.lineCap     = 'round';
-    if (dashed) ctx.setLineDash([5, 4]);
-
+  // A whole outline in the card's state colour over a dark edge, so it shows on light and dark photos alike.
+  function drawFrame(x1, y1, x2, y2, color, dashed) {
+    const w = x2 - x1;
+    const h = y2 - y1;
+    const r = Math.min(8, w / 10, h / 10);
+    if (dashed) ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    for (const [cx, cy, dx, dy] of [
-      [x1, y1,  1,  1],
-      [x2, y1, -1,  1],
-      [x2, y2, -1, -1],
-      [x1, y2,  1, -1],
-    ]) {
-      ctx.moveTo(cx + dx * arm, cy);
-      ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy + dy * arm);
-    }
+    ctx.roundRect(x1, y1, w, h, r);
     ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x1, y1, w, h, r);
+    ctx.stroke();
+  }
+
+  // What a card's frame and tag say: identified (green), identified with its printing to pick (blue), the user's pick
+  // needed (amber), not recognised (grey, dashed). The popup sends its own verdict (display.state) so the page and the
+  // list agree; a relay straight from the background falls back to the card's own fields.
+  const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', ask: '#f59e0b', none: '#9ca3af' };
+  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', ask: '#fcd34d', none: '#d1d5db' };
+
+  function cardState(card) {
+    const state = card?.display?.state;
+    if (state && STATE_COLORS[state]) return state;
+    if (card?.abstain || !card?.identity?.name) return 'none';
+    if (card.unsure || card.lowCertainty) return 'ask';
+    return 'identified';
+  }
+
+  /** A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do. */
+  function tagText(card) {
+    const state = cardState(card);
+    if (state === 'none') return { state, lines: ['Not recognised', 'Pick in scanner'], short: '?' };
+    const { name, price } = labelText(card);
+    const number = card.display?.number || card.identity?.number || '';
+    const title = number ? `${name} #${number}` : name;
+    const priced = price && price !== '—' ? price : '';
+    if (state === 'ask') return { state, lines: [`${name}?`, 'Pick in scanner'], short: `${name}?` };
+    if (state === 'printing') return { state, lines: [title, priced ? `${priced} · pick printing` : 'Pick printing'], short: priced || name };
+    return { state, lines: [title, priced || '—'], short: priced || name };
+  }
+
+  // Tag size follows the card: 10 px text on a 60 px card up to 13 px; a short card gets one line.
+  const TAG_MIN_W = 36;
+  function tagLayout(boxW, boxH) {
+    const px = Math.max(10, Math.min(13, Math.round(boxW / 9)));
+    return { px, lines: boxW >= 80 && boxH >= 4 * px + 16 ? 2 : 1, maxWidth: Math.max(0, boxW - 4) };
+  }
+
+  function overlaps(a, b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  }
+
+  /** Where a tag goes: inside the top of its card, inside the bottom, just above, just below; the first free spot. */
+  function placeTag(box, w, h, taken, view) {
+    const [x1, y1, , y2] = box;
+    const x = Math.max(2, Math.min(x1 + 2, view.w - w - 2));
+    for (const y of [y1 + 2, y2 - h - 2, y1 - h - 2, y2 + 2]) {
+      if (y < 2 || y + h > view.h - 2) continue;
+      const rect = { x, y, w, h };
+      if (!taken.some((other) => overlaps(other, rect))) return rect;
+    }
+    return null;
+  }
+
+  function drawTag(box, card, taken) {
+    const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
+    if (layout.maxWidth < TAG_MIN_W) return null;
+    const { state, lines, short } = tagText(card);
+    const PAD_X = 5;
+    const PAD_Y = 3;
+    const ACCENT_W = 3;
+    const GAP = 2;
+    const textMax = Math.max(0, layout.maxWidth - ACCENT_W - PAD_X * 2);
+    const rows = (layout.lines === 2 ? lines : [short]).map((text, i) => ({
+      text,
+      font: `${layout.lines === 2 && i === 0 ? 600 : 700} ${layout.px}px ${LABEL_FONT}`,
+      color: layout.lines === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
+    }));
+    let widest = 0;
+    for (const row of rows) {
+      ctx.font = row.font;
+      row.text = fitText(row.text, textMax, (t) => ctx.measureText(t).width);
+      widest = Math.max(widest, ctx.measureText(row.text).width);
+    }
+    if (!rows.some((row) => row.text)) return null;
+    const w = Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, layout.maxWidth);
+    const h = PAD_Y * 2 + rows.length * layout.px + GAP * (rows.length - 1);
+    const rect = placeTag(box, w, h, taken, { w: viewW(), h: viewH() });
+    if (!rect) return null;
+    ctx.fillStyle = 'rgba(12,14,20,0.88)';
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, w, h, 4);
+    ctx.fill();
+    ctx.fillStyle = STATE_COLORS[state];
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, ACCENT_W, h, [4, 0, 0, 4]);
+    ctx.fill();
+    ctx.textBaseline = 'top';
+    let cy = rect.y + PAD_Y;
+    for (const row of rows) {
+      ctx.font = row.font;
+      ctx.fillStyle = row.color;
+      ctx.fillText(row.text, rect.x + ACCENT_W + PAD_X, cy);
+      cy += layout.px + GAP;
+    }
+    return rect;
   }
 
   const money = (n) => '$' + Number(n).toFixed(2);
@@ -1071,6 +1156,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagLayout, placeTag, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

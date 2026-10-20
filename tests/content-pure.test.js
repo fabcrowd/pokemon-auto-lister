@@ -356,3 +356,30 @@ test('restoreOverlay brings back a hidden overlay', () => {
   page.send({ action: 'restoreOverlay' });
   assert.equal(page.canvas.style.visibility, 'visible');
 });
+
+test('every card tag says its state: identified, printing to pick, your pick, not recognised', () => {
+  const id = { name: 'Charizard', number: '4' };
+  const tag = (card) => JSON.parse(JSON.stringify(pure.tagText(card)));
+  assert.deepEqual(tag({ identity: id, display: { state: 'identified', price: 954.65 } }).lines, ['Charizard #4', '$954.65']);
+  assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: 'set not sure · $120.00–$950.00' } }).lines,
+    ['Charizard #4', '$120.00–$950.00 · pick printing']);
+  assert.deepEqual(tag({ identity: id, display: { state: 'ask' } }).lines, ['Charizard?', 'Pick in scanner']);
+  assert.equal(tag({ identity: null, abstain: true }).state, 'none');
+  // Straight from the background, before the popup has drawn: the card's own fields decide.
+  assert.equal(pure.cardState({ identity: id, unsure: true }), 'ask');
+  assert.equal(pure.cardState({ identity: id, confidence: 0.9 }), 'identified');
+});
+
+test('tags scale with the card and never sit on another tag', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagLayout(60, 85))), { px: 10, lines: 1, maxWidth: 56 });
+  assert.equal(pure.tagLayout(200, 280).px, 13);
+  assert.equal(pure.tagLayout(200, 280).lines, 2);
+  const view = { w: 1000, h: 800 };
+  const first = pure.placeTag([100, 100, 200, 240], 90, 30, [], view);
+  assert.deepEqual(JSON.parse(JSON.stringify(first)), { x: 102, y: 102, w: 90, h: 30 });
+  // The same spot is taken: the next free one is inside the bottom of the card.
+  const second = pure.placeTag([100, 100, 200, 240], 90, 30, [first], view);
+  assert.equal(second.y, 240 - 30 - 2);
+  const boxed = [first, second, { x: 102, y: 68, w: 90, h: 30 }, { x: 102, y: 242, w: 90, h: 30 }];
+  assert.equal(pure.placeTag([100, 100, 200, 240], 90, 30, boxed, view), null);
+});

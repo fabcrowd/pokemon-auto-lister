@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -238,17 +238,24 @@ async function scanPage() {
     return;
   }
 
+  applyScanResult(data);
+  finishScan();
+}
+
+// A scan's result in the list, the stats and the page overlay. A rescan the page started (pictures that loaded
+// later) comes here too, so the list always matches what the overlay shows.
+function applyScanResult(data) {
   const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight };
   _variantChoice = new Map();
   _picker = new Map();
+  _userEdits = false;
   _showUnrecognised = false;
   _lastResult.cards.forEach(seedVariant);
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
   updateStats(_lastResult.cards);
   renderResults();
-  finishScan();
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
 
   if (cards.length === 0) {
@@ -263,6 +270,21 @@ async function scanPage() {
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
 }
+
+// The background rescans on its own when more card pictures load. A pick in progress is never thrown away: the list
+// and overlay stay as they are and the user is told to scan again.
+let _userEdits = false;
+resultsEl.addEventListener("change", () => { _userEdits = true; }, true);
+resultsEl.addEventListener("click", (e) => { if (e.target?.closest?.("button, select, a, input")) _userEdits = true; }, true);
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.action !== "rescanResult" || !msg.data || isScanning) return;
+  if (_picker.size || _userEdits) {
+    pushOverlay();
+    showMessage("More cards loaded on the page. Scan again to add them.");
+    return;
+  }
+  applyScanResult(msg.data);
+});
 
 /* ─── Site access offer ─── */
 
@@ -905,7 +927,7 @@ function pushOverlay() {
     confidence: c.confidence,
     abstain: c.abstain,
     ...(c.inGallery ? { inGallery: true } : {}),
-    display: computeDisplayForOverlay(c, idx),
+    display: { ...computeDisplayForOverlay(c, idx), state: overlayState(c) },
   }));
   chrome.runtime.sendMessage({
     action: "overlayWithGrid",
@@ -913,6 +935,14 @@ function pushOverlay() {
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
   }).catch(() => {});
+}
+
+// The same verdict the list shows: identified, identified with the printing to pick, asked, or not recognised.
+function overlayState(card) {
+  if (isUnsure(card)) return "ask";
+  const kind = classifyCard(card);
+  if (kind === "identified") return needsPrinting(card) ? "printing" : "identified";
+  return kind === "pick" ? "ask" : "none";
 }
 
 function computeDisplayForOverlay(card, idx) {
