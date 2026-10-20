@@ -241,6 +241,7 @@ async function loadModels() {
       getAssetJson("id_map.json"),
     ]);
     _metaBase = _meta;
+    await firstBundleCheck();
     await applyBundle();
 
     _ready = true;
@@ -459,7 +460,7 @@ async function handleScanPage(sendResponse, era) {
     sendResponse({ error: "That tab is no longer in front. Scan again." });
     return;
   }
-  console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId);
+  console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId, "photo adapter", adapterActive() ? "on" : "off");
   if (!_scanGate.begin(targetTab.id)) {
     sendResponse({ error: "A scan is already running on this tab." });
     return;
@@ -1317,10 +1318,12 @@ async function applyBundleOnce() {
   _packRows = stored?.memory ?? [];
   _photoCheck = stored?.check ?? null;
   console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
+  if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
+  else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
 }
 
 // At most one check a day (lib/bundle.js); nothing about the user is sent.
-checkBundle({
+const _bundleCheck = checkBundle({
   manifestUrl: PACK_MANIFEST_URL,
   publicKey: PACK_PUBLIC_KEY,
   expected: packBuild(),
@@ -1330,6 +1333,18 @@ checkBundle({
   if (result.status === "ok") applyBundle();
   else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] bundle not used:", result.status);
 }).catch((err) => console.error("[BG] bundle check failed:", err?.message || err));
+
+const FIRST_BUNDLE_WAIT_MS = 8000;
+
+// Right after install nothing is stored yet, and the first scans ran on the bare catalog while the bundle (with
+// the photo adapter) was still downloading. With nothing stored, the models wait a few seconds for that check.
+async function firstBundleCheck() {
+  const stored = await _shareStore.getPack().catch(() => null);
+  if (stored) return;
+  let timer;
+  await Promise.race([_bundleCheck, new Promise((resolve) => { timer = setTimeout(resolve, FIRST_BUNDLE_WAIT_MS); })]);
+  clearTimeout(timer);
+}
 
 // The data repo publishes one price file a day. A failed download keeps the copy already stored.
 refreshPriceSnapshot().catch((err) => console.error("[BG] price snapshot not updated:", err?.message || err));
