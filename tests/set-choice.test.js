@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
+import { choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, extendsTitle, titleCatalogName, titleConfirmsName, titleVerdict, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
 
 const meta = [
   { id: 'ex8-93', name: 'Boost Energy', set: 'Deoxys', setCode: 'ex8', number: '93' },
@@ -288,4 +288,44 @@ test('a star card is not the plain card of the same name', () => {
   assert.deepEqual(setChoices(stars[1], [hit(0, 0.9), hit(1, 0.89)], stars).map((c) => c.id), ['base1-1']);
   assert.equal(choiceName('Vibrava δ'), 'vibrava');
   assert.deepEqual(versionChoices(stars[1], [hit(1, 0.9), hit(0, 0.89)], stars).map((c) => c.id), ['ex14-99']);
+});
+
+test('a title line confirms a name only when it names no longer card containing it', () => {
+  const known = ['Charizard', 'Radiant Charizard', 'Raichu', "Lt. Surge's Raichu", 'Scyther', "Rocket's Scyther", 'Mew', 'Mewtwo'];
+  assert.equal(titleConfirmsName('Charizard', 'Charizard 120 HP', known), true);
+  assert.equal(titleConfirmsName('Charizard', '160 Radiant Charizard', known), false);
+  assert.equal(titleConfirmsName('Raichu', "w  Lt.Surge's Raichu 80 HP", known), false);
+  assert.equal(titleConfirmsName("Rocket's Scyther", 'Scyther 70HP', known), false);
+  assert.equal(titleConfirmsName('Mewtwo', 'Mew', known), false);
+  assert.equal(titleConfirmsName('Ho-Oh ex', '', known), false);
+});
+
+test('the title line spells out the longest catalog name it contains', () => {
+  const known = ['Dragonite', 'Dark Dragonite', 'Mismagius', 'Mismagius GL', 'Mew', 'Mewtwo', 'Pikachu'];
+  assert.equal(titleCatalogName('Dark Dragonite 70HP', known), 'Dark Dragonite');
+  assert.equal(titleCatalogName('Mewtwo', known), 'Mewtwo');
+  assert.equal(titleCatalogName('Mew 50HP', known), null);
+  assert.equal(titleCatalogName('', known), null);
+});
+
+test('titleVerdict tells agreement, another name and silence apart', () => {
+  const known = ['Dragonite', 'Dark Dragonite', 'Mismagius', 'Mismagius GL', 'Mew', 'Mewtwo', 'Diancie ◇', 'Diancie'];
+  assert.deepEqual(titleVerdict('Dragonite', 'N 100HP Dragonite', known), { kind: 'agree', titleName: 'Dragonite' });
+  assert.deepEqual(titleVerdict('Dragonite', 'Dark Dragonite 70HP', known), { kind: 'contradict', titleName: 'Dark Dragonite' });
+  assert.equal(titleVerdict('Mismagius GL', 'Mismagius 80', known).kind, 'silent');
+  assert.deepEqual(titleVerdict(null, 'Mewtwo 70HP', known), { kind: 'contradict', titleName: 'Mewtwo' });
+  assert.equal(titleVerdict('Diancie ◇', 'Diancie 120', known).kind, 'agree');
+  assert.equal(titleVerdict('Mew', 'w8 Bn', known).kind, 'silent');
+  const more = [...known, 'Flareon', 'Flareon EX', 'Arcanine', "Blaine's Arcanine", 'Ditto ◇', 'Ditto'];
+  assert.equal(titleVerdict('Flareon EX', 'Flareon 170HP', more).kind, 'silent');
+  assert.equal(titleVerdict("Blaine's Arcanine", 'Arcanine 90HP', more).kind, 'silent');
+  assert.equal(titleVerdict('Ditto ◇', 'Ditto 40', more).kind, 'agree');
+});
+
+test('a longer catalog name the title cannot tell apart', () => {
+  assert.equal(extendsTitle('Gyarados EX', 'Gyarados'), true);
+  assert.equal(extendsTitle("Blaine's Arcanine", 'Arcanine'), true);
+  assert.equal(extendsTitle('Gyarados', 'Gyarados'), false);
+  assert.equal(extendsTitle('Ditto ◇', 'Ditto'), false);
+  assert.equal(extendsTitle('Pikachu', 'Raichu'), false);
 });

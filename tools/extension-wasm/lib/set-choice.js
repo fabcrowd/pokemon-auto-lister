@@ -73,6 +73,63 @@ export function nameAgrees(name, text) {
   return base.toLowerCase() !== String(name || "").trim().toLowerCase() && nameInText(base, blob);
 }
 
+const compact = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * The title line confirms this name, and names no longer card that contains it: "160 Radiant Charizard" does not
+ * confirm Charizard, nor "Lt.Surge's Raichu 80 HP" Raichu.
+ */
+export function titleConfirmsName(name, text, knownNames = []) {
+  if (!nameAgrees(name, text)) return false;
+  const own = compact(name);
+  const title = compact(text);
+  return !knownNames.some((other) => {
+    const longer = compact(other);
+    return longer.length > own.length && longer.includes(own) && title.includes(longer);
+  });
+}
+
+const TITLE_NAME_MIN_LENGTH = 4;   // "Mew" alone is too easily found inside other words
+
+/** The longest catalog name the title line spells out (letters and digits only), or null. */
+export function titleCatalogName(text, knownNames = []) {
+  const title = compact(text);
+  if (title.length < TITLE_NAME_MIN_LENGTH) return null;
+  let best = null;
+  for (const name of knownNames) {
+    const own = compact(name);
+    if (own.length >= TITLE_NAME_MIN_LENGTH && own.length > (best ? compact(best).length : 0) && title.includes(own)) best = name;
+  }
+  return best;
+}
+
+/** True when `name` is `titleName` with more to it ("Gyarados EX" for "Gyarados"): a title that cannot tell them apart. */
+export function extendsTitle(name, titleName) {
+  const own = compact(name);
+  const read = compact(titleName);
+  return own.length > read.length && own.includes(read) && choiceName(name) !== choiceName(titleName);
+}
+
+/**
+ * What the title line says about the matcher's name: "agree" (it confirms it), "contradict" (it spells out another
+ * catalog name, given as titleName), or "silent" (nothing readable). Measured on 11 Facebook photos (2026-10-20,
+ * crops >= 150 px): agree 58 right / 1 wrong; contradict 5 right / 15 wrong, with the title's own name right 11 times.
+ */
+export function titleVerdict(name, text, knownNames = []) {
+  if (name && titleConfirmsName(name, text, knownNames)) return { kind: "agree", titleName: name };
+  const titleName = titleCatalogName(text, knownNames);
+  if (titleName && name) {
+    const own = compact(name);
+    const read = compact(titleName);
+    // "Diancie ◇" is printed "Diancie": the longest name the title spells is this one, without its symbol.
+    if (own === read || choiceName(titleName) === choiceName(name)) return { kind: "agree", titleName: name };
+    // "Flareon EX", "Erika's Dragonair": the EX logo or the owner is not on the line that was read. No verdict.
+    if (own.includes(read)) return { kind: "silent", titleName: null };
+  }
+  if (titleName) return { kind: "contradict", titleName };
+  return { kind: "silent", titleName: null };
+}
+
 /**
  * The title line names this card, including one junk letter glued to the end.
  * "Chimcharw" is Chimchar. "Mewtwo" is not Mew.

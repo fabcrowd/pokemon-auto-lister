@@ -20,8 +20,8 @@ import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
-import { capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
-import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
+import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
+import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
@@ -1602,7 +1602,76 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
   const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
-  return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
+  const settled = capUnconfirmedSet(await withSetRange(read));
+  return checkTitle(capSmallSource(settled, capHeight), settled, cardCanvas, capHeight, era);
+}
+
+// The title line is read from crops this tall up (none below 150 px was legible on the 11 Facebook photos).
+const TITLE_MIN_HEIGHT = 150;
+const TITLE_RERANK_DEPTH = 20;
+
+/**
+ * The card's own title line as a second opinion on the picture match (lib/set-choice.js titleVerdict).
+ * Agreeing, a name the small-crop cap left unsure may show as identified. Naming another catalog card, that card
+ * becomes the guess when it is among the closest matches, else the picture's name is only asked about.
+ * Silent, nothing changes. A changed name is always asked about, never shown as identified.
+ */
+async function checkTitle(result, uncapped, cardCanvas, height, era) {
+  if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
+  const name = result.abstain ? null : result.identity?.name || null;
+  let text = "";
+  try {
+    text = await readOnce(cardCanvas, "name", readCardName);
+  } catch (err) {
+    console.log("[BG]   title read failed:", err?.message || err);
+    return result;
+  }
+  const verdict = titleVerdict(name, text, catalogNames());
+  if (verdict.kind === "silent") return result;
+  if (verdict.kind === "agree") {
+    const capped = result.unsure && result.smallSource && !uncapped.unsure && !uncapped.abstain && uncapped.confidence > SMALL_SOURCE_CONFIDENCE_CAP;
+    if (!capped) return { ...result, titleConfirmed: true };
+    console.log("[BG]   title confirms", JSON.stringify(name), "- shown as identified");
+    return { ...uncapped, confidence: Math.min(uncapped.confidence, BELOW_HIGH_CONFIDENCE), smallSource: true, titleConfirmed: true };
+  }
+  const { hits } = await searchBoth(await embedSerial(cardCanvas));
+  const wanted = choiceName(verdict.titleName);
+  const hit = hits.slice(0, TITLE_RERANK_DEPTH).find((h) => {
+    const card = _meta[h.index];
+    return card && choiceName(card.name) === wanted && (!era || inEra(card, era));
+  });
+  // "Gyarados" also names "Gyarados EX", whose logo is not on the line read: no rerank when such a card is close.
+  const longer = hits.slice(0, TITLE_RERANK_DEPTH).some((h) => _meta[h.index] && extendsTitle(_meta[h.index].name, verdict.titleName));
+  if (hit && !longer) {
+    console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name ?? "-"), "- asked with that name");
+    return guessFromTitle(_meta[hit.index], hits, result);
+  }
+  if (!name) return result;
+  console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name), "- asked");
+  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName };
+}
+
+async function guessFromTitle(card, hits, before) {
+  const base = {
+    confidence: Math.min(Math.max(before.confidence ?? 0, 0), SMALL_SOURCE_CONFIDENCE_CAP),
+    abstain: false,
+    unsure: true,
+    titleReranked: true,
+    catalogTop: before.catalogTop ?? null,
+    ocrText: before.ocrText || "",
+    nearest: closestIds(hits),
+    ranked: rankedIds(hits),
+  };
+  const choices = setChoices(card, hits, _meta);
+  if (choices.length > 1) {
+    return withSetRange({
+      ...base,
+      identity: { name: card.name },
+      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      market_price: null, price_variant: null, price_grid: null,
+    });
+  }
+  return { ...base, identity: card, ...(await priceIdentity(card)) };
 }
 
 // The closest cards with the score they were ranked by, for the page's set prior to re-order (lib/set-prior.js).
