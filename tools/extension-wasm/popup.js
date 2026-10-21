@@ -478,6 +478,8 @@ function renderCardRow(card, idx) {
   const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
   const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
 
+  // An asked row offers search once, under its picks; an identified row offers it as "Wrong card?" in the head.
+  const asked      = isAskedRow(card);
   const askRow     = renderAskRow(card, idx);
   // The candidates already include the set choices; a second menu would ask the same question twice.
   const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
@@ -500,7 +502,7 @@ function renderCardRow(card, idx) {
         <div class="card-sub">${subHtml}${photoHtml}</div>
       </div>
       ${renderPrice(card, idx)}
-      <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
+      ${asked ? "" : `<button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>`}
     </div>
     ${askRow}
     ${setRow}
@@ -561,14 +563,16 @@ function searchResultsHtml(state, idx) {
   return renderPickList(state.results, idx);
 }
 
+const isAskedRow = (card) => isUnsure(card) && !card.pricing;
+
 function renderAskRow(card, idx) {
   const state = _picker.get(idx);
-  const ask = isUnsure(card) && !card.pricing
+  const ask = isAskedRow(card)
     ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
         <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
         ${(card.identity?.name && !card.lowCertainty) || !card.candidates?.length ? "" : `<div class="picker-sub">${card.lowCertainty ? "Best guess first, then the closest matches" : "Closest matches"}</div>`}
         <div class="pick-row">${renderScannedCard(card, idx)}${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
-        ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}">Not listed? Search</button>`}
+        ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`}
       </div>`
     : "";
   return ask + renderSearchPanel(idx);
@@ -607,10 +611,16 @@ function openSearch(idx, via) {
   if (!open && input?.value) onSearchInput(idx, input.value);
 }
 
-// Re-rendering drops the focused element, so keyboard users land back on a button in the same card.
-function focusOpener(idx, via = "wrong-card") {
+// Re-rendering drops the focused element, so keyboard users land back on a button in the same card: the opener
+// they used, else the row's one search opener (asked rows have only "search", identified rows only "wrong-card"),
+// else the first pick or other button in the row, so focus never falls back to the page.
+function focusOpener(idx, via = null) {
   const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
-  (row?.querySelector(`[data-open-search][data-via="${via}"]`) ?? row?.querySelector("[data-open-search]"))?.focus();
+  if (!row) return;
+  const target = (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
+    || row.querySelector("[data-open-search]")
+    || row.querySelector("button[data-pick], button, select, input");
+  target?.focus();
 }
 
 function closeSearch(idx) {
