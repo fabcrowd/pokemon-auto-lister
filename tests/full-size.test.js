@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fullSizeCandidates, loadFullSize, sameAspect } from '../tools/extension-wasm/lib/full-size.js';
+import { facebookOriginal, fullSizeCandidates, isFacebookCdn, loadFullSize, sameAspect } from '../tools/extension-wasm/lib/full-size.js';
 import { imageToViewportTransform, mapPhotoBoxToViewport, rescaleTransform } from '../tools/extension-wasm/photo-detection.js';
 
 const BASE = 'https://shop.example/item/1';
@@ -177,4 +177,43 @@ test('a rewritten thumbnail stays on its own host, so it passes when that host i
   const src = 'https://i.ebayimg.com/images/g/AbC/s-l300.jpg';
   assert.equal(fullSizeCandidates({ src, naturalWidth: 234, base: BASE, allowedHosts: new Set(['i.ebayimg.com']) })[0], 'https://i.ebayimg.com/images/g/AbC/s-l1600.jpg');
   assert.deepEqual(fullSizeCandidates({ src, naturalWidth: 234, base: BASE, allowedHosts: new Set(['cdn.example']) }), []);
+});
+
+const FB_OG = 'https://scontent-xx1-1.xx.fbcdn.net/v/t39.0-6/100000001_2000000000000002_3000000000000000003_n.jpg?stp=dst-jpg_tt6&cstp=mx1537x2048&ctp=p600x600&_nc_cat=107&oh=00_AAA&oe=00000000';
+const FB_SHOWN = 'https://scontent-xx1-1.xx.fbcdn.net/v/t39.0-6/100000001_2000000000000002_3000000000000000003_n.jpg?stp=dst-jpg_s960x960_tt6&_nc_cat=107&oh=00_BBB&oe=00000000';
+const FB_ORIGINAL = 'https://scontent-xx1-1.xx.fbcdn.net/v/t39.0-6/100000001_2000000000000002_3000000000000000003_n.jpg?stp=dst-jpg_tt6&cstp=mx1537x2048&_nc_cat=107&oh=00_AAA&oe=00000000';
+
+test('facebookOriginal drops only the ctp resize, and only on the Facebook CDN', () => {
+  assert.equal(facebookOriginal(FB_OG), FB_ORIGINAL);
+  assert.equal(facebookOriginal(FB_SHOWN), null);
+  assert.equal(facebookOriginal('https://cdn.example/a.jpg?ctp=p600x600'), null);
+  assert.equal(facebookOriginal('https://fbcdn.net.evil.example/a.jpg?ctp=p600x600'), null);
+  assert.equal(facebookOriginal('http://scontent.xx.fbcdn.net/a.jpg?ctp=p600x600'), null);
+  assert.equal(facebookOriginal('not a url'), null);
+  assert.equal(isFacebookCdn('scontent-iad3-2.xx.fbcdn.net'), true);
+  assert.equal(isFacebookCdn('fbcdn.net.example'), false);
+});
+
+test('the Facebook original of the shown photo comes first, from its og:image', () => {
+  const urls = fullSizeCandidates({ src: FB_SHOWN, naturalWidth: 720, ogImages: [FB_OG], base: 'https://www.facebook.com/marketplace/item/1/',
+    allowedHosts: new Set(['scontent-iad3-1.xx.fbcdn.net']) });
+  assert.equal(urls[0], FB_ORIGINAL);
+  assert.equal(urls.includes(FB_SHOWN), false);
+});
+
+test('an og:image of another Facebook photo, or from another CDN, is not used', () => {
+  const other = FB_OG.replace('100000001_', '100000009_');
+  assert.deepEqual(fullSizeCandidates({ src: FB_SHOWN, naturalWidth: 720, ogImages: [other], base: BASE }), []);
+  const urls = fullSizeCandidates({ src: FB_SHOWN, naturalWidth: 720, ogImages: [FB_OG], base: BASE, allowedHosts: new Set(['cdn.example']) });
+  assert.deepEqual(urls, []);
+});
+
+test('a failed or same-size Facebook original falls back to the next candidate', async () => {
+  const seen = [];
+  const found = await loadFullSize([FB_ORIGINAL, 'https://cdn.example/b.jpg'], { width: 720, height: 960 }, async (url) => {
+    seen.push(url);
+    return url === FB_ORIGINAL ? null : { width: 1440, height: 1920 };
+  });
+  assert.deepEqual(seen, [FB_ORIGINAL, 'https://cdn.example/b.jpg']);
+  assert.equal(found.url, 'https://cdn.example/b.jpg');
 });

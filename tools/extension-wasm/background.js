@@ -13,14 +13,15 @@ try {
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
 import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
-import { acceptWholePhoto, displayedRegion, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
+import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
+import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
 import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
-import { capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
-import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice } from "./lib/set-choice.js";
+import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
+import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
@@ -40,9 +41,9 @@ import { createUploader } from "./lib/upload-queue.js";
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 // dev-only:end
 import { sendToTab } from "./lib/tab-messaging.js";
-import { fullSizeCandidates, loadFullSize } from "./lib/full-size.js";
+import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
-import { hasSiteAccess } from "./lib/site-access.js";
+import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
 import { isCardBack }                  from "./lib/card-back.js";
@@ -240,6 +241,7 @@ async function loadModels() {
       getAssetJson("id_map.json"),
     ]);
     _metaBase = _meta;
+    await firstBundleCheck();
     await applyBundle();
 
     _ready = true;
@@ -361,6 +363,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         cards: msg.cards,
         srcWidth: msg.srcWidth,
         srcHeight: msg.srcHeight,
+        ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
       });
       sendResponse({ ok: true });
       return false;
@@ -386,7 +389,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // A scan already running on that tab leaves one follow-up for when it ends.
       if (_popupWinId !== null && _ready) {
         const tabId = sender.tab?.id ?? _targetTabId;
-        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(() => {});
+        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(sendRescanResult);
       }
       return false;
 
@@ -418,6 +421,11 @@ function readBitmap(bitmap) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
   return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+}
+
+// A rescan nobody clicked for (pictures that loaded later): the open popup gets its result like a scan it started.
+function sendRescanResult(data) {
+  if (data && !data.error) chrome.runtime.sendMessage({ action: "rescanResult", data }).catch(() => {});
 }
 
 async function handleScanPage(sendResponse, era) {
@@ -453,7 +461,7 @@ async function handleScanPage(sendResponse, era) {
     sendResponse({ error: "That tab is no longer in front. Scan again." });
     return;
   }
-  console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId);
+  console.log("[BG] scanning tab", targetTab.id, "url", targetTab.url, "window", targetTab.windowId, "photo adapter", adapterActive() ? "on" : "off");
   if (!_scanGate.begin(targetTab.id)) {
     sendResponse({ error: "A scan is already running on this tab." });
     return;
@@ -462,7 +470,7 @@ async function handleScanPage(sendResponse, era) {
 
   try {
     // Ask the page which images look like cards; sendToTab injects the content script if it is not there yet.
-    let domResp = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+    let domResp = await sendToTab(chrome, targetTab.id, { action: "findCards", thumbs: true }).catch((e) => ({ error: e.message }));
     if (domResp?.error) {
       sendResponse({ error: "Could not query page for cards: " + domResp.error });
       return;
@@ -471,7 +479,7 @@ async function handleScanPage(sendResponse, era) {
     // Scanning then would report "no cards" and run detection on a blank image.
     if ((domResp.pending || 0) > 0 && !(domResp.cards?.length) && !(domResp.photos?.length)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      const again = await sendToTab(chrome, targetTab.id, { action: "findCards" }).catch((e) => ({ error: e.message }));
+      const again = await sendToTab(chrome, targetTab.id, { action: "findCards", thumbs: true }).catch((e) => ({ error: e.message }));
       if (!again?.error) domResp = again;
     }
     if (!(domResp.cards?.length) && !(domResp.photos?.length) && (domResp.pending || 0) > 0) {
@@ -514,6 +522,9 @@ async function handleScanPage(sendResponse, era) {
     const slots = [];
     const hints = []; // per card: where the page keeps its own picture of a grid tile, for the second look (lib/refine.js)
     const dropped = new Set();
+    // Per card read from a listing photo: which photo, how tall it was there, and its embedding, so a card shown in
+    // two photos of the gallery is kept once (lib/gallery.js).
+    const photoMeta = [];
     let screenNo = 0;
     let offset = { x: 0, y: 0 };
     let capped = false;
@@ -537,6 +548,12 @@ async function handleScanPage(sendResponse, era) {
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
     let lackedSiteAccess = false;
+    // Photos whose cards came out small while a known-larger rendition stayed unread: offered to the user to open.
+    const fullSizeOffers = [];
+    // Photos the scan wanted at full size but had no access to read, and how many of them were gallery photos it then
+    // skipped: the popup asks for exactly those sites and says what the access would add.
+    const unreadSources = new Set();
+    let galleryUnread = 0;
     // A grid tile the screenshot crop could not settle gets a second look at the page's own, larger picture of the card.
     // The service worker fetches it with the site access the extension already has (no new permission), so a site that
     // withholds access, a blocked or failed fetch, or a picture that is not card-shaped leaves the tile as it was.
@@ -658,14 +675,21 @@ async function handleScanPage(sendResponse, era) {
           // Outside a listing, a large image that is labelled as a sealed product is not scanned for cards.
           const photos = focus.kind === "listing" ? focus.photos : focus.photos.filter((ph) => ph.ctx?.sealedLabel !== true);
           if (photos.length) console.log("[BG]", photos.length, "photo candidates — running YOLO inside each");
-          const scanPhotos = async (list) => { for (const ph of list) {
+          // gallery: the listing's other photos, read from their source images only, within one time budget.
+          const scanPhotos = async (list, { gallery = null, firstPhoto = 1 } = {}) => { for (const [listIndex, ph] of list.entries()) {
+            const photoNo = focus.kind === "listing" ? firstPhoto + listIndex : undefined;
+            if (gallery && gallery.budget.remaining() <= 0) {
+              console.log("[BG]   gallery out of time:", list.length - listIndex, "photo(s) left unread");
+              break;
+            }
             let sx = Math.max(0, Math.round(ph.rect.vx * dpr));
             let sy = Math.max(0, Math.round(ph.rect.vy * dpr));
             let sw = Math.min(bitmap.width  - sx, Math.round(ph.rect.vw * dpr));
             let sh = Math.min(bitmap.height - sy, Math.round(ph.rect.vh * dpr));
             // A gallery slide that is not on screen can only be read from its source image.
             const offscreenSlide = (sw < 150 || sh < 150) && (ph.rect.pvw || 0) >= 150 && (ph.rect.pvh || 0) >= 150;
-            if ((sw < 150 || sh < 150) && !offscreenSlide) continue;
+            const sourceOnly = offscreenSlide || (gallery !== null && (sw < 150 || sh < 150));
+            if ((sw < 150 || sh < 150) && !sourceOnly) continue;
             let photoBitmap = null;
             let fromSource = false;
             let sourceTransform = null;
@@ -674,13 +698,21 @@ async function handleScanPage(sendResponse, era) {
               const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
               // Without access to the image's site there is nothing to fetch; go straight to the screenshot.
               const sourceReadable = sourceCanMap && await canReadPhotoSource(ph.src);
-              if (sourceCanMap && !sourceReadable) lackedSiteAccess = true;
+              if (sourceCanMap && !sourceReadable) {
+                lackedSiteAccess = true;
+                if (ph.src) unreadSources.add(ph.src);
+                if (gallery) galleryUnread += 1;
+              }
               // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
-              const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+              const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(Math.min(PHOTO_BUDGET_MS, gallery ? gallery.budget.remaining() : Infinity)) };
               upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
               photoBitmap = upgrade ? upgrade.bitmap
                 : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
-              if (!photoBitmap && offscreenSlide) continue;
+              if (!photoBitmap && sourceOnly) continue;
+              if (gallery && photoBitmap && Math.max(photoBitmap.width, photoBitmap.height) < MIN_GALLERY_SIDE) {
+                console.log("[BG]   gallery photo", photoNo, "too small to read:", photoBitmap.width + "x" + photoBitmap.height);
+                continue;
+              }
               if (photoBitmap) {
                 sourceTransform = upgrade
                   ? rescaleTransform(
@@ -716,7 +748,10 @@ async function handleScanPage(sendResponse, era) {
               }
               const imageW = photoBitmap.width;
               const imageH = photoBitmap.height;
-              let boxes = filterPhotoDetections(detectedBoxes, imageW, imageH);
+              const shaped = filterPhotoDetections(detectedBoxes, imageW, imageH);
+              // A card cut off by the photo edge reads as some other card: leave it out.
+              let boxes = dropEdgeFragments(shaped, imageW, imageH);
+              if (boxes.length < shaped.length) console.log("[BG]   dropped", shaped.length - boxes.length, "card piece(s) cut off by the photo edge");
               // dev-only:start
               if (collecting) await collectTestPhoto(photoBitmap, boxes, targetTab.url);
               // dev-only:end
@@ -744,7 +779,7 @@ async function handleScanPage(sendResponse, era) {
                   }
                 }
               }
-              const naturalPerFed = fromSource ? 1
+              const naturalPerFed = fromSource ? upgrade?.naturalPerFed ?? 1
                 : ph.naturalHeight > 0 && sourceTransform === null
                   ? (() => {
                     const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
@@ -769,7 +804,9 @@ async function handleScanPage(sendResponse, era) {
                 const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
                 let viewportBox;
                 if (fromSource) {
-                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+                  // A card in a gallery thumbnail may lie outside its cropped view: the thumbnail stands for it.
+                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect)
+                    || (gallery ? [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h] : null);
                   if (!viewportBox) continue;
                 } else {
                   viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
@@ -804,10 +841,32 @@ async function handleScanPage(sendResponse, era) {
                 if (hero) preemptedPhotoKeys.add(_photoKey(ph));
                 // The framing was a guess, so the name is a suggestion for the picker, not an answer.
                 if (heroStrict && !read.abstain) read = { ...read, unsure: true };
-                pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length }, cardCanvas,
+                if (gallery && read.cardBack) continue;
+                if (photoNo !== undefined) {
+                  photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: await embedSerial(cardCanvas).catch(() => null) };
+                }
+                pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length,
+                  readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)),
+                  ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }, cardCanvas,
                   shareOf(photoId, box, imageW, imageH, read), claimed);
               }
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
+              {
+                // Small cards and a larger picture the scan could not read itself: the user can open that one.
+                const read = cards.slice(photoFirst).filter((c) => !c.cardBack);
+                const small = read.filter((c) => c.readHeight > 0 && c.readHeight < FULL_SIZE_SMALL_PX).length;
+                if (read.length && small >= Math.max(2, read.length / 2)) {
+                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px) even in the full-size photo");
+                  else {
+                    const larger = largerRendition({ src: ph.src, naturalWidth: ph.naturalWidth, naturalHeight: ph.naturalHeight,
+                      srcset: ph.sources?.srcset || "", ogImages: domResp?.page?.ogImages, base: targetTab.url });
+                    if (larger) {
+                      fullSizeOffers.push({ ...larger, shown: [ph.naturalWidth, ph.naturalHeight], small, cards: read.length, ...(photoNo !== undefined ? { photo: photoNo } : {}) });
+                      console.log("[BG]   cards small (" + small + "/" + read.length + "); a larger photo is available but unread:", larger.side ? larger.side + " px" : "original upload");
+                    }
+                  }
+                }
+              }
               const photoReads = cards.slice(photoFirst);
               const checked = markRepeatedNames(photoReads);
               const repeated = checked.filter((card, i) => card !== photoReads[i]);
@@ -821,9 +880,10 @@ async function handleScanPage(sendResponse, era) {
           await scanPhotos(photos);
           // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
           // Related-item carousels are never part of this.
-          if (!cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length) {
-            console.log("[BG] main photo held no card — trying", focus.fallback.length, "other gallery photos");
-            await scanPhotos(focus.fallback);
+          const triedFallback = !cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
+          if (triedFallback.length) {
+            console.log("[BG] main photo held no card — trying", triedFallback.length, "other gallery photos");
+            await scanPhotos(triedFallback, { firstPhoto: 2 });
           }
 
           // A grid tile is its <img> and the slot behind it: read the better view once, not both.
@@ -856,12 +916,30 @@ async function handleScanPage(sendResponse, era) {
             const naturalPerFed = dc.naturalHeight > 0 && dc.rect.h > 0 ? dc.naturalHeight / (dc.rect.h * dpr) : undefined;
             // A tile nothing could settle is shown as its best guess, unsure, with the closest cards to pick from.
             const read = asLowCertaintyGuess(await identifyCard(cardCanvas, era, sh, null, capFor(sh, naturalPerFed)), catalogCard);
+            if (focus.kind === "listing") photoMeta[cards.length] = { photo: 1, height: sh, embedding: await embedSerial(cardCanvas).catch(() => null) };
             pushCard({
               box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
               score: 1.0,
               ...read,
+              readHeight: Math.round(informationHeight(sh, naturalPerFed)),
+              ...(focus.kind === "listing" ? { photo: 1 } : {}),
             }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed,
             read.lowCertainty ? tileHint(dcIndex, sh) : null);
+          }
+
+          // The listing's other photos: close-ups of a lot are where its cards can be read. Related-item carousels are
+          // never part of this. Without site access their sources cannot be fetched and only the main photo is read.
+          if (!sealed && focus.kind === "listing" && focus.main) {
+            const gallery = galleryPhotos({
+              main: focus.main,
+              candidates: [...(focus.fallback || []), ...(screenResp.thumbs || [])].filter((ph) => !triedFallback.includes(ph)),
+              headings: screenResp?.page?.headings || [],
+              pageUrl: targetTab.url,
+            });
+            if (gallery.length) {
+              console.log("[BG] gallery:", gallery.length, "more photo(s) of this listing");
+              await scanPhotos(gallery, { gallery: { budget: createBudget(GALLERY_BUDGET_MS) }, firstPhoto: 2 + triedFallback.length });
+            }
           }
 
           // ── Fallback: YOLO viewport scan ───────────────────────────────────────
@@ -908,6 +986,14 @@ async function handleScanPage(sendResponse, era) {
       if (wholePage && !navigated) await sendToTab(chrome, targetTab.id, { action: "startObserving" }).catch(() => {});
     }
 
+    // A card shown in more than one photo of the listing is kept once, as its best read.
+    if (pageFocus.kind === "listing" && new Set(photoMeta.filter(Boolean).map((r) => r.photo)).size > 1) {
+      const indexes = photoMeta.map((r, i) => (r && !dropped.has(i) ? i : -1)).filter((i) => i >= 0);
+      const { drop, photos: seenIn, similar } = mergeAcrossPhotos(indexes.map((i) => ({ ...photoMeta[i], card: cards[i] })));
+      for (const k of drop) dropped.add(indexes[k]);
+      for (const [k, seen] of seenIn) cards[indexes[k]] = { ...cards[indexes[k]], photos: seen };
+      console.log("[BG] gallery:", drop.size, "card(s) seen in more than one photo kept once", similar?.length ? "(closest cross-photo pairs " + similar.join(" ") + ")" : "");
+    }
     // Cards outside any split photo (a single listing picture, a grid tile) still get a best guess.
     if (dropped.size) {
       const keep = (_, i) => !dropped.has(i);
@@ -954,14 +1040,16 @@ async function handleScanPage(sendResponse, era) {
     // Offered only to someone who opted in; the exam photos themselves are held out of local learning either way.
     const shareExam = wantsExamPrompt(shares) && await _sharing.enabled().catch(() => false);
     sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: stillLoading, pageKind: pageFocus.kind, sealedProduct: sealed, shareExam,
+      ...(fullSizeOffers.length ? { fullSizePhoto: fullSizeOffers.sort((a, b) => b.small - a.small)[0] } : {}),
       truncated: capped ? "cards" : wholePage && screensCapped(domResp.documentHeight, domResp.viewportHeight) ? "screens" : null,
-      ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access" } : {}) });
+      ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access", accessSite: siteLabel(targetTab.url),
+        accessOrigins: siteOrigins(targetTab.url, [...unreadSources]), galleryUnread } : {}) });
   } catch (err) {
     console.error("[BG] handleScanPage error:", err?.message || err);
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
   } finally {
-    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(() => {});
+    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult);
   }
 }
 
@@ -1252,10 +1340,12 @@ async function applyBundleOnce() {
   _packRows = stored?.memory ?? [];
   _photoCheck = stored?.check ?? null;
   console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
+  if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
+  else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
 }
 
 // At most one check a day (lib/bundle.js); nothing about the user is sent.
-checkBundle({
+const _bundleCheck = checkBundle({
   manifestUrl: PACK_MANIFEST_URL,
   publicKey: PACK_PUBLIC_KEY,
   expected: packBuild(),
@@ -1265,6 +1355,18 @@ checkBundle({
   if (result.status === "ok") applyBundle();
   else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] bundle not used:", result.status);
 }).catch((err) => console.error("[BG] bundle check failed:", err?.message || err));
+
+const FIRST_BUNDLE_WAIT_MS = 8000;
+
+// Right after install nothing is stored yet, and the first scans ran on the bare catalog while the bundle (with
+// the photo adapter) was still downloading. With nothing stored, the models wait a few seconds for that check.
+async function firstBundleCheck() {
+  const stored = await _shareStore.getPack().catch(() => null);
+  if (stored) return;
+  let timer;
+  await Promise.race([_bundleCheck, new Promise((resolve) => { timer = setTimeout(resolve, FIRST_BUNDLE_WAIT_MS); })]);
+  clearTimeout(timer);
+}
 
 // The data repo publishes one price file a day. A failed download keeps the copy already stored.
 refreshPriceSnapshot().catch((err) => console.error("[BG] price snapshot not updated:", err?.message || err));
@@ -1454,7 +1556,7 @@ async function relayToTab(msg, tabId = null) {
   }
   if (_targetTabId === null) return;
   const relayMsg = msg.action === "relayOverlay"
-    ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight }
+    ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, ...(msg.fullSize ? { fullSize: msg.fullSize } : {}) }
     : msg.action === "relayHighlight"
       ? { action: "highlightCard", index: msg.index, scroll: msg.scroll }
       : { action: "clearOverlay" };
@@ -1522,7 +1624,76 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
   const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
-  return capSmallSource(capUnconfirmedSet(await withSetRange(read)), capHeight);
+  const settled = capUnconfirmedSet(await withSetRange(read));
+  return checkTitle(capSmallSource(settled, capHeight), settled, cardCanvas, capHeight, era);
+}
+
+// The title line is read from crops this tall up (none below 150 px was legible on the 11 Facebook photos).
+const TITLE_MIN_HEIGHT = 150;
+const TITLE_RERANK_DEPTH = 20;
+
+/**
+ * The card's own title line as a second opinion on the picture match (lib/set-choice.js titleVerdict).
+ * Agreeing, a name the small-crop cap left unsure may show as identified. Naming another catalog card, that card
+ * becomes the guess when it is among the closest matches, else the picture's name is only asked about.
+ * Silent, nothing changes. A changed name is always asked about, never shown as identified.
+ */
+async function checkTitle(result, uncapped, cardCanvas, height, era) {
+  if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
+  const name = result.abstain ? null : result.identity?.name || null;
+  let text = "";
+  try {
+    text = await readOnce(cardCanvas, "name", readCardName);
+  } catch (err) {
+    console.log("[BG]   title read failed:", err?.message || err);
+    return result;
+  }
+  const verdict = titleVerdict(name, text, catalogNames());
+  if (verdict.kind === "silent") return result;
+  if (verdict.kind === "agree") {
+    const capped = result.unsure && result.smallSource && !uncapped.unsure && !uncapped.abstain && uncapped.confidence > SMALL_SOURCE_CONFIDENCE_CAP;
+    if (!capped) return { ...result, titleConfirmed: true };
+    console.log("[BG]   title confirms", JSON.stringify(name), "- shown as identified");
+    return { ...uncapped, confidence: Math.min(uncapped.confidence, BELOW_HIGH_CONFIDENCE), smallSource: true, titleConfirmed: true };
+  }
+  const { hits } = await searchBoth(await embedSerial(cardCanvas));
+  const wanted = choiceName(verdict.titleName);
+  const hit = hits.slice(0, TITLE_RERANK_DEPTH).find((h) => {
+    const card = _meta[h.index];
+    return card && choiceName(card.name) === wanted && (!era || inEra(card, era));
+  });
+  // "Gyarados" also names "Gyarados EX", whose logo is not on the line read: no rerank when such a card is close.
+  const longer = hits.slice(0, TITLE_RERANK_DEPTH).some((h) => _meta[h.index] && extendsTitle(_meta[h.index].name, verdict.titleName));
+  if (hit && !longer) {
+    console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name ?? "-"), "- asked with that name");
+    return guessFromTitle(_meta[hit.index], hits, result);
+  }
+  if (!name) return result;
+  console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name), "- asked");
+  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName };
+}
+
+async function guessFromTitle(card, hits, before) {
+  const base = {
+    confidence: Math.min(Math.max(before.confidence ?? 0, 0), SMALL_SOURCE_CONFIDENCE_CAP),
+    abstain: false,
+    unsure: true,
+    titleReranked: true,
+    catalogTop: before.catalogTop ?? null,
+    ocrText: before.ocrText || "",
+    nearest: closestIds(hits),
+    ranked: rankedIds(hits),
+  };
+  const choices = setChoices(card, hits, _meta);
+  if (choices.length > 1) {
+    return withSetRange({
+      ...base,
+      identity: { name: card.name },
+      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      market_price: null, price_variant: null, price_grid: null,
+    });
+  }
+  return { ...base, identity: card, ...(await priceIdentity(card)) };
 }
 
 // The closest cards with the score they were ranked by, for the page's set prior to re-order (lib/set-prior.js).
@@ -2221,6 +2392,8 @@ const REFINE_BUDGET_MS = 30000;
 const REFINE_MAX_FAILURES = 3;
 // Everything one photo may spend fetching: its larger renditions and its own source together.
 const PHOTO_BUDGET_MS = 8000;
+// Cards read from fewer pixels than this are where a larger photo pays (89% right names from 200 px, far fewer below).
+const FULL_SIZE_SMALL_PX = 200;
 
 // The displayed picture's larger rendition, when the page names one the extension may read.
 async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget } = {}) {
@@ -2231,7 +2404,22 @@ async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget 
   }
   if (!candidates.length) return null;
   return loadFullSize(candidates, { width: ph.naturalWidth, height: ph.naturalHeight },
-    (url) => loadPhotoSource(url, { timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE, allowedHosts, budget }));
+    (url) => {
+      // A Facebook original is kept up to 2048 px: its lot photos hold 50 cards, each ~100 px tall at the shown size.
+      const host = new URL(url).hostname.toLowerCase();
+      const facebook = isFacebookCdn(host);
+      // fullSizeCandidates only names another Facebook CDN host when the page loaded its photos from that CDN.
+      const hosts = facebook && allowedHosts && !allowedHosts.has(host) ? new Set([...allowedHosts, host]) : allowedHosts;
+      return loadPhotoSource(url, { timeoutMs: PHOTO_TIMEOUT_MS, maxSide: facebook ? FACEBOOK_MAX_SIDE : PHOTO_MAX_SIDE, allowedHosts: hosts, budget });
+    }).then((found) => {
+      if (found && isFacebookCdn(new URL(found.url).hostname)) {
+        console.log("[BG] reading the Facebook original:", found.bitmap.width + "x" + found.bitmap.height, "(shown", ph.naturalWidth + "x" + ph.naturalHeight + ")");
+        // The original sharpens the match, but how sure a card is shown stays judged on the photo the seller's
+        // buyers see: at 2048 px, 50-card lots put many crops just past the size cap, and those were the wrong ones.
+        return { ...found, naturalPerFed: ph.naturalWidth / found.bitmap.width };
+      }
+      return found;
+    });
 }
 
 function photoRejected(reason, url) {

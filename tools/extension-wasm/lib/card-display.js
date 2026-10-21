@@ -236,6 +236,28 @@ export function isIdentified(card) {
   return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && (isSetConfirmed(card) || hasSetRange(card));
 }
 
+/** True when the scan read more than one photo of a listing (its gallery). */
+export function fromSeveralPhotos(cards) {
+  return (cards || []).some((card) => card?.photo > 1 || card?.photos?.length > 1);
+}
+
+/** Which listing photo a card was read from: "Photo 3", or "Photos 1, 3" when it was seen in more than one. */
+export function photoLabel(card) {
+  const seen = Array.isArray(card?.photos) && card.photos.length > 1 ? card.photos : null;
+  if (seen) return `Photos ${seen.join(", ")}`;
+  return card?.photo > 0 ? `Photo ${card.photo}` : "";
+}
+
+/**
+ * Named for sure, but which printing is still the user's call: several sets print the same art and nothing on the
+ * card (number, symbol, stamp) has settled it, and no printing is guessed. Shown as identified with a price range and a
+ * "Pick printing" menu. A card with a guessed printing keeps that printing's price and the "Set?" menu.
+ */
+export function needsPrinting(card) {
+  if (!isIdentified(card) || card.setConfirmed === true || card.bestGuess) return false;
+  return (card.setChoices?.length || 0) > 1;
+}
+
 /**
  * identified: named and settled. pick: the user is asked "Which card is this?", with the closest matches
  * when there are any. unrecognised: only a card back, which is not a card to identify.
@@ -258,14 +280,18 @@ export function splitByRecognition(cards) {
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 
-/** "Found 15 cards: 2 identified, 13 need your pick". Empty when nothing was found. */
+/** "Found 15 cards: 2 identified (1 to pick printing), 13 need your pick". Empty when nothing was found. */
 export function scanStatus(cards) {
   const list = cards || [];
   if (list.length === 0) return '';
   const counts = { identified: 0, pick: 0, unrecognised: 0 };
-  for (const card of list) counts[classifyCard(card)] += 1;
+  let printing = 0;
+  for (const card of list) {
+    counts[classifyCard(card)] += 1;
+    if (needsPrinting(card)) printing += 1;
+  }
   const parts = [
-    counts.identified ? `${counts.identified} identified` : '',
+    counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick printing)` : ''}` : '',
     counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
     counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
   ].filter(Boolean);
@@ -373,4 +399,61 @@ export function explainScanError(message) {
     return 'The card models are still downloading.';
   }
   return raw;
+}
+
+/**
+ * The scanner's top guess for a card it could not name: the closest catalog card, shown as a question with its price
+ * so a whole lot can be priced at a glance. Null for a named card, a card back, or a card with no candidates.
+ * It never names the card: identity, confidence and "identified" stay as they were.
+ */
+export function topGuessOf(card) {
+  if (!card || card.cardBack || card.identity?.name || card.identity?.id) return null;
+  const top = card.candidates?.[0];
+  if (!top?.id || !top.name) return null;
+  return { id: top.id, name: top.name, set: top.set || null, setCode: top.setCode || null, number: top.number || null };
+}
+
+/** Under this many pixels the reader saw so little of the card that its guess is a long shot (shown as a note). */
+export const SMALL_READ_PX = 150;
+export function readFromSmallCrop(card) {
+  return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
+}
+
+/** The price a guess counts at: a named card's own quote, else its top guess's price; null when there is none. */
+export function guessPrice(card, choice, enabledConditions = ['NM']) {
+  if (!card || card.cardBack) return null;
+  if (card.identity?.name || card.identity?.id) {
+    const quote = quotedPrice(card, choice, enabledConditions);
+    if (quote) return quote.price;
+    if (typeof card.market_price === 'number' && card.market_price > 0) return card.market_price;
+    return card.setRange?.low > 0 ? card.setRange.low : null;
+  }
+  const price = card.topGuess?.price;
+  return typeof price === 'number' && price > 0 ? price : null;
+}
+
+/**
+ * The lot in three figures: what the identified cards are worth (lotEstimate, a range while a printing is open), what
+ * the guesses would add if they are right, and the two together. Card backs are left out.
+ */
+// A guess priced above this is more likely a rare look-alike than the card: it is listed to check, not added.
+export const GUESS_TOTAL_CAP = 50;
+
+export function lotTotals(cards, choiceFor, enabledConditions = ['NM']) {
+  const sure = lotEstimate(cards, choiceFor, enabledConditions);
+  let guess = 0;
+  let guessed = 0;
+  let toCheck = 0;
+  for (const card of cards || []) {
+    if (!card || card.cardBack || isIdentified(card)) continue;
+    const price = guessPrice(card, choiceFor(card), enabledConditions);
+    if (price == null) continue;
+    if (price > GUESS_TOTAL_CAP) {
+      toCheck += 1;
+      continue;
+    }
+    guess += price;
+    guessed += 1;
+  }
+  return { sure, guess, guessed, toCheck, low: sure.low + guess, high: sure.high + guess };
 }

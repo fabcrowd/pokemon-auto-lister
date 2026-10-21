@@ -178,6 +178,12 @@ export function markRepeatedNames(reads) {
 export const MIN_RELIABLE_HEIGHT = 300;
 // Below the "medium" tier (0.50) so the scan's picker asks the user, with the guess first.
 export const SMALL_SOURCE_CONFIDENCE_CAP = 0.49;
+// From this height up to MIN_RELIABLE_HEIGHT a read the gate accepted keeps its name (shown as identified, never
+// high), and only the printing is left to the user. Measured on 11 Facebook Marketplace photos (2026-10-19, ground
+// truth by eye, both the source-photo and screenshot paths): accepted reads from 200-299 px crops named the right
+// card 75 times out of 84 (89%, close to the ~90% the accept gate gives on HiBid crops); 120-199 px: 35 of 69; under
+// 120 px: 4 of 25. Below 200 px a read stays a suggestion.
+export const MIN_NAME_HEIGHT = 200;
 
 // Just under the "high" tier (0.80, card-display.js confTier): a name that is sure while the printing is not
 // is shown as medium until a number, set symbol or stamp read settles the set.
@@ -201,13 +207,19 @@ export function capUnconfirmedSet(result) {
 }
 
 /**
- * An automatic read from a small crop may be listed as a suggestion, but never as sure.
+ * An automatic read from a small crop may be listed as a suggestion, but never as sure. From MIN_NAME_HEIGHT up
+ * it keeps its name (below high, the printing still open); below that it is a suggestion.
  * Unknown height (0 or missing) is not small. Reads that already abstained or are unsure pass through.
  */
 export function capSmallSource(result, sourceHeight) {
   if (!result || result.abstain) return result;
   if (!(sourceHeight > 0) || sourceHeight >= MIN_RELIABLE_HEIGHT) return result;
   if (!(result.confidence > SMALL_SOURCE_CONFIDENCE_CAP)) return result;
+  if (sourceHeight >= MIN_NAME_HEIGHT) {
+    // The name stands; the printing is not something a crop this size settles.
+    if (!(result.confidence > BELOW_HIGH_CONFIDENCE)) return { ...result, smallSource: true };
+    return { ...result, confidence: BELOW_HIGH_CONFIDENCE, confidenceBeforeSmallCap: result.confidence, smallSource: true };
+  }
   return { ...result, confidence: SMALL_SOURCE_CONFIDENCE_CAP, smallSource: true, unsure: true };
 }
 

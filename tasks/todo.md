@@ -1,3 +1,23 @@
+# Facebook accuracy and UI pass (2026-10-19 → 21, feat/fb-accuracy-ui)
+
+- [x] Step 1: a sure name with an open printing shows as identified; names from 200 px (899ba40)
+- [x] Step 4: drop edge-cut boxes (e48c421)
+- [x] Step 2: gallery scan + cross-photo dedupe (b032a2b)
+- [x] Step 3: site-access offer (4eeb10f)
+- [x] Step 5: overlay tags by verdict; popup follows rescans (49600f0)
+- [x] Fix 3: adapter wait on first scans (226ba94)
+- [x] Fix 1: Facebook `ctp=` original (2dc8aec)
+- [x] Fix 2: title-line second opinion (e554499)
+- [x] UI: bigger tags (9377d62); one search link per row (e06cc24)
+- [x] Guess-first, lot totals, full-size offer (ba59d38); guesses over $50 kept out of the total (5a02883)
+- [x] Training plan doc (4c4aae5)
+- [x] Rejected, not committed: step 1b title guard, crop-shift re-rank, Real-ESRGAN / bicubic upscaling, blurry catalog copies, blur adapter bm0.5 (numbers in HANDOFF)
+- [ ] Owner: review and merge the PR for `feat/fb-accuracy-ui` (not merged)
+- [ ] Owner: re-test live in real Chrome on the two FB listings: site-access prompt, gallery, full-size bar
+- [ ] Score the 12 sure cards the full-size tab produced on fbo-photo-1
+- [ ] Blurry training per `docs/blurry-training-plan.md`; the gate must include FB-style sure-wrong
+- [ ] The eval pack (`/workspace/fb-eval-pack.zip` on the Linux box) stays out of the public repo; copy it to the PC by hand
+
 # Overlay / extension UI smoke (2026-10-19)
 
 - [x] QA auditor: Chromium click-through of popup, settings, overlay; report in `tasks/qa-smoke-report.md`

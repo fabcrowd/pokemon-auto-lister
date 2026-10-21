@@ -116,3 +116,17 @@ The v7b detector retrain passed its found-count gate offline (284→302 of 305, 
 
 Multi-crop averaging raised accepted-right 73 -> 83 and cut accepted-wrong 10 -> 3 on offline screenshot tiles, but in the extension it added confident wrong names (12 -> 15 on the fixture) with no more right names, so it was reverted. Rule: after any matcher change, rerun the in-extension harness and count sure-wrong separately from guesses, not just the offline table. Also: live Pokellector alternates between two layouts (24 images "grid" vs 12 "unknown"), independent of the build, and live sure-wrong swings by several rows run to run. Compare a build against its own control (same change switched off) back to back, only within one layout, and use a deterministic fixture for gates. "Identified" counts wrong names too: report right and wrong separately (the 97-98 of 102 figure did not reproduce; about 65 were right at 130 px tiles).
 
+## Guess quality on tiny crops is a resolution problem, not a threshold problem (2026-10-21)
+
+On Facebook Marketplace lots, cards are under 150 px and the top guess is right only about 10% of the time.
+- Real-ESRGAN upscaling hurt: top-1 66→57. It invents texture the clean catalog scans lack.
+- Crop-shift averaging was neutral to worse and twice as slow.
+- Blurry catalog copies became hubs: top-1 at 150–200 px went 22→14.
+- A blur-trained adapter that won offline (pokellector 137 px 87→96) still raised FB sure-wrong 4→7 in the extension.
+
+What helped was reading more pixels: the gallery, the `ctp=` original (fbo-photo-1 right 3→12), and the full-size offer. Showing the rest as an honest, marked guess also helped.
+
+Rules:
+- Before tuning the matcher, check the crop height.
+- Every offline win must pass the in-extension A/B on FB photos, with sure-wrong counted on its own.
+- A guard that removes wrong names must be weighed against the right names it removes. The title guard cut sure-wrong 5→0 but sure-right 34→19.
