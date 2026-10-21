@@ -41,7 +41,7 @@ import { createUploader } from "./lib/upload-queue.js";
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
 // dev-only:end
 import { sendToTab } from "./lib/tab-messaging.js";
-import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, loadFullSize } from "./lib/full-size.js";
+import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -363,6 +363,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         cards: msg.cards,
         srcWidth: msg.srcWidth,
         srcHeight: msg.srcHeight,
+        ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
       });
       sendResponse({ ok: true });
       return false;
@@ -547,6 +548,8 @@ async function handleScanPage(sendResponse, era) {
     // Full-size candidates and redirects may only land on hosts the page itself loaded images from.
     const pageImageHosts = new Set((domResp?.page?.imageHosts || []).map((host) => String(host).toLowerCase()));
     let lackedSiteAccess = false;
+    // Photos whose cards came out small while a known-larger rendition stayed unread: offered to the user to open.
+    const fullSizeOffers = [];
     // Photos the scan wanted at full size but had no access to read, and how many of them were gallery photos it then
     // skipped: the popup asks for exactly those sites and says what the access would add.
     const unreadSources = new Set();
@@ -843,10 +846,27 @@ async function handleScanPage(sendResponse, era) {
                   photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: await embedSerial(cardCanvas).catch(() => null) };
                 }
                 pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length,
+                  readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)),
                   ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }, cardCanvas,
                   shareOf(photoId, box, imageW, imageH, read), claimed);
               }
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
+              {
+                // Small cards and a larger picture the scan could not read itself: the user can open that one.
+                const read = cards.slice(photoFirst).filter((c) => !c.cardBack);
+                const small = read.filter((c) => c.readHeight > 0 && c.readHeight < FULL_SIZE_SMALL_PX).length;
+                if (read.length && small >= Math.max(2, read.length / 2)) {
+                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px) even in the full-size photo");
+                  else {
+                    const larger = largerRendition({ src: ph.src, naturalWidth: ph.naturalWidth, naturalHeight: ph.naturalHeight,
+                      srcset: ph.sources?.srcset || "", ogImages: domResp?.page?.ogImages, base: targetTab.url });
+                    if (larger) {
+                      fullSizeOffers.push({ ...larger, shown: [ph.naturalWidth, ph.naturalHeight], small, cards: read.length, ...(photoNo !== undefined ? { photo: photoNo } : {}) });
+                      console.log("[BG]   cards small (" + small + "/" + read.length + "); a larger photo is available but unread:", larger.side ? larger.side + " px" : "original upload");
+                    }
+                  }
+                }
+              }
               const photoReads = cards.slice(photoFirst);
               const checked = markRepeatedNames(photoReads);
               const repeated = checked.filter((card, i) => card !== photoReads[i]);
@@ -901,6 +921,7 @@ async function handleScanPage(sendResponse, era) {
               box: [dc.rect.x, dc.rect.y, dc.rect.x + dc.rect.w, dc.rect.y + dc.rect.h],
               score: 1.0,
               ...read,
+              readHeight: Math.round(informationHeight(sh, naturalPerFed)),
               ...(focus.kind === "listing" ? { photo: 1 } : {}),
             }, cardCanvas, shareOf(photoIdOf(readBitmap(cardCanvas)), [0, 0, cardCanvas.width, cardCanvas.height], cardCanvas.width, cardCanvas.height, read), claimed,
             read.lowCertainty ? tileHint(dcIndex, sh) : null);
@@ -1019,6 +1040,7 @@ async function handleScanPage(sendResponse, era) {
     // Offered only to someone who opted in; the exam photos themselves are held out of local learning either way.
     const shareExam = wantsExamPrompt(shares) && await _sharing.enabled().catch(() => false);
     sendResponse({ cards: asked, scanId, srcWidth, srcHeight, targetTabId: targetTab.id, pending: stillLoading, pageKind: pageFocus.kind, sealedProduct: sealed, shareExam,
+      ...(fullSizeOffers.length ? { fullSizePhoto: fullSizeOffers.sort((a, b) => b.small - a.small)[0] } : {}),
       truncated: capped ? "cards" : wholePage && screensCapped(domResp.documentHeight, domResp.viewportHeight) ? "screens" : null,
       ...(lackedSiteAccess ? { usedScreenshotPath: true, reason: "no-site-access", accessSite: siteLabel(targetTab.url),
         accessOrigins: siteOrigins(targetTab.url, [...unreadSources]), galleryUnread } : {}) });
@@ -1534,7 +1556,7 @@ async function relayToTab(msg, tabId = null) {
   }
   if (_targetTabId === null) return;
   const relayMsg = msg.action === "relayOverlay"
-    ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight }
+    ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, ...(msg.fullSize ? { fullSize: msg.fullSize } : {}) }
     : msg.action === "relayHighlight"
       ? { action: "highlightCard", index: msg.index, scroll: msg.scroll }
       : { action: "clearOverlay" };
@@ -2370,6 +2392,8 @@ const REFINE_BUDGET_MS = 30000;
 const REFINE_MAX_FAILURES = 3;
 // Everything one photo may spend fetching: its larger renditions and its own source together.
 const PHOTO_BUDGET_MS = 8000;
+// Cards read from fewer pixels than this are where a larger photo pays (89% right names from 200 px, far fewer below).
+const FULL_SIZE_SMALL_PX = 200;
 
 // The displayed picture's larger rendition, when the page names one the extension may read.
 async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget } = {}) {

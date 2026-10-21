@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -22,6 +22,10 @@ const btnWizUpgrade = document.getElementById("btn-wiz-upgrade");
 const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sValue       = document.getElementById("s-value");
 const statValue    = document.getElementById("stat-value");
+const lotTotalsEl  = document.getElementById("lot-totals");
+const fullSizeNotice = document.getElementById("fullsize-notice");
+const fullSizeText = document.getElementById("fullsize-text");
+const fullSizeOpen = document.getElementById("fullsize-open");
 const resultsEl    = document.getElementById("results");
 const emptyHint    = document.getElementById("empty-hint");
 const msgBar       = document.getElementById("msg-bar");
@@ -220,6 +224,7 @@ async function scanPage() {
   btnScan.setAttribute("aria-busy", "true");
   eraSelect.disabled = true;
   accessNotice.hidden = true;
+  if (fullSizeNotice) fullSizeNotice.hidden = true;
   showMessage("Capturing page and running detection…");
 
   let data;
@@ -245,8 +250,12 @@ async function scanPage() {
 // A scan's result in the list, the stats and the page overlay. A rescan the page started (pictures that loaded
 // later) comes here too, so the list always matches what the overlay shows.
 function applyScanResult(data) {
-  const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
-  _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight };
+  const cards = (data.cards || []).map((card) => {
+    const topGuess = topGuessOf(card);
+    return { ...card, guess: guessOf(card), ...(topGuess ? { topGuess } : {}) };
+  });
+  _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
+    fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
   _variantChoice = new Map();
   _picker = new Map();
   _userEdits = false;
@@ -257,6 +266,8 @@ function applyScanResult(data) {
   updateStats(_lastResult.cards);
   renderResults();
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
+  showFullSizeOffer(_lastResult.fullSize);
+  priceGuesses(_lastResult).catch((err) => console.warn("guess prices failed", err?.message || err));
 
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
@@ -395,10 +406,108 @@ function enabledGraders()    { return Object.keys(_filters.graded).filter((g) =>
 /* ─── Stats + results ─── */
 
 function updateStats(cards) {
-  const lot = lotValue(cards, (card) => _variantChoice.get(cards.indexOf(card)) || null, enabledConditions());
+  const choiceFor = (card) => _variantChoice.get(cards.indexOf(card)) || null;
+  const lot = lotValue(cards, choiceFor, enabledConditions());
   sValue.textContent = lot.value ?? "—";
   setStatDetail(lot.detail);
+  renderLotTotals(cards, choiceFor);
 }
+
+// The lot in three figures, so a whole lot can be priced before every card is checked: the identified cards, the
+// guesses (marked with ~, counted only if they are right), and the two together.
+function renderLotTotals(cards, choiceFor) {
+  if (!lotTotalsEl) return;
+  const list = (cards || []).filter((card) => !card.cardBack);
+  if (!list.length) { lotTotalsEl.hidden = true; return; }
+  const t = lotTotals(cards, choiceFor, enabledConditions());
+  const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
+  const pending = list.some((card) => card.topGuess && card.topGuess.price === undefined);
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.sure.low, t.sure.high))}</b> <span class="lt-n">(${t.sure.identified})</span></span>`
+    + `<span class="lt-item lt-guess"><span class="lt-lbl">Guesses</span> <b>~${escHtml(formatUsd(t.guess))}</b> <span class="lt-n">(${t.guessed}${pending ? ", pricing…" : ""})</span></span>`
+    + `<span class="lt-item"><span class="lt-lbl">Together</span> <b>~${escHtml(span(t.low, t.high))}</b></span>`;
+  lotTotalsEl.hidden = false;
+}
+
+// Top guesses are priced in the background, a few at a time, so the lot totals and tags fill in without blocking.
+const GUESS_PRICE_CONCURRENCY = 3;
+async function priceGuesses(scan) {
+  const todo = scan.cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.topGuess && card.topGuess.price === undefined);
+  if (!todo.length) return;
+  const stale = () => _lastResult?.scanId !== scan.scanId;
+  let next = 0;
+  let done = 0;
+  const refresh = () => {
+    updateStats(_lastResult.cards);
+    pushOverlay();
+    // The rows are drawn again only when that cannot take away a search box the user is typing in.
+    if (!resultsEl.contains(document.activeElement)) renderResults();
+  };
+  const worker = async () => {
+    while (next < todo.length) {
+      const { idx } = todo[next++];
+      let resp = null;
+      try {
+        resp = await chrome.runtime.sendMessage({ action: "priceCard", id: _lastResult.cards[idx].topGuess.id });
+      } catch { resp = null; }
+      if (stale()) return;
+      const current = _lastResult.cards[idx];
+      if (!current?.topGuess) continue;
+      const quote = resp && !resp.error ? quotedPrice({ ...resp, setChoices: [] }, null, enabledConditions()) : null;
+      const price = quote?.price ?? (typeof resp?.market_price === "number" ? resp.market_price : null);
+      _lastResult.cards[idx] = { ...current, topGuess: { ...current.topGuess, price: price > 0 ? price : null } };
+      if (++done % 6 === 0) refresh();
+    }
+  };
+  await Promise.all(Array.from({ length: GUESS_PRICE_CONCURRENCY }, worker));
+  if (!stale()) refresh();
+}
+
+/* ─── Full-size photo offer ─── */
+
+// The scan found the photo's cards small and knows a larger rendition it could not read itself (no site access, or
+// the fetch failed). Opening it in a tab lets the next scan read it; the popup scans it as soon as it has loaded.
+let _fullSizeTabId = null;
+function showFullSizeOffer(offer) {
+  if (!fullSizeNotice) return;
+  if (!offer?.url) { fullSizeNotice.hidden = true; return; }
+  const size = offer.side ? ` (${offer.side} px)` : "";
+  fullSizeText.textContent = `${offer.small} of ${offer.cards} cards in this photo are small. The full-size photo${size} gives better results.`;
+  fullSizeOpen.dataset.url = offer.url;
+  fullSizeNotice.hidden = false;
+}
+
+fullSizeOpen?.addEventListener("click", async () => {
+  const offer = _lastResult?.fullSize;
+  if (!offer?.url) return;
+  let origin = null;
+  try { origin = new URL(offer.url).origin + "/*"; } catch { return; }
+  // Asked straight from the click, which the browser requires: without access the new tab cannot be scanned.
+  const allowed = await chrome.permissions.request({ origins: [origin] }).catch(() => false);
+  const tab = await chrome.tabs.create({ url: offer.url, active: true }).catch(() => null);
+  fullSizeNotice.hidden = true;
+  if (!tab) return;
+  _fullSizeTabId = tab.id;
+  showMessage(allowed ? "Opening the full-size photo — it is scanned when it has loaded." : "Opened the full-size photo. Press Scan Page there.");
+});
+
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (tabId !== _fullSizeTabId || info.status !== "complete") return;
+  _fullSizeTabId = null;
+  // The background follows the active tab while this window is open, so the scan reads the new tab.
+  setTimeout(() => { if (!isScanning) scanPage(); }, 600);
+});
+
+// A click on a guess or question tag on the page: the card's row and its picks, ready to fix.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.action !== "overlayPick" || !Number.isInteger(msg.index)) return;
+  const row = resultsEl.querySelector(`.card-row[data-idx="${msg.index}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1600);
+  (row.querySelector("button[data-pick]") || row.querySelector("[data-open-search]"))?.focus({ preventScroll: true });
+  highlightOnPage(msg.index);
+});
 
 function setStatDetail(detail) {
   sValue.title = detail;
@@ -463,7 +572,9 @@ function renderResults() {
 
 function renderCardRow(card, idx) {
   const id   = card.identity || {};
-  const name = id.name    || (card.cardBack ? "Card back" : "Unknown card");
+  // A guess stays a guess until the user picks a card; once the row is named the guess is history.
+  const guess = id.name || id.id ? null : card.topGuess || null;
+  const name = id.name    || (card.cardBack ? "Card back" : guess ? `${guess.name}?` : "Not recognised");
   const code = id.setCode || "";
   const set  = id.set     || "";
   const num  = id.number  || "";
@@ -472,9 +583,14 @@ function renderCardRow(card, idx) {
   const setKnown = isSetConfirmed(card);
 
   const setHtml = code ? `<span class="set-chip">${escHtml(code)}</span>` : "";
-  const subHtml = setKnown
-    ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
-    : "Set not sure";
+  const smallHtml = readFromSmallCrop(card)
+    ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall): the guess is a long shot. A full-size photo reads better.">small photo</span>`
+    : "";
+  const subHtml = guess
+    ? `<span class="guess-chip">Top guess</span> ${escHtml(guess.set || "")}${guess.number ? ` <span class="card-number">#${escHtml(guess.number)}</span>` : ""}${smallHtml}`
+    : setKnown
+      ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
+      : "Set not sure";
   const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
   const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
 
@@ -498,7 +614,7 @@ function renderCardRow(card, idx) {
       <div class="conf-stripe ${tier}"></div>
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
-        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
+        <div class="card-name${guess ? " guess-name" : ""}"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
         <div class="card-sub">${subHtml}${photoHtml}</div>
       </div>
       ${renderPrice(card, idx)}
@@ -520,6 +636,12 @@ function renderPrice(card, idx) {
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
+  if (card.topGuess && !card.identity?.name && !card.identity?.id) {
+    const p = card.topGuess.price;
+    const text = p === undefined ? "…" : p > 0 ? `~${formatUsd(p)}` : "—";
+    const title = p > 0 ? `Price of the top guess, ${card.topGuess.name}. Pick the card to confirm it.` : p === undefined ? "Getting the guess's price…" : "No price for the top guess";
+    return `<div class="card-price guess-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
+  }
   const conditions = enabledConditions();
   // Name sure, printing open: the range across the printings it could be, until the user picks one.
   const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
@@ -937,11 +1059,17 @@ function pushOverlay() {
     confidence: c.confidence,
     abstain: c.abstain,
     ...(c.inGallery ? { inGallery: true } : {}),
-    display: { ...computeDisplayForOverlay(c, idx), state: overlayState(c) },
+    display: {
+      ...computeDisplayForOverlay(c, idx),
+      state: overlayState(c),
+      ...(c.topGuess ? { guess: { name: c.topGuess.name, price: c.topGuess.price ?? null } } : {}),
+      ...(readFromSmallCrop(c) ? { small: true } : {}),
+    },
   }));
   chrome.runtime.sendMessage({
     action: "overlayWithGrid",
     cards,
+    ...(_lastResult.fullSize ? { fullSize: { url: _lastResult.fullSize.url } } : {}),
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
   }).catch(() => {});
@@ -949,6 +1077,9 @@ function pushOverlay() {
 
 // The same verdict the list shows: identified, identified with the printing to pick, asked, or not recognised.
 function overlayState(card) {
+  if (card.cardBack) return "none";
+  // A card with no name shows its top guess, or "not recognised" when the reader had no candidates at all.
+  if (!card.identity?.name && !card.identity?.id && isUnsure(card)) return card.topGuess ? "guess" : "none";
   if (isUnsure(card)) return "ask";
   const kind = classifyCard(card);
   if (kind === "identified") return needsPrinting(card) ? "printing" : "identified";

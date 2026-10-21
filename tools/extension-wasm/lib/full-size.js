@@ -181,3 +181,35 @@ export async function loadFullSize(candidates, natural, load) {
   }
   return null;
 }
+
+/**
+ * A larger rendition of a displayed photo whose size is known, not assumed, to send the user to when the scan could not
+ * read it itself (no site access, or the fetch failed): a srcset entry with a width at least MIN_GROWTH times the shown
+ * one, or a Facebook upload behind a `ctp` resize (its `cstp=mx` size when named; without one the upload is the file
+ * the resize was made from, so never smaller). Null when no such rendition is known.
+ *
+ * @returns {{url: string, side: number|null} | null}
+ */
+export function largerRendition({ src = "", currentSrc = "", naturalWidth = 0, naturalHeight = 0, srcset = "", ogImages = [], base } = {}) {
+  const shownSide = Math.max(naturalWidth || 0, naturalHeight || 0);
+  const shown = new Set([src, currentSrc].map((raw) => resolve(raw, base)?.href).filter(Boolean));
+  let best = null;
+  const offer = (href, side) => {
+    if (!href || shown.has(href)) return;
+    if (side != null && !(side >= shownSide * MIN_GROWTH)) return;
+    if (!best || (side ?? Infinity) > (best.side ?? Infinity)) best = { url: href, side };
+  };
+  for (const entry of parseSrcset(srcset, naturalWidth)) {
+    if (!(naturalWidth > 0) || !/\s\d+(?:\.\d+)?w\b/.test(srcset)) break;
+    if (entry.size >= naturalWidth * MIN_GROWTH) offer(resolve(entry.raw, base)?.href, Math.round(entry.size * (naturalHeight > 0 ? Math.max(1, naturalHeight / naturalWidth) : 1)));
+  }
+  const facebook = [src, currentSrc, ...(Array.isArray(ogImages) ? ogImages.filter((og) => sameFacebookImage(og, src || currentSrc)) : [])];
+  for (const raw of facebook) {
+    const url = resolve(raw, base);
+    const original = url && facebookOriginal(url.href);
+    if (!original) continue;
+    const named = /[?&]cstp=mx\d/.test(original);
+    offer(original, named ? facebookSize(original) : null);
+  }
+  return best;
+}

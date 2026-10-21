@@ -195,6 +195,21 @@
     .access-notice button:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
     .access-notice .access-btn:focus-visible { outline-color: #c5cadc; }
 
+    /* LOT TOTALS — sure, guesses (~), together */
+    .lot-totals { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 16px; border-top: 1px solid #1a1d2a; font-size: 11px; color: #8b92ab; }
+    .lot-totals[hidden] { display: none; }
+    .lot-totals b { color: #c5cadc; }
+    .lot-totals .lt-guess b { color: #e9d6a8; font-style: italic; }
+    .lot-totals .lt-lbl { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
+    .lot-totals .lt-n { color: #5d6480; }
+
+    /* GUESS ROWS — a card the reader could not name, shown as its top guess */
+    .card-name.guess-name { color: #e9d6a8; font-style: italic; font-weight: 600; }
+    .card-price.guess-price { color: #c8a45c; font-style: italic; border-bottom: 1px dashed #6b5a35; }
+    .guess-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #c8a45c; border: 1px dashed #6b5a35; border-radius: 4px; padding: 0 4px; }
+    .small-chip { font-size: 9px; color: #8b92ab; border: 1px solid #2a2e40; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+    .card-row.flash { outline: 2px solid #6366f1; outline-offset: -2px; transition: outline-color 0.4s; }
+
     /* MESSAGE BAR */
     .msg-bar {
       padding: 8px 16px;
@@ -558,7 +573,14 @@
     <button type="button" class="access-btn" id="access-rescan" hidden>Scan again</button>
   </div>
 
+  <div class="fullsize-notice access-notice" id="fullsize-notice" hidden>
+    <p class="access-text" id="fullsize-text"></p>
+    <button type="button" class="access-btn" id="fullsize-open">Open full-size photo for better results</button>
+  </div>
+
   <div class="msg-bar hidden" id="msg-bar" role="status"></div>
+
+  <div class="lot-totals" id="lot-totals" role="group" aria-label="Lot value" hidden></div>
 
   <div class="exam-strip" id="exam-strip" role="group" aria-label="Help check the results" hidden>
     <span class="exam-text">Help check: is every card here right?</span>

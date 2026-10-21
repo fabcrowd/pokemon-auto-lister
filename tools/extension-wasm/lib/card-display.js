@@ -400,3 +400,52 @@ export function explainScanError(message) {
   }
   return raw;
 }
+
+/**
+ * The scanner's top guess for a card it could not name: the closest catalog card, shown as a question with its price
+ * so a whole lot can be priced at a glance. Null for a named card, a card back, or a card with no candidates.
+ * It never names the card: identity, confidence and "identified" stay as they were.
+ */
+export function topGuessOf(card) {
+  if (!card || card.cardBack || card.identity?.name || card.identity?.id) return null;
+  const top = card.candidates?.[0];
+  if (!top?.id || !top.name) return null;
+  return { id: top.id, name: top.name, set: top.set || null, setCode: top.setCode || null, number: top.number || null };
+}
+
+/** Under this many pixels the reader saw so little of the card that its guess is a long shot (shown as a note). */
+export const SMALL_READ_PX = 150;
+export function readFromSmallCrop(card) {
+  return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
+}
+
+/** The price a guess counts at: a named card's own quote, else its top guess's price; null when there is none. */
+export function guessPrice(card, choice, enabledConditions = ['NM']) {
+  if (!card || card.cardBack) return null;
+  if (card.identity?.name || card.identity?.id) {
+    const quote = quotedPrice(card, choice, enabledConditions);
+    if (quote) return quote.price;
+    if (typeof card.market_price === 'number' && card.market_price > 0) return card.market_price;
+    return card.setRange?.low > 0 ? card.setRange.low : null;
+  }
+  const price = card.topGuess?.price;
+  return typeof price === 'number' && price > 0 ? price : null;
+}
+
+/**
+ * The lot in three figures: what the identified cards are worth (lotEstimate, a range while a printing is open), what
+ * the guesses would add if they are right, and the two together. Card backs are left out.
+ */
+export function lotTotals(cards, choiceFor, enabledConditions = ['NM']) {
+  const sure = lotEstimate(cards, choiceFor, enabledConditions);
+  let guess = 0;
+  let guessed = 0;
+  for (const card of cards || []) {
+    if (!card || card.cardBack || isIdentified(card)) continue;
+    const price = guessPrice(card, choiceFor(card), enabledConditions);
+    if (price == null) continue;
+    guess += price;
+    guessed += 1;
+  }
+  return { sure, guess, guessed, low: sure.low + guess, high: sure.high + guess };
+}
