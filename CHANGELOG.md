@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-10-21
+
+Facebook Marketplace accuracy and UI pass (branch `feat/fb-accuracy-ui`, 899ba40 … 4c4aae5). The numbers, the rationale and the rejected experiments are in `HANDOFF.md` under "Facebook accuracy and UI pass".
+
+### Added
+- Guess-first. A card with no sure name shows its top guess and that card's price ("Pikachu? ~$1.20"): lighter amber, dashed outline. Clicking the tag opens its picks in the popup. A "small photo" chip shows under 150 px read height. (ba59d38)
+- Lot totals: Sure / Guesses ~ / Together. A guess priced over $50 is listed "to check" and not added. (ba59d38, 5a02883)
+- Full-size offer. When most cards in a photo were read small and a larger rendition is known (a srcset `w` entry or a Facebook `ctp` original), the popup bar and overlay pill offer to open the full-size photo and scan it. (ba59d38)
+- Gallery scan. With site access, every photo of a listing is read (≤8, 45 s), and a card seen in several photos is kept once. (b032a2b)
+- Site-access offer after a screenshot fallback: this site's photo hosts, all sites, or not now. (4eeb10f)
+- Title-line OCR as a second opinion on crops ≥150 px. (e554499)
+- On fbcdn hosts, the Facebook original is read (`ctp=` dropped, up to 2048 px), falling back to the shown photo. (2dc8aec)
+- `docs/blurry-training-plan.md`. (4c4aae5)
+
+### Changed
+- A sure name with an open printing shows as identified, priced as a range, with "pick printing". Names now show from 200 px crops. (899ba40)
+- Overlay tags are coloured by the list's verdict and placed without overlap. They are bigger: 13–16 px, bolder, with a shadow. A page-started rescan updates the popup. (49600f0, 9377d62)
+- One search link per popup row. (e06cc24)
+
+### Fixed
+- Card pieces cut off by the photo edge no longer produce wrong names. (e48c421)
+- The first scans after install wait for the photo adapter bundle. (226ba94)
+
+### Results (FB11 source read, right (sure) / wrong (sure))
+- main 69 (5) / 21 (1) → branch 74 (57) / 17 (3).
+- Marketplace-style fixtures 14 / 11 → 39 (34) / 13 (3).
+- Facebook-CDN original of photo-1: 3 / 10 → 12 / 9.
+
 ## 2026-10-18 (evening)
 
 Extension accuracy pass on grid pages (branch `fix/extension-only`: 4ba6689, a1a93e6, bf83b31, 2ffb802, da083e2, 7f99f35). Details and numbers in `HANDOFF.md`; plan in `docs/improvement-plan.md`.

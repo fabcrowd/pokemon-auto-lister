@@ -488,7 +488,7 @@ That graph already runs in ort-web 1.17.3 WASM, so the vendor files don't change
 
 ### 7.2 Ship gates
 
-Every candidate must pass all of these. The baseline is HEAD 6405c03 + `pack-20261018-2`.
+Every candidate must pass all of these. The baseline is HEAD 5a02883 + `pack-20261018-2`.
 
 **No regression on large crops (hard requirements):**
 - pokellector **102/102**, **3/3** and **22/22** stay the same.

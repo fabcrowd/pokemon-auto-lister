@@ -1,6 +1,101 @@
 # Handoff
 
-Last updated: 2026-10-19 (evening). Workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. A new session can continue from this file alone. The previous handoff is in git history (`git log -- HANDOFF.md`).
+Last updated: 2026-10-21 (afternoon, America/New_York). The newest work is the Facebook accuracy and UI pass on `feat/fb-accuracy-ui`, directly below. Older sections follow unchanged. Owner workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. The previous handoff is in git history (`git log -- HANDOFF.md`).
+
+## Facebook accuracy and UI pass (2026-10-19 → 2026-10-21, branch `feat/fb-accuracy-ui`)
+
+The branch is based on `main` 232a9d3. All work is in `tools/extension-wasm` and `tests/`, with no manifest or permission changes. It was tested unpacked in headed Chromium (Playwright) on a Linux box with no GPU. The numbers come from the box's run log; the evaluation photos are not in the repo (see "Eval pack" below).
+
+**Why.** The owner smoke-tested two Facebook Marketplace lot listings, and most cards came back "not recognized". The research found the cause is resolution, not thresholds: Marketplace serves 720×960 copies, so a 50-card lot leaves each card under 150 px. At that size the name is right about 1 time in 25. From 200 px and up it is right 89% of the time. The pass therefore does three things:
+- reads more pixels wherever it can;
+- names a card only when the evidence supports it;
+- shows everything else as a clearly marked guess, so a lot can still be priced quickly.
+
+### Commits (oldest first) and why
+
+| Commit | Change | Why |
+|---|---|---|
+| 899ba40 | A sure name whose printing is still open shows as identified, priced as a range, with "pick printing". `MIN_NAME_HEIGHT` is 200 px. | Accepted reads from 200–299 px crops named the right card 75 of 84 times (89%); 120–199 px was 35/69, under 120 px 4/25. Asking about a card whose name is already sure wasted the user's time. |
+| e48c421 | Drop detector boxes that are pieces of cards cut off by the photo edge. | A half card reads as some other card. FB wrong names 29→24 (shot) and 21→18 (src), with no right name lost. |
+| b032a2b | Scan every gallery photo of a listing (≤8 photos, 45 s, ≥300 px, site access only) and keep a card seen in several photos once (mutual nearest neighbours, CLIP ≥0.8, never two from one photo). | Lots are photographed across several pictures. On the Marketplace-style fixtures, right names went 14→38 and wrong 11→14; precision of named rows went 36%→73%. |
+| 4eeb10f | When a scan fell back to the screenshot for lack of access, the popup offers "Allow on <site>" (only the photo origins it wanted, ≤6), "All sites", or "Not now" (remembered per site). | Without access, the gallery and the original photos can't be read. |
+| 49600f0 | Overlay tags are coloured by the list's verdict: green identified, blue printing to pick, amber asked, grey not recognised. They are placed without overlap. A rescan the page starts (late-loading pictures) now updates the popup, unless the user is mid-pick. | The overlay and the list disagreed, and late images never reached the list. |
+| 226ba94 | On a fresh install, the first scans wait up to 8 s for the bundle, and the log says when the photo adapter is in use. | The adapter was live in the harness but could be missing on the first scans after install. |
+| 2dc8aec | On fbcdn hosts, try the og/src URL with `ctp=` dropped first (up to 2048 px) and fall back on any failure. "Sure" is still judged on the shown photo's pixels. | Dropping `ctp=` returns the 1537×2048 upload instead of 720×960. fbo-photo-1 went 3 (0) / 10 (0) / 41 → 12 (0) / 9 (0) / 34. Judging "sure" on the original's pixels raised sure-wrong 0→8, so that part was rolled back. |
+| e554499 | Title line as a second opinion: OCR of the name box, crops ≥150 px only. If the title agrees, a capped small-crop read may show as identified. A different catalog name in the title reranks within CLIP's top 20 (shown as asked), else the read is demoted. | Offline (138 FB cards), when CLIP's top-1 name appeared in the title it was right 42 of 43 times; the title is unreadable under 150 px (0 of 46). FB11 src: 69 (46) / 18 (5) / 65 → 73 (58) / 17 (2) / 62. |
+| 9377d62 | Overlay tags 13–16 px (were 10–13), more padding, bolder text, soft shadow, state-coloured outline. | The owner asked for tags that stand out on busy photos. |
+| e06cc24 | One search link per popup row: asked rows keep "None of these? Search" under the picks, identified rows keep "Wrong card?". `data-via` values are unchanged. `focusOpener` falls back to the row's opener, then its first button. | Both links opened the same search. The correction and teach data depend on `data-via`. |
+| ba59d38 | Guess-first: a nameless card with candidates shows its top guess with that card's price, e.g. "Pikachu? ~$1.20". It is lighter amber with a dashed outline, and clicking the tag focuses its picks in the popup. There is a "small photo" chip under 150 px read height. New lot totals: Sure / Guesses ~ / Together. When ≥ half of a photo's cards were read under 200 px and a known-larger rendition was not read (a srcset `w` entry or a Facebook `ctp` original), an "Open full-size photo for better results" bar and overlay pill ask for that host's access, open the photo and scan it. `readHeight` is added to cards. | The owner prices whole lots and prefers a marked guess to "not recognized". What counts as identified or sure is unchanged: sure numbers were identical before and after. "Not recognised" is kept only for card backs and cards with no candidates. |
+| 5a02883 | A guess priced over $50 is listed "to check" instead of being added to the total. | On photo-1, two rare look-alikes ($400 + $350) made up $750 of an $820 guesses total. |
+| 4c4aae5 | `docs/blurry-training-plan.md`. | Plan for training the recognizer on small, blurry crops (see Next). |
+
+### Before / after (main 232a9d3 → branch)
+
+Format: right (shown as sure) / wrong (sure) / unknown or guess. Scored against hand-labelled card lists.
+- "shot" = screenshot path (no site access).
+- "src" = source image read with access (the harness lets 127.0.0.1 stand in for the site).
+- "FB11" = the 11 photos from the owner's two Marketplace listings.
+- "mp" = two local pages built like the Marketplace carousel (63 cards).
+- "fbo" = the same photo-1 served behind a Facebook-CDN stand-in with its 1537×2048 original.
+
+| set | main 232a9d3 | 49600f0 (steps 1–5) | branch HEAD |
+|---|---|---|---|
+| FB11 shot | 55 (0) / 29 (0) / 75 | 55 (34) / 24 (5) / 71 | 64 (45) / 23 (5) / 63 guesses |
+| FB11 src | 69 (5) / 21 (1) / 71 | 69 (46) / 18 (5) / 65 | 74 (57) / 17 (3) / 61 guesses |
+| mp src | 14 (0) / 11 (0) / 46 | 38 (26) / 14 (3) / 36 | 39 (34) / 13 (3) / 35 (at e554499) |
+| fbo-photo-1 src | 3 (0) / 10 (0) / 41 | 3 (0) / 10 (0) / 41 | 12 (1) / 9 (0) / 34 guesses |
+
+**Sure-wrong vs the "wrong names must not rise" rule.** It rose on the branch (FB11 1→3 src, 0→5 shot; mp 0→3). Every rise comes from step 1, which shows 200–299 px names as identified, and from step 2 on the mp fixtures. The owner accepted that trade: about +45 right names shown as sure for +3–5 wrong.
+
+**Tag states on FB11** (ba59d38, sure unchanged):
+- shot: 50 identified / 37 asked / 63 not recognised → 50 / 37 / 63 guess
+- src: 60 / 30 / 62 → 60 / 31 / 61 guess
+
+**Gates on HEAD 4c4aae5:**
+- unit tests 1135 pass, with the 5 known failing files (Collectr, TCGdex backend);
+- eslint clean on changed files;
+- Base Set 3/3; 22/22 ×2; pokellector fixture 102/102;
+- no new console errors (price snapshot 404 only).
+
+Screenshots are on the box only, in `fb/out2/ui2-*.png`.
+
+### Tried and rejected (with numbers)
+- **Title guard for 200–299 px names** (kept in a local stash, not committed). It removed 11 confident-wrong names but turned 30 confident-right ones back into questions: FB shot sure right 34→19, sure wrong 5→0; src 46→35 / 5→1.
+- **Crop-shift averaging** (mean of 5 framings), tried twice:
+  - On grid tiles (Step C, earlier): sure-wrong rose 12→15 on the fixture with no more right names.
+  - Re-ranking only guesses (this pass): shot FB11 top-1 7→8, top-5 18→17; photo-1 top-1 3→1, top-5 8→5. Scans took about twice as long (photo-1 25→47 s). Not committed.
+- **Upscaling before the crop** (138 FB cards, top-1, baseline 66):
+  - Real-ESRGAN general x4v3: 57 (−9). It invents texture the clean catalog scans lack.
+  - Bicubic 2× + unsharp: 60. Plain bicubic 2×: 68, within noise.
+- **Blurry catalog copies** (degraded 60/100/150 px views of all 21,774 cards as extra rows):
+  - Using the "max" rule, blurry rows became hubs: 150–200 px top-1 22→14, pokellector at 137 px 87→78.
+  - With "score max", wrong reads went 22→53.
+  - The best safe mix (w=0.3, crops <150 px) gave only +3/138 for +6.5 MB of download.
+- **Blur-trained adapter** (seed + one 150 px view per card, merged 0.5 with the live adapter):
+  - Offline it looked good: FB11 top-1 73→75, top-5 88→93; pokellector 137 px 87→96.
+  - The card-scanner-data gate failed (acceptedWrong 32→36, `improved=false`).
+  - In the extension A/B, pokellector improved (sure right 65→77, sure wrong 12→5), but FB11 sure-wrong went 4→7 (photo-5, photo-6). It failed the ship rule, so it was not shipped or published.
+
+### Known limits
+- Guesses on tiny cards are weak. Among cards that used to be "not recognised", the top guess is right about 10% of the time and the right card is in the top 5 for 25–30% (FB11). On photo-1 that is 5–8% and 17–22%. Treat guesses as a starting point for the pick list, not as answers.
+- On dense photos the tags are small next to the cards; hover a tag to see its full label.
+- The rescan→popup refresh path (late-loading pictures) is covered by code review only; the harness can't trigger it.
+- The `ctp=` original is undocumented Facebook behaviour (seen 2026-10-20). It can stop working at any time; the code then falls back to the shown photo.
+- With access, the full-size tab turned 12 cards sure (from 0) on fbo-photo-1. Those 12 have not been scored for right/wrong yet.
+- The `prices` release (price snapshot) still returns 404, so the popup logs one known console error.
+
+### Next
+- Training for small, blurry crops: `docs/blurry-training-plan.md` covers degraded training data, the adapter retrain with a tile slice in the gate, a CLIP fine-tune, the detector, and the gates to pass. The first try (the blur adapter above) shows that the gate must count sure-wrong on Facebook-style photos, not just top-1.
+- Score the 12 sure cards from the full-size tab before advertising that path.
+- Real Chrome on the owner's PC: re-check the FB listings live, the site-access prompt, and the full-size bar.
+
+### Eval pack
+`/workspace/fb-eval-pack.zip` on the Linux box (3 MB) contains:
+- the 11 served photos and 2 originals;
+- `truth.json`;
+- the replica scripts.
+
+It is deliberately **not** in the repo: the repo is public, and the photos are other people's Marketplace listings. Copy it to the PC by hand.
 
 ## Continue from here (2026-10-19)
 
