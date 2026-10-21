@@ -433,11 +433,11 @@
     return { state, lines: [title, priced || '—'], short: priced || name };
   }
 
-  // Tag size follows the card: 10 px text on a 60 px card up to 13 px; a short card gets one line.
+  // Tag size follows the card: 13 px text on a 60 px card up to 16 px; a short card gets one line.
   const TAG_MIN_W = 36;
   function tagLayout(boxW, boxH) {
-    const px = Math.max(10, Math.min(13, Math.round(boxW / 9)));
-    return { px, lines: boxW >= 80 && boxH >= 4 * px + 16 ? 2 : 1, maxWidth: Math.max(0, boxW - 4) };
+    const px = Math.max(13, Math.min(16, Math.round(boxW / 8)));
+    return { px, lines: boxW >= 80 && boxH >= 4 * px + 20 ? 2 : 1, maxWidth: Math.max(0, boxW - 4) };
   }
 
   function overlaps(a, b) {
@@ -460,14 +460,14 @@
     const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
     if (layout.maxWidth < TAG_MIN_W) return null;
     const { state, lines, short } = tagText(card);
-    const PAD_X = 5;
-    const PAD_Y = 3;
-    const ACCENT_W = 3;
+    const PAD_X = 7;
+    const PAD_Y = 4;
+    const ACCENT_W = 4;
     const GAP = 2;
     const textMax = Math.max(0, layout.maxWidth - ACCENT_W - PAD_X * 2);
     const rows = (layout.lines === 2 ? lines : [short]).map((text, i) => ({
       text,
-      font: `${layout.lines === 2 && i === 0 ? 600 : 700} ${layout.px}px ${LABEL_FONT}`,
+      font: `${layout.lines === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
       color: layout.lines === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
     }));
     let widest = 0;
@@ -481,13 +481,25 @@
     const h = PAD_Y * 2 + rows.length * layout.px + GAP * (rows.length - 1);
     const rect = placeTag(box, w, h, taken, { w: viewW(), h: viewH() });
     if (!rect) return null;
-    ctx.fillStyle = 'rgba(12,14,20,0.88)';
+    // A soft shadow and a thin state-coloured outline keep the tag readable on a busy photo.
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 1;
+    ctx.fillStyle = 'rgba(12,14,20,0.92)';
     ctx.beginPath();
-    ctx.roundRect(rect.x, rect.y, w, h, 4);
+    ctx.roundRect(rect.x, rect.y, w, h, 5);
     ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = STATE_COLORS[state];
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(rect.x + 0.5, rect.y + 0.5, w - 1, h - 1, 5);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = STATE_COLORS[state];
     ctx.beginPath();
-    ctx.roundRect(rect.x, rect.y, ACCENT_W, h, [4, 0, 0, 4]);
+    ctx.roundRect(rect.x, rect.y, ACCENT_W, h, [5, 0, 0, 5]);
     ctx.fill();
     ctx.textBaseline = 'top';
     let cy = rect.y + PAD_Y;

@@ -371,8 +371,8 @@ test('every card tag says its state: identified, printing to pick, your pick, no
 });
 
 test('tags scale with the card and never sit on another tag', () => {
-  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagLayout(60, 85))), { px: 10, lines: 1, maxWidth: 56 });
-  assert.equal(pure.tagLayout(200, 280).px, 13);
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagLayout(60, 85))), { px: 13, lines: 1, maxWidth: 56 });
+  assert.equal(pure.tagLayout(200, 280).px, 16);
   assert.equal(pure.tagLayout(200, 280).lines, 2);
   const view = { w: 1000, h: 800 };
   const first = pure.placeTag([100, 100, 200, 240], 90, 30, [], view);
