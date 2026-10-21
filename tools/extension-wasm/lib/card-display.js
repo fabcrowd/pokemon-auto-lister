@@ -436,16 +436,24 @@ export function guessPrice(card, choice, enabledConditions = ['NM']) {
  * The lot in three figures: what the identified cards are worth (lotEstimate, a range while a printing is open), what
  * the guesses would add if they are right, and the two together. Card backs are left out.
  */
+// A guess priced above this is more likely a rare look-alike than the card: it is listed to check, not added.
+export const GUESS_TOTAL_CAP = 50;
+
 export function lotTotals(cards, choiceFor, enabledConditions = ['NM']) {
   const sure = lotEstimate(cards, choiceFor, enabledConditions);
   let guess = 0;
   let guessed = 0;
+  let toCheck = 0;
   for (const card of cards || []) {
     if (!card || card.cardBack || isIdentified(card)) continue;
     const price = guessPrice(card, choiceFor(card), enabledConditions);
     if (price == null) continue;
+    if (price > GUESS_TOTAL_CAP) {
+      toCheck += 1;
+      continue;
+    }
     guess += price;
     guessed += 1;
   }
-  return { sure, guess, guessed, low: sure.low + guess, high: sure.high + guess };
+  return { sure, guess, guessed, toCheck, low: sure.low + guess, high: sure.high + guess };
 }

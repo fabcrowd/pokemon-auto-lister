@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd, GUESS_TOTAL_CAP } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -423,7 +423,7 @@ function renderLotTotals(cards, choiceFor) {
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
   const pending = list.some((card) => card.topGuess && card.topGuess.price === undefined);
   lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.sure.low, t.sure.high))}</b> <span class="lt-n">(${t.sure.identified})</span></span>`
-    + `<span class="lt-item lt-guess"><span class="lt-lbl">Guesses</span> <b>~${escHtml(formatUsd(t.guess))}</b> <span class="lt-n">(${t.guessed}${pending ? ", pricing…" : ""})</span></span>`
+    + `<span class="lt-item lt-guess"><span class="lt-lbl">Guesses</span> <b>~${escHtml(formatUsd(t.guess))}</b> <span class="lt-n">(${t.guessed}${t.toCheck ? `, ${t.toCheck} over $${GUESS_TOTAL_CAP} to check` : ""}${pending ? ", pricing…" : ""})</span></span>`
     + `<span class="lt-item"><span class="lt-lbl">Together</span> <b>~${escHtml(span(t.low, t.high))}</b></span>`;
   lotTotalsEl.hidden = false;
 }

@@ -45,3 +45,12 @@ test('a larger rendition is offered only when it is known to be bigger', () => {
   assert.ok(offer && !offer.url.includes('ctp=') && offer.side === null);
   assert.equal(largerRendition({ src: 'https://scontent.xx.fbcdn.net/v/t39/1_n.jpg?stp=dst-jpg', naturalWidth: 600, naturalHeight: 800, base }), null);
 });
+
+test('a guess priced over the cap is listed to check, not added to the guesses total', () => {
+  const rare = { abstain: true, topGuess: { id: 'r', name: 'Rayquaza δ', price: 349.99 } };
+  const cheap = { abstain: true, topGuess: { id: 'p', name: 'Pikachu', price: 1.2 } };
+  const t = lotTotals([rare, cheap], () => null);
+  assert.equal(t.guess, 1.2);
+  assert.equal(t.toCheck, 1);
+  assert.equal(t.guessed, 1);
+});
