@@ -156,14 +156,14 @@ test.describe('Consumer extension popup', () => {
 
     await scan();
     await expect(notice).toBeVisible();
-    await expect(notice).toContainText('finds more cards in lots and binders');
+    await expect(notice).toContainText('small cards come out sharper');
     await expect(page.locator('button#access-allow')).toBeVisible();
     await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
     await page.screenshot({ path: path.join(__dirname, 'screenshots', 'ext-wasm-popup-site-access.png') });
 
     await page.locator('#access-allow').evaluate((b) => b.click());
     expect(await page.evaluate(() => window.__asked)).toEqual([{ origins: ['<all_urls>'] }]);
-    await expect(page.locator('#access-outcome')).toHaveText('Done — scan again for full-size photos');
+    await expect(page.locator('#access-outcome')).toContainText('scan again to read the original photos');
     await expect(page.locator('#access-rescan')).toBeVisible();
 
     await page.evaluate(() => { window.__granted = false; });

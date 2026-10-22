@@ -8,13 +8,17 @@ import {
 import { adaptVector } from '../tools/extension-wasm/lib/adapter.js';
 import { referenceHit } from '../tools/extension-wasm/lib/references.js';
 import { createShareStore } from '../tools/extension-wasm/lib/share-store.js';
+import { modelTags } from '../tools/extension-wasm/lib/contribution.js';
 import { sha256Hex } from '../tools/extension-wasm/lib/setup.js';
 import { fakeIndexedDB } from './helpers/fake-idb.js';
 
 const MANIFEST_URL = 'https://pack.test/pack/manifest.json';
 const BASE = 'https://pack.test/pack/';
 const DIM = 512;
-const EXPECTED = { model: '77538aade655907f', crop: 2 };
+// The build under test: clip v3 (first 16 hex of its pinned sha256) and crop version 3. OLD_BUILD is clip v2.0, which
+// the adapter, memory and 'is this a card' check of a bundle made for it do not fit.
+const EXPECTED = { model: 'd15ade1768efb9c3', crop: 3 };
+const OLD_BUILD = { model: '77538aade655907f', crop: 2 };
 const T0 = Date.parse('2026-10-15T12:00:00Z');
 const DAY = 24 * 3600 * 1000;
 const enc = new TextEncoder();
@@ -181,11 +185,32 @@ test('a manifest changed after signing is refused', async () => {
 });
 
 test('a bundle for another model or crop version is not used', async () => {
-  for (const over of [{ model: 'ffffffffffffffff' }, { crop: 3 }]) {
+  for (const over of [{ model: 'ffffffffffffffff' }, { crop: 2 }, OLD_BUILD]) {
     const w = await world({ manifestOver: over });
     assert.equal((await fetchBundle(options(w))).status, 'mismatch', JSON.stringify(over));
     assert.equal(assetRequests(w).length, 0);
   }
+});
+
+test('the build under test is what the extension actually pins (clip v3, crop 3)', () => {
+  assert.deepEqual(modelTags().clip, EXPECTED.model);
+  assert.equal(modelTags().crop, EXPECTED.crop);
+});
+
+test('a bundle published for the old clip is refused by this build, so its adapter and memory are never applied', async () => {
+  const w = await world({ manifestOver: OLD_BUILD });
+  const result = await fetchBundle(options(w, { expected: modelTags() }));
+  assert.equal(result.status, 'mismatch');
+  assert.equal(result.assets, undefined);
+  assert.equal(assetRequests(w).length, 0);
+});
+
+test('an old-clip bundle already stored by an earlier install is dropped on load (nothing is applied) and cleared', async () => {
+  const store = createShareStore(fakeIndexedDB());
+  await checkBundle({ ...options(await world({ manifestOver: OLD_BUILD }), { expected: OLD_BUILD }), store, state: state(), now: () => T0 });
+  assert.ok((await store.getPack()) !== null, 'the old bundle is stored');
+  assert.equal(await loadStoredBundle(store, modelTags()), null);
+  assert.ok(!(await store.getPack()), 'the old bundle is cleared');
 });
 
 test('the catalog does not matter: a bundle is keyed to model and crop only', async () => {
@@ -256,7 +281,7 @@ test('parsePack reads rows as int8 views and enforces the layout', () => {
   assert.equal(rows[1].cardId, 'b');
   assert.equal(rows[1].embedding.length, DIM);
   assert.equal(rows[1].embedding[2], 127);
-  assert.equal(rows[1].v, 2);
+  assert.equal(rows[1].v, EXPECTED.crop);
   assert.equal(parsePack(makePack(['a'], [1]), { crop: 2 }).length, 1);
   assert.throws(() => parsePack(makePack(['a'], [1]), { ...EXPECTED, entries: 2, dim: DIM }), /entries/);
   assert.throws(() => parsePack(new Uint8Array(3), EXPECTED), /short/);
@@ -428,7 +453,7 @@ test('a bundle that drops an asset removes it from the live bundle', async () =>
 test('a stored bundle for another build is not used and is cleared', async () => {
   const store = createShareStore(fakeIndexedDB());
   await checkBundle({ ...options(await world()), store, state: state(), now: () => T0 });
-  assert.equal(await loadStoredBundle(store, { ...EXPECTED, crop: 3 }), null);
+  assert.equal(await loadStoredBundle(store, { ...EXPECTED, crop: 4 }), null);
   assert.equal(await loadStoredBundle(store, EXPECTED), null);
 });
 

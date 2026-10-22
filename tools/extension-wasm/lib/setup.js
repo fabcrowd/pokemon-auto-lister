@@ -6,7 +6,14 @@ const RELEASES =
 
 // The "p" marks a cache whose files were all checked against a pinned hash. Caches from builds that did not
 // check (older names) are deleted by pruneOldCaches, so those files are downloaded and verified once.
+// Do not rename this when one file moves to a new release: files are cached by URL, so only that file is
+// downloaded, and renaming would make pruneOldCaches delete every working model before the new one is verified.
 export const CACHE_NAME = "cardscanner-models-v2.1p";
+
+// Superseded URLs, removed only after the file that replaces them is downloaded and hash-checked.
+const STALE_URLS = {
+  "clip_visual_int8.onnx": [RELEASES + "v2.0/clip_visual_int8.onnx"],
+};
 
 export async function pruneOldCaches() {
   for (const name of await caches.keys()) {
@@ -19,9 +26,9 @@ export async function pruneOldCaches() {
 export const ASSETS = [
   {
     name: "clip_visual_int8.onnx",
-    bytes: 89_000_000,
-    release: "v2.0",
-    sha256: "77538aade655907f58db20510909210f52c45dc858a9d05ffce7420b62b59689",
+    bytes: 88_999_043,
+    release: "v3.0",
+    sha256: "d15ade1768efb9c395d39fe0f4b513e06ce503116d01a28d7cf2833e5f811e6c",
   },
   {
     name: "card_detect.onnx",
@@ -142,12 +149,13 @@ export async function downloadModels(onProgress) {
     const blob = new Blob(chunks);
     const actual = await sha256Hex(await blob.arrayBuffer());
     if (actual !== asset.sha256) {
-      throw new Error(`The card finder download is damaged (${asset.name}). Try again.`);
+      throw new Error(`The download of ${asset.name} is damaged. Try again.`);
     }
     const cachedResponse = new Response(blob, {
       headers: { "content-type": _contentType(asset.name) },
     });
     await cache.put(url, cachedResponse);
+    for (const stale of STALE_URLS[asset.name] ?? []) await cache.delete(stale);
 
     onProgress?.({
       file: asset.name,

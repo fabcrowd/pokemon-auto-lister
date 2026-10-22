@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CACHE_NAME } from '../../tools/extension-wasm/lib/setup.js';
 import { clearStaleServiceWorker } from '../../scripts/lib/profile-cache.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -84,8 +85,8 @@ const extensionWorker = async (ctx) => ctx.serviceWorkers().find(isExtensionWork
 if (localOcr) {
   const seeding = await launch();
   try {
-    const added = await (await extensionWorker(seeding)).evaluate(async ({ port, names }) => {
-      const cache = await caches.open('cardscanner-models-v2.1p');
+    const added = await (await extensionWorker(seeding)).evaluate(async ({ port, names, cacheName }) => {
+      const cache = await caches.open(cacheName);
       let count = 0;
       for (const name of names) {
         const url = `https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.2/${name}`;
@@ -95,7 +96,7 @@ if (localOcr) {
         count++;
       }
       return count;
-    }, { port, names: Object.keys(ocrModels) });
+    }, { port, names: Object.keys(ocrModels), cacheName: CACHE_NAME });
     console.log('number reader files added to cache:', added);
   } finally {
     await seeding.close();

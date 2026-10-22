@@ -11,7 +11,9 @@ const ART_CROP_FRAC = 0.45;
 
 // Bump when the crop or preprocessing changes: vectors saved under another version are not comparable.
 // 1 (stored rows have no version): top 45% stretched to 224x224. 2: centred square of that strip.
-export const EMBEDDING_VERSION = 2;
+// 3: same crop, but the recognizer is clip v3 (release v3.0), a fine-tuned tower whose vectors do not sit in the
+// v2.0 model's space, so saved corrections and bundles made with version 2 are not comparable.
+export const EMBEDDING_VERSION = 3;
 
 let _session = null;
 

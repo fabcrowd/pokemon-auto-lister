@@ -131,7 +131,9 @@ btnSetup.addEventListener("click", async () => {
     await maybeStartWizard(true);
   } else {
     console.error("model download failed", resp?.error || "unknown error");
-    setupStatus.textContent = "The download stopped. Check your connection and try again.";
+    setupStatus.textContent = /HTTP 404/.test(String(resp?.error))
+      ? "This update isn't available yet. Try again later."
+      : "The download stopped. Check your connection and try again.";
     btnSetup.disabled = false;
   }
 });

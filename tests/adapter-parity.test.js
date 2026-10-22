@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
 
 import { adapterActive, configureCatalog, loadCatalog, searchCatalog } from '../tools/extension-wasm/lib/search.js';
+import { EMBEDDING_VERSION } from '../tools/extension-wasm/lib/embed.js';
 import { applyMemory } from '../tools/extension-wasm/lib/references.js';
 import { BELOW_HIGH_CONFIDENCE, capAdapterChange } from '../tools/extension-wasm/lib/fusion.js';
 
@@ -36,7 +37,7 @@ test('a raw search ignores the adapter, a normal one uses it', () => {
 });
 
 test('memory is judged on the raw query against the raw catalog top, not the adapted score', () => {
-  const rows = [{ cardId: 'c', embedding: Int8Array.from(axis(5, 127)), scale: 1 / 127, v: 2 }];
+  const rows = [{ cardId: 'c', embedding: Int8Array.from(axis(5, 127)), scale: 1 / 127, v: EMBEDDING_VERSION }];
   const hits = [{ index: 0, score: 0.5 }, { index: 2, score: 0.4 }];
   const query = axis(5);
   // adapted top is low, so the old code (adapted baseline 0.5) would accept; the raw top 0.99 leaves no margin.

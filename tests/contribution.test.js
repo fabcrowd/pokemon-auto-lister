@@ -16,7 +16,7 @@ const row = (over = {}) => ({
 // 0000000000000001 is teach; 0000000000000005 is exam.
 const good = (over = {}) => ({
   v: 1, install: INSTALL, split: 'teach', photoId: '0000000000000001', day: '2026-10-16',
-  model: { clip: '77538aade655907f', crop: EMBEDDING_VERSION }, catalog: '2f3c50cec84937ff',
+  model: { clip: 'd15ade1768efb9c3', crop: EMBEDDING_VERSION }, catalog: '2f3c50cec84937ff',
   cards: [row()], ...over,
 });
 
@@ -25,7 +25,7 @@ test('a well-formed contribution has no errors', () => {
 });
 
 test('model tags are the first 16 hex of the pinned CLIP model and catalog hashes', () => {
-  assert.deepEqual(modelTags(), { clip: '77538aade655907f', catalog: '2f3c50cec84937ff', crop: EMBEDDING_VERSION });
+  assert.deepEqual(modelTags(), { clip: 'd15ade1768efb9c3', catalog: '2f3c50cec84937ff', crop: EMBEDDING_VERSION });
 });
 
 test('every field is checked', () => {
@@ -41,7 +41,7 @@ test('every field is checked', () => {
   bad(good({ photoId: '0000000000000005' }), /split.*photoId/);
   bad(good({ day: '16-10-2026' }), /day/);
   bad(good({ model: { clip: 'zz', crop: 2 } }), /model\.clip/);
-  bad(good({ model: { clip: '77538aade655907f', crop: 0 } }), /model\.crop/);
+  bad(good({ model: { clip: 'd15ade1768efb9c3', crop: 0 } }), /model\.crop/);
   bad(good({ catalog: '12' }), /catalog/);
   bad(good({ cards: [] }), /cards/);
   bad(good({ cards: Array.from({ length: MAX_CARDS + 1 }, () => row()) }), /cards/);
@@ -82,7 +82,7 @@ test('buildContribution fills the model tags, split and day, and validates', () 
   const built = buildContribution({ install: INSTALL, photoId: '0000000000000005', cards: [row()], now: new Date('2026-10-16T23:59:00Z') });
   assert.equal(built.split, 'exam');
   assert.equal(built.day, '2026-10-16');
-  assert.equal(built.model.clip, '77538aade655907f');
+  assert.equal(built.model.clip, 'd15ade1768efb9c3');
   assert.equal(built.catalog, '2f3c50cec84937ff');
   assert.equal(built.v, 1);
   assert.throws(() => buildContribution({ install: 'x', photoId: '0000000000000005', cards: [row()] }), /install/);
