@@ -18,10 +18,11 @@ Roles (Opus plans and reviews, specialist Sonnet agents execute): evaluation ana
 | G8 | Data repo sync (pins, prices snapshot, nightly names) | Without it the shared adapter is off and prices are up to a week old | release/QA, needs a push rule for that repo | Pins match, `prices` release published, nightly mirrors the rule with real names |
 | G9 | UX polish backlog | Stale message after a version swap, one overlap on dense photos, the lot-level edition control as chips, a clearer first-run explanation of Choose | extension | Each fixed test-first, screenshots reviewed |
 | G10 | Pricing scope: slabs, Japanese, sealed, conditions beyond NM | A raw NM English price shown for a slab or a Japanese card is the costliest silent error left | scout then extension | Measured frequency in real lots, then a visible 'not priced' state for what we can't price |
+| G12 | Corrections that stick (owner priority) | A wrong confirmation must be one-tap fixable, and the system must remember the fix AND why it got it wrong, so it does not repeat the mistake. Today the memory is off by default, its thresholds are unmeasured placeholders, and the reason is not recorded | analyst then extension | Every confirmed card carries a 'why' record (source, score, lead, read size, title agreement, tier, price) saved with any correction; positive memory (crop -> right card) and negative memory (this wrong card is not auto-confirmed for crops like this one) work locally; a corrected row shows 'Corrected, remembered'; leave-one-out on the real labelled photos shows repeat mistakes fixed and zero new wrong confirms before the default is switched on; opt-in shared learning receives aggregated wrong->right pairs with evidence |
 | G11 | Release hygiene | The release is live but `main` has none of it | release/QA | PR into `main`, store package submitted after G1 and G3 pass |
 
 ## Order and gates
-1. **Now:** G1, G2, G4 (G4 is read-only).
+1. **Now:** G1, G2, G4 (G4 is read-only), G12 design and measurement.
 2. **Next:** G5, G7, G9, G6.
 3. **Needs the owner:** G3 (live Chrome run), G8 (a push rule for the data repo), eBay photos for G6.
 4. **After G1 and G3 pass:** G11 and the public store submission.
