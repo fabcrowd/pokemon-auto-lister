@@ -5,7 +5,7 @@ import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
-import { demoteCard, isDemotable, priceHighOf, promoteCard, stakesDecision } from "./lib/stakes.js";
+import { demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
@@ -375,7 +375,7 @@ function demoteExpensive(cards) {
       tier: confTier(card.confidence),
       titleConfirmed: Boolean(card.titleConfirmed),
       userConfirmed: Boolean(card.userConfirmed),
-      priceHigh: priceHighOf(card, chosenPrinting(card, idx), enabledConditions()),
+      priceTypical: priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions()),
     });
     return decision === "demote" ? demoteCard(card) : card;
   });

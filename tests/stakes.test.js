@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  HIGH_STAKES_MIN_USD, LOW_STAKES_MAX_USD, demoteCard, isDemotable, priceHighOf, promoteCard, stakesDecision,
+  HIGH_STAKES_MIN_USD, LOW_STAKES_MAX_USD, demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision,
 } from '../tools/extension-wasm/lib/stakes.js';
 import { chooseState } from '../tools/extension-wasm/lib/choose-flow.js';
 import { lotEstimate } from '../tools/extension-wasm/lib/card-display.js';
 
 const choose = { state: 'choose', tier: 'low', smallRow: true, priceHigh: 3 };
-const confirmed = { state: 'confirmed', tier: 'medium', titleConfirmed: false, priceHigh: 80 };
+const confirmed = { state: 'confirmed', tier: 'medium', titleConfirmed: false, priceTypical: 80 };
 
 test('the price thresholds are the PM numbers', () => {
   assert.equal(LOW_STAKES_MAX_USD, 5);
@@ -29,16 +29,28 @@ test('promote needs smallRow: a cheap CHOOSE card without it stays a CHOOSE', ()
 
 test('demote: a picture-confirmed card that is not high and not title-confirmed, at $50 or more', () => {
   assert.equal(stakesDecision(confirmed), 'demote');
-  assert.equal(stakesDecision({ ...confirmed, priceHigh: 50 }), 'demote');
-  assert.equal(stakesDecision({ ...confirmed, priceHigh: 49.99 }), 'keep');
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: 50 }), 'demote');
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: 49.99 }), 'keep');
   assert.equal(stakesDecision({ ...confirmed, tier: 'low' }), 'demote');
 });
 
 test('demote never touches a high-tier read, a title-confirmed read or a confirmed card with smallRow lacking a price', () => {
   assert.equal(stakesDecision({ ...confirmed, tier: 'high' }), 'keep');
   assert.equal(stakesDecision({ ...confirmed, titleConfirmed: true }), 'keep');
-  assert.equal(stakesDecision({ ...confirmed, priceHigh: 4 }), 'keep', 'cheap confirmed cards stay');
-  assert.equal(stakesDecision({ state: 'confirmed', tier: 'medium', smallRow: true, priceHigh: 2 }), 'keep', 'a confirmed card is never promoted');
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: 4 }), 'keep', 'cheap confirmed cards stay');
+  assert.equal(stakesDecision({ state: 'confirmed', tier: 'medium', smallRow: true, priceTypical: 2 }), 'keep', 'a confirmed card is never promoted');
+});
+
+test('demote answers to the typical price, not the range high: a rare printing alone does not demote', () => {
+  // A Potion with four printings: cheapest $0.21, range high $103.66, median about $5.
+  assert.equal(stakesDecision({ ...confirmed, priceHigh: 103.66, priceTypical: 0.5 }), 'keep');
+  assert.equal(stakesDecision({ ...confirmed, priceHigh: undefined, priceTypical: 303 }), 'demote');
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: undefined, priceHigh: 303 }), 'keep', 'the range high is not a demotion input');
+});
+
+test('promotion still uses the conservative range high, not the typical price', () => {
+  assert.equal(stakesDecision({ ...choose, priceHigh: 103.66, priceTypical: 0.5 }), 'keep');
+  assert.equal(stakesDecision({ ...choose, priceHigh: 4, priceTypical: 400 }), 'promote');
 });
 
 test('a card the user confirmed is never changed', () => {
@@ -49,13 +61,13 @@ test('a card the user confirmed is never changed', () => {
 test('an unknown price never promotes and never demotes', () => {
   for (const priceHigh of [null, undefined, NaN, '12', Infinity]) {
     assert.equal(stakesDecision({ ...choose, priceHigh }), 'keep', `choose ${String(priceHigh)}`);
-    assert.equal(stakesDecision({ ...confirmed, priceHigh }), 'keep', `confirmed ${String(priceHigh)}`);
+    assert.equal(stakesDecision({ ...confirmed, priceTypical: priceHigh }), 'keep', `confirmed ${String(priceHigh)}`);
   }
 });
 
 test('a card back is left alone', () => {
   assert.equal(stakesDecision({ state: 'back', tier: 'low', smallRow: true, priceHigh: 1 }), 'keep');
-  assert.equal(stakesDecision({ state: 'back', tier: 'low', priceHigh: 500 }), 'keep');
+  assert.equal(stakesDecision({ state: 'back', tier: 'low', priceTypical: 500 }), 'keep');
 });
 
 const grid = (values) => ({ source: 'pokemontcg', variants: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { market: v, conditions: { NM: v } }])) });
@@ -70,6 +82,39 @@ test('priceHighOf: the single quote, else the high end of the open range, else n
 });
 
 const row = (id, name) => ({ id, name, set: 'S', setCode: 's', number: '1' });
+
+const one = (grid_, extra = {}) => ({ identity: { id: 'a', name: 'A' }, setChoices: [], price_grid: grid_, ...extra });
+
+test('two printings: the lower price is typical, so $0.34 and $103.66 is not demoted', () => {
+  const two = one(grid({ normal: 0.34, first: 103.66 }));
+  assert.equal(priceTypicalOf(two, null), 0.34);
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: priceTypicalOf(two, null) }), 'keep');
+  const settled = one(grid({ normal: 303 }));
+  assert.equal(stakesDecision({ ...confirmed, priceTypical: priceTypicalOf(settled, null) }), 'demote');
+  assert.equal(priceTypicalOf(one(grid({ a: 9, b: 1, c: 5, d: 100, e: 2, f: 50 })), null), 5, 'six prices: the 3rd lowest');
+});
+
+test('priceTypicalOf: the quote when settled, else the median NM price over the printings, else null', () => {
+  // range $0.21-$103.66 over four printings: the lower middle value (2nd lowest)
+  const potion = one(grid({ normal: 0.21, reverse: 0.5, holo: 10, first: 103.66 }));
+  assert.equal(priceTypicalOf(potion, null), 0.5);
+  assert.equal(priceHighOf(potion, null), 103.66);
+  // odd count: the middle one
+  assert.equal(priceTypicalOf(one(grid({ a: 1, b: 7, c: 200 })), null), 7);
+  // a settled printing is quoted
+  assert.equal(priceTypicalOf(potion, 'first'), 103.66);
+  // one printing: that price
+  assert.equal(priceTypicalOf(one(grid({ normal: 303 })), null), 303);
+  // printings with no NM price are left out; none at all: no typical price
+  const partial = one({ source: 'x', variants: { a: { conditions: { NM: 4 } }, b: { conditions: {} }, c: { conditions: { NM: 8 } } } });
+  assert.equal(priceTypicalOf(partial, null), 4, 'two prices: the lower one');
+  assert.equal(priceTypicalOf(one({ source: 'x', variants: { a: { conditions: {} } } }), null), null);
+  assert.equal(priceTypicalOf(one(null, { market_price: null }), null), null);
+  // legacy single market price
+  assert.equal(priceTypicalOf(one(null, { market_price: 60 }), null), 60);
+  // an open set with only a range row has no per-printing prices: no demotion price
+  assert.equal(priceTypicalOf({ identity: { name: 'A' }, setChoices: [{ id: 'x' }, { id: 'y' }], setRange: { low: 2, high: 60, count: 2, total: 2 }, price_grid: null }, null), null);
+});
 
 test('promoteCard builds the identified card like a pick, marks autoConfirmed, and is not user-confirmed', () => {
   const a = row('a-1', 'Pidgey');

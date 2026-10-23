@@ -20,13 +20,15 @@ const isPrice = (value) => typeof value === "number" && Number.isFinite(value);
 /**
  * 'promote' | 'demote' | 'keep'.
  * @param {{state: 'confirmed'|'choose'|'back', tier: string, titleConfirmed?: boolean, smallRow?: boolean,
- *   userConfirmed?: boolean, priceHigh: number|null|undefined}} input priceHigh is the single quoted price, or the
- *   high end of the price range while the printing is still open; null/undefined when the price is unknown.
+ *   userConfirmed?: boolean, priceHigh?: number|null, priceTypical?: number|null}} input
+ *   priceHigh (promotion) is the single quoted price, or the high end of the price range while the printing is still
+ *   open: "cheap" means every printing is cheap. priceTypical (demotion) is priceTypicalOf: the likely price of the card.
+ *   Either is null/undefined when unknown, which never promotes or demotes.
  */
-export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh } = {}) {
-  if (userConfirmed || !isPrice(priceHigh)) return "keep";
-  if (state === "choose" && smallRow === true && priceHigh <= LOW_STAKES_MAX_USD) return "promote";
-  if (state === "confirmed" && tier !== "high" && !titleConfirmed && priceHigh >= HIGH_STAKES_MIN_USD) return "demote";
+export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical } = {}) {
+  if (userConfirmed) return "keep";
+  if (state === "choose" && smallRow === true && isPrice(priceHigh) && priceHigh <= LOW_STAKES_MAX_USD) return "promote";
+  if (state === "confirmed" && tier !== "high" && !titleConfirmed && isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD) return "demote";
   return "keep";
 }
 
@@ -40,6 +42,27 @@ export function priceHighOf(card, choice, enabledConditions = ["NM"]) {
   const condition = enabledConditions?.[0] || "NM";
   const range = !isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]);
   return range ? range.high : null;
+}
+
+/**
+ * What the card is likely worth, for the demotion rule: its quoted price when the printing is settled, otherwise the
+ * median (the lower middle value for an even count) of the printings' prices at the first enabled condition (one printing: that price). Null when no printing has
+ * a price. The range high (priceHighOf) is wrong for this: it includes the 1st Edition and Shadowless printings, so a
+ * Most copies in a lot are the common printing, so an even count takes the lower middle price: $0.34 and $103.66 must not
+ * average to a misleading $52. A Potion with four printings (cheapest $0.21, range high $103.66) was demoted though the name was right, which cost
+ * 12-51 extra confirmations per grid fixture. Promotion keeps the conservative high; demotion follows the likely price.
+ */
+export function priceTypicalOf(card, choice, enabledConditions = ["NM"]) {
+  const quote = quotedPrice(card, choice, enabledConditions);
+  if (quote) return quote.price;
+  const condition = enabledConditions?.[0] || "NM";
+  const variants = Object.values(card?.price_grid?.variants || {});
+  const prices = variants.length
+    ? variants.map((v) => v?.conditions?.[condition])
+    : [condition === "NM" ? card?.market_price : null];
+  const sorted = prices.filter((p) => typeof p === "number" && Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  return sorted[(sorted.length - 1) >> 1];
 }
 
 /**

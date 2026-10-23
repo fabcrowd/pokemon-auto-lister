@@ -757,6 +757,19 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  test('a confirmed card whose printings range $0.21 to $103 but typically cost a few dollars is not asked about', async () => {
+    const page = await popupWithChoose((crop, arts) => {
+      const cond = (nm) => ({ market: nm, conditions: { NM: nm } });
+      const potion = { id: 'p-1', name: 'Potion', set: 'Base Set', setCode: 'base1', number: '94', imageUrl: arts[0] };
+      const grid = { source: 'pokemontcg', variants: { normal: cond(0.21), reverseHolofoil: cond(0.5), unlimitedHolofoil: cond(10), '1stEditionHolofoil': cond(103.66) } };
+      return { cards: [{ identity: potion, confidence: 0.7, abstain: false, market_price: 0.21, price_grid: grid, candidates: [potion], crop, box: [0, 0, 1, 1] }], priced: {} };
+    });
+    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Potion');
+    await expect(page.locator('.choose-row')).toHaveCount(0);
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$0.21–$103.66');
+    await page.close();
+  });
+
   test('the lot summary follows: promoted cards are Sure, demoted ones are still to confirm', async () => {
     const page = await popupWithChoose(stakesScan);
     await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
