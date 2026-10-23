@@ -105,3 +105,32 @@ test('an old row with no why, count or history is read, extended and still saved
   assert.equal(record.count, 2);
   assert.equal(record.history[0].pickedId, 'a');
 });
+
+import { holdExamPick } from '../tools/extension-wasm/lib/correction-save.js';
+
+const examScan = { scanId: 's', shares: [{ split: 'exam', photoId: 'p' }, { split: 'teach', photoId: 'q' }], examPicks: {} };
+
+test('an exam-split pick is queued for the exam only when sharing is on, and never for a teach photo', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.saveScan({ ...examScan, ts: 1, crops: [] });
+  const msg = { scanId: 's', index: 0, pickedId: 'a', via: 'wrong-card' };
+  assert.equal(await holdExamPick(store, examScan, msg, false), false);
+  assert.deepEqual((await store.getScan('s')).examPicks, {});
+  assert.equal(await holdExamPick(store, examScan, msg, true), true);
+  assert.deepEqual((await store.getScan('s')).examPicks, { 0: { cardId: 'a', source: 'wrong-card' } });
+  assert.equal(await holdExamPick(store, examScan, { ...msg, index: 1 }, true), false);
+});
+
+test('a correction on an exam-split photo is stored locally either way, and its reference is used on rescan', async () => {
+  const { currentReferences } = await import('../tools/extension-wasm/lib/references.js');
+  for (const sharing of [false, true]) {
+    const store = createCorrectionsStore(fakeIndexedDB());
+    await store.saveScan({ ...examScan, ts: 1, crops: [] });
+    await holdExamPick(store, examScan, { scanId: 's', index: 0, pickedId: 'a', via: 'search' }, sharing);
+    const record = await storeCorrection(store, draft(), { now: NOW });
+    assert.equal(await store.count(), 1);
+    const heads = await store.correctionHeads();
+    const ref = { id: record.id, cardId: 'a', ts: record.ts, v: (await import('../tools/extension-wasm/lib/embed.js')).EMBEDDING_VERSION, embedding: new Float32Array(512) };
+    assert.equal(currentReferences([ref], heads).length, 1);
+  }
+});

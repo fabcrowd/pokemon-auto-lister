@@ -21,7 +21,7 @@ import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isDemotable } from "./lib/stakes.js";
-import { SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, markRepeatedNames } from "./lib/fusion.js";
+import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
@@ -31,7 +31,7 @@ import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, f
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
-import { agreeWithReference, storeCorrection } from "./lib/correction-save.js";
+import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
 import { memoryVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
 import { whyOf, withVerdicts } from "./lib/why.js";
@@ -1193,12 +1193,9 @@ const _ownPageActions = {
     if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
-    // An exam photo's answers are held out: nothing learns from them here, and they leave only as a whole when the user confirms the photo.
-    if (scan?.shares?.[msg.index]?.split === "exam") {
-      const source = msg.via === "wrong-card" ? "wrong-card" : "pick";
-      await _corrections.saveScan({ ...scan, examPicks: { ...scan.examPicks, [msg.index]: { cardId: msg.pickedId, source } } });
-      return { ok: true };
-    }
+    // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
+    // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
+    await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
     // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
     // correction instead of storing a near-duplicate picture.
     const agreed = await agreeWithReference(_corrections, msg);
@@ -2060,11 +2057,12 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   const verdict = memoryVerdict(pictureRead, memory, { hits, meta: _meta });
   const fused = verdict.fused;
   seen.confirmedBy = verdict.confirmedBy;
-  seen.why = whyOf({
-    src: verdict.confirmedBy ? "correction" : "picture",
+  const whyFor = (src) => whyOf({
+    src,
     hits, ranked: seen.ranked, meta: _meta, height: capHeight, tags: modelTags(),
     ref: memory && !memory.pack ? { id: memory.refId, cos: memory.cos, n: memory.n, ts: memory.ts, bar: referenceBar(capHeight)?.confirm } : undefined,
   });
+  seen.why = whyFor(verdict.confirmedBy ? "correction" : "picture");
   const { identity, confidence, abstain } = fused;
   seen.choose = fused.choose === true;
   seen.smallRowCos = fused.smallRow === true ? fused.smallRowCos : null;
@@ -2105,6 +2103,13 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   const choices = inPeriod?.choices
     ? inPeriod.choices.map((index) => _meta[index])
     : setChoices(identity, hits, _meta);
+  // A near-duplicate of the corrected crop (PRINT_C) settles the exact printing the user picked; the evidence is their label.
+  const setOpen = choices.length > 1 || physicalHits(printingsOf(identity.name).map((index) => ({ index })), _meta).length > 1;
+  if (verdict.printingExact && memory?.cardId === identity.id && setOpen) {
+    seen.confirmedBy = "correction";
+    seen.why = whyFor("correction");
+    return { identity, confidence: Math.min(confidence, BELOW_HIGH_CONFIDENCE), abstain, ocrText, ...(await priceIdentity(identity)), ...(await versionsAlongside(identity, hits, abstain)) };
+  }
   if (choices.length > 1) {
     const fromRules = era ? await cardFromNameAndRules(cardCanvas, era, identity.name) : null;
     if (fromRules) {

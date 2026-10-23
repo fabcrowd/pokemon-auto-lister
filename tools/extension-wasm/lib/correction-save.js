@@ -20,6 +20,18 @@ export async function agreeWithReference(store, msg, now = Date.now()) {
   return { count };
 }
 
+/**
+ * An exam-split photo's pick is queued for the shared exam only when sharing is on (the exam set must never train);
+ * with sharing off nothing is queued for anyone. This never decides whether the correction is kept on this device:
+ * every correction is stored locally. @returns {Promise<boolean>} whether the pick was queued
+ */
+export async function holdExamPick(store, scan, msg, sharingEnabled) {
+  if (!sharingEnabled || scan?.shares?.[msg.index]?.split !== "exam") return false;
+  const source = msg.via === "wrong-card" ? "wrong-card" : "pick";
+  await store.saveScan({ ...scan, examPicks: { ...scan.examPicks, [msg.index]: { cardId: msg.pickedId, source } } });
+  return true;
+}
+
 /** Corrections beyond `max` are deleted, the oldest unprotected first (lib/correction-state.js), with their references. */
 export async function evictCorrections(store, max = MAX_CORRECTIONS, now = Date.now()) {
   const heads = await store.correctionHeads();

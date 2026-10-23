@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-23 (corrections fixes from the real-model QA: exam photos, printing-only corrections)
+
+### Fixed
+- A correction on an "exam" photo (1 in 5 by hash) was never stored locally: `saveCorrection` diverted to `examPicks` and answered ok, so nothing was remembered and the row still said "Corrected, remembered". Every correction is now stored locally (reference memory, why-record, history) whatever the split and whether or not sharing is on. The exam split only decides what is queued for sharing: `holdExamPick` (`lib/correction-save.js`) queues the pick for the exam only when sharing is enabled (nothing is queued when it is off), and exam photos still never enter the shared training queue (`contributeTeachPick` is teach-only). No other early return skipped local storage.
+- A correction that only changed the printing of the same card name was not confirmed on rescan even at 0.99 (no chip, "Set not sure", and the Why panel quoted the old card's picture score). Now: when a reference moved the card to the top, the why-record and chip report the memory similarity and source "your correction" (`memory.moved`/`movedFrom`); and a near-duplicate of the corrected crop (cosine >= `PRINT_C` 0.95) confirms the exact printing the user picked (printing settled, `confirmedBy: 'correction'`, the $50 high-price bar H applies as for any memory confirm). Below `PRINT_C` the printing stays open with the earlier printing preselected.
+
+### Measured
+- `PRINT_C = 0.95` (`lib/reference-bars.js`, table next to the constant; analysis `card-scanner-data/data/reports/g12/print/print_bar.md`): 0 of 390 same-name-other-printing queries reach 0.95 (max 0.943); same-printing queries reach it in 9/206 (200-299 px) and 53/206 (300+ px). 100-149 px has no id-level pairs: same bar, unmeasured.
+
+### Tests
+- `memory-confirm.test.js` (PRINT_C, `moved`, verdict, `printingExact`), `correction-save.test.js` (exam pick queued only with sharing on; exam-split correction stored with sharing off and on; reference current on rescan).
+- Privacy policy unchanged: corrections were already described as stored for every pick; what is sent is unchanged.
+
 ## 2026-10-23 (copy or download the confirmed lot; Near Mint label)
 
 ### Added

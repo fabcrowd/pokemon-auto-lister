@@ -18,6 +18,17 @@ export const REFERENCE_BARS = Object.freeze([
 // Under this a read is too small to have been measured: memory neither boosts nor confirms.
 export const REFERENCE_MIN_HEIGHT = 100;
 export const HIGH_PRICE_BAR = 0.86;
+// PRINT_C: a new crop this close to the corrected crop is a NEAR-DUPLICATE (the same picture again), so the exact
+// printing the user picked is confirmed too. Below it the printing stays open with their printing preselected.
+// Evidence (geometry boxes, id level; data/reports/g12/print/print_bar.md in card-scanner-data), best same-name
+// other-printing pair vs best same-printing pair per query, reaching cosine t:
+//   band      n(diff/same)   t=.93 diff / same     t=.95 diff / same     t=.97 diff / same
+//   150-199   78/103         0/78 / 0/103          0/78 / 0/103          0/78 / 0/103   (max diff .907)
+//   200-299   156/206        1/156 / 38/206        0/156 / 9/206         0/156 / 1/206  (max diff .943)
+//   300+      156/206        3/156 / 104/206       0/156 / 53/206        0/156 / 13/206 (max diff .943)
+//   100-149   no id-level pairs measured: the same bar is used, unmeasured.
+// At .95 no different printing reached it (0 of 390, 95% upper bound about 0.8%); only near-duplicates do.
+export const PRINT_C = 0.95;
 // Two different cards whose references are this close are a conflict: the best one only boosts.
 export const CONFLICT_GAP = 0.03;
 // Float slack so a cosine exactly at a bar passes.

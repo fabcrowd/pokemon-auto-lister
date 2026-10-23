@@ -218,3 +218,38 @@ test('memoryVerdict: negative memory stops the card the user called wrong from b
 test('memoryVerdict without memory returns the read as is', () => {
   assert.equal(memoryVerdict(picture, null, { hits: hitsOf('a'), meta }).fused, picture);
 });
+
+// PRINT_C: a near-duplicate of the corrected crop settles the exact printing. data/reports/g12/print/print_bar.md:
+// no same-name-other-printing pair (0 of 390) reached 0.95, max 0.9426; same-printing pairs reach it in 9/206 (200-299 px) and 53/206 (300+ px).
+test('PRINT_C is 0.95', async () => {
+  const { PRINT_C } = await import('../tools/extension-wasm/lib/reference-bars.js');
+  assert.equal(PRINT_C, 0.95);
+});
+
+test('applyMemory remembers which card the reference moved aside', () => {
+  const out = applyMemory(query, [ref('b', 0.9)], hitsOf('a', 'b'), 0.7, meta, { height: 250 });
+  assert.equal(out.memory.moved, true);
+  assert.equal(out.memory.movedFrom, 'a');
+  const same = applyMemory(query, [ref('a', 0.9)], hitsOf('a', 'b'), 0.7, meta, { height: 250 });
+  assert.equal(same.memory.moved, false);
+});
+
+test('memoryVerdict: a reference that moved the card makes the source "your correction" even when the picture then confirms it', () => {
+  const hits = hitsOf('b', 'a');
+  const confirmedB = { ...picture, identity: { id: 'b', name: 'B' }, confidence: 0.85 };
+  const out = memoryVerdict(confirmedB, { level: 'confirm', cardId: 'b', moved: true, movedFrom: 'a', cos: 0.9 }, { hits, meta });
+  assert.equal(out.confirmedBy, 'correction');
+  assert.equal(out.fused.identity.id, 'b');
+  assert.ok(out.fused.confidence <= BELOW_HIGH_CONFIDENCE);
+});
+
+test('memoryVerdict: printingExact only for a near-duplicate (at PRINT_C) of the corrected crop', () => {
+  const hits = hitsOf('b');
+  const at = (cos) => memoryVerdict(chosen, { level: 'confirm', cardId: 'b', cos }, { hits, meta }).printingExact;
+  assert.equal(at(0.95), true);
+  assert.equal(at(0.949), false);
+  assert.equal(memoryVerdict(chosen, { level: 'boost', cardId: 'b', cos: 0.99 }, { hits, meta }).printingExact, false);
+  const sameCard = memoryVerdict({ ...picture, identity: { id: 'b', name: 'B' } }, { level: 'confirm', cardId: 'b', cos: 0.99, moved: false }, { hits, meta });
+  assert.equal(sameCard.printingExact, true);
+  assert.equal(sameCard.confirmedBy, null);
+});

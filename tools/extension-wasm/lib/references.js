@@ -215,7 +215,9 @@ export function applyMemory(rawEmbedding, rows, hits, rawTop, meta, { height = 0
     const at = hits.findIndex((h) => meta[h.index]?.id === hit.cardId);
     if (at < 0) return none;
     const { score, ...rest } = hit;
-    return { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId, memory: { ...rest, cos: score } };
+    const movedFrom = meta[hits[0]?.index]?.id ?? null;
+    // moved: the reference, not the catalog, put this card on top; the picture score it now carries is the old top's.
+    return { hits: promoteHit(hits, hits[at].index), referencedId: hit.cardId, memory: { ...rest, cos: score, moved: movedFrom !== hit.cardId, movedFrom } };
   }
   const topId = meta[hits[0]?.index]?.id;
   const negative = negativeHit(rawEmbedding, rows, topId, { height });
