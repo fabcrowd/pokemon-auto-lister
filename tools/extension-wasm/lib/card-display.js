@@ -246,6 +246,9 @@ export function swapVersion(card, id) {
     ...(entry.setConfirmed !== undefined ? { setConfirmed: entry.setConfirmed } : {}),
     versionChoices: [snapshotOf(card), ...choices.filter((c) => c !== entry)],
     pricing: false,
+    // Tapping a version is the user's answer: the row stays identified, however unsure the scanner was.
+    unsure: false,
+    userConfirmed: true,
     priceError: open ? null : entry.priceError ?? null,
   };
 }

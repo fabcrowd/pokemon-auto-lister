@@ -2,7 +2,7 @@
 // how to search the catalog by hand, and what a saved answer looks like.
 
 import { isUnsure } from "./card-display.js";
-import { inEra } from "./era.js";
+import { ERAS, inEra, seriesOf } from "./era.js";
 import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
 
@@ -169,10 +169,14 @@ export function findCards(meta, query, { era = null, limit = 20 } = {}) {
 /** A catalog image, else the pokemontcg.io one, else nothing to show. */
 export function thumbUrl(card) {
   if (card?.imageUrl) return card.imageUrl;
-  if (card?.setCode && card?.number) {
-    return `https://images.pokemontcg.io/${encodeURIComponent(card.setCode)}/${encodeURIComponent(card.number)}.png`;
-  }
-  return null;
+  if (!card?.setCode || !card?.number) return null;
+  const code = encodeURIComponent(card.setCode);
+  const number = encodeURIComponent(card.number);
+  // Catalog set codes are TCGdex's. pokemontcg.io spells the Scarlet & Violet and Mega ones differently (sv3, not sv03)
+  // and answers an unknown id with a card-back picture, so those are asked of the catalog's own host instead.
+  const series = seriesOf(card);
+  if (series === "sv" || series === "me") return `https://assets.tcgdex.net/en/${series}/${code}/${number}/high.webp`;
+  return ERAS.some((era) => era.series.includes(series)) ? `https://images.pokemontcg.io/${code}/${number}.png` : null;
 }
 
 /** What the scanner said about a card, kept apart from what the user later chose. */

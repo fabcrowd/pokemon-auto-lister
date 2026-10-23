@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, extendsTitle, titleCatalogName, titleConfirmsName, titleVerdict, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
+import { choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, nameAlmostAgrees, nameAgrees, baseName, onlyPromoChoice, setChoices, choiceSummary, extendsTitle, titleCatalogName, titleConfirmsName, titleVerdict, versionChoices } from '../tools/extension-wasm/lib/set-choice.js';
 
 const meta = [
   { id: 'ex8-93', name: 'Boost Energy', set: 'Deoxys', setCode: 'ex8', number: '93' },
@@ -344,4 +344,10 @@ test('a leading "Basic" on an Energy name is not part of the name; other names k
   assert.equal(titleConfirmsName('Water Energy', 'Basic Water Energy', known), true);
   assert.equal(titleVerdict('Water Energy', 'Basic Water Energy', known).kind, 'agree');
   assert.equal(titleVerdict('Fire Energy', 'Basic Water Energy', known).kind, 'contradict');
+});
+
+test('choiceSummary carries the catalog row art, so a choice can show its own picture', () => {
+  const row = { id: 'sv03-166', name: 'Eevee', set: 'Obsidian Flames', setCode: 'sv03', number: '166', imageUrl: 'https://assets.tcgdex.net/en/sv/sv03/166/high.webp', game: 'pokemon' };
+  assert.deepEqual(choiceSummary(row), { id: 'sv03-166', name: 'Eevee', set: 'Obsidian Flames', setCode: 'sv03', number: '166', imageUrl: row.imageUrl });
+  assert.equal('imageUrl' in choiceSummary({ id: 'a', name: 'B', set: 'C', setCode: 'd', number: '1' }), false);
 });

@@ -1027,4 +1027,123 @@ test.describe('Consumer extension popup', () => {
     expect(await page.evaluate(() => window.__sent.length)).toBe(0);
     await page.close();
   });
+
+  // ─── Round 3: catalog art for every choice, a version tap stays confirmed, focus stays in the strip ───
+
+  // A card-shaped picture (name and number drawn on it) served for the catalog host, so screenshots show real art.
+  async function artPng(label, color) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="252" height="352"><rect width="252" height="352" rx="14" fill="${color}"/><rect x="16" y="16" width="220" height="40" rx="6" fill="#fff" fill-opacity="0.85"/><text x="26" y="44" font-size="22" font-family="Arial" font-weight="700" fill="#222">${label}</text><rect x="16" y="70" width="220" height="150" rx="8" fill="#fff" fill-opacity="0.35"/></svg>`;
+    return sharp(Buffer.from(svg)).png().toBuffer();
+  }
+
+  test('a printing strip for Scarlet & Violet sets loads each choice own catalog art and never asks pokemontcg.io', async () => {
+    const hosts = [];
+    const onRequest = (request) => hosts.push(request.url());
+    context.on('request', onRequest);
+    const pokemontcg = async (route) => route.fulfill({ status: 404, contentType: 'image/png', body: await artPng('CARD BACK', '#223') });
+    await context.route('https://images.pokemontcg.io/**', pokemontcg);
+    const bodies = { 'sv01-5': await artPng('Eevee 005', '#c0504d'), 'sv03-166': await artPng('Eevee 166', '#4f81bd'), 'sv04-9': await artPng('Eevee 009', '#9bbb59') };
+    const tcgdex = async (route) => {
+      const url = route.request().url();
+      const key = Object.keys(bodies).find((k) => url.includes(`/${k.split('-')[0]}/`)) || 'sv01-5';
+      await route.fulfill({ status: 200, contentType: 'image/png', body: bodies[key] });
+    };
+    await context.route('https://assets.tcgdex.net/**', tcgdex);
+    try {
+      const page = await popupWithChoose(() => {
+        const row = (id, set, setCode, number, imageUrl) => ({ id, name: 'Eevee', set, setCode, number, ...(imageUrl ? { imageUrl } : {}) });
+        const sets = [
+          row('sv01-5', 'Scarlet & Violet', 'sv01', '005', 'https://assets.tcgdex.net/en/sv/sv01/005/high.webp'),
+          row('sv03-166', 'Obsidian Flames', 'sv03', '166', 'https://assets.tcgdex.net/en/sv/sv03/166/high.webp'),
+          row('sv04-9', 'Paradox Rift', 'sv04', '009'),
+        ];
+        return { cards: [{ identity: sets[1], setChoices: sets, setConfirmed: false, bestGuess: { source: 'page', reason: 'likely Obsidian Flames' }, setRange: { low: 1, high: 6, count: 3, total: 3 }, confidence: 0.7, abstain: false, market_price: 3, box: [0, 0, 1, 1] }], priced: {} };
+      });
+      const tiles = page.getByRole('radiogroup', { name: 'Choose the printing' }).getByRole('radio');
+      await expect(tiles).toHaveCount(3);
+      await expect.poll(() => page.evaluate(() => [...document.querySelectorAll('.strip-art img')].every((i) => i.complete && i.naturalWidth > 100))).toBe(true);
+      await expect(page.locator('.strip-art.no-art')).toHaveCount(0);
+      expect(hosts.filter((u) => u.includes('images.pokemontcg.io'))).toEqual([]);
+      expect(hosts.some((u) => u === 'https://assets.tcgdex.net/en/sv/sv03/166/high.webp')).toBe(true);
+      // The row with no imageUrl asks the catalog host for its own picture, not pokemontcg.io.
+      expect(hosts.some((u) => u === 'https://assets.tcgdex.net/en/sv/sv04/009/high.webp')).toBe(true);
+      fs.mkdirSync(PICKER_SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(PICKER_SHOTS, 'printing-strip-sv-art.png') });
+      await page.close();
+    } finally {
+      context.off('request', onRequest);
+      await context.unroute('https://images.pokemontcg.io/**', pokemontcg);
+      await context.unroute('https://assets.tcgdex.net/**', tcgdex);
+    }
+  });
+
+  test('a picture that decodes to a speck is a failure: the tile becomes a text tile', async () => {
+    const page = await popupWithChoose(() => {
+      const speck = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const sets = [
+        { id: 'a-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51', imageUrl: speck },
+        { id: 'b-1', name: 'Eevee', set: 'Fossil', setCode: 'base3', number: '51', imageUrl: speck },
+      ];
+      return { cards: [{ identity: sets[0], setChoices: sets, setConfirmed: false, setRange: { low: 1, high: 7, count: 2, total: 2 }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] }], priced: {} };
+    });
+    await expect(page.locator('.strip-art.no-art')).toHaveCount(2);
+    await expect(page.getByRole('radio', { name: 'Jungle number 51' }).locator('.strip-fallback')).toBeVisible();
+    await page.close();
+  });
+
+  const confirmedThenVersion = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const pidgey = { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57', imageUrl: arts[0] };
+    const pidgeotto = { id: 'a-2', name: 'Pidgeotto', set: 'Jungle', setCode: 'base2', number: '22', imageUrl: arts[1], market_price: 6, price_variant: 'normal', price_grid: grid(6), setChoices: [] };
+    return {
+      cards: [{ identity: null, confidence: 0.3, abstain: true, unsure: true, candidates: [pidgey], versionChoices: [pidgeotto], crop, box: [0, 0, 1, 1] }],
+      priced: { 'a-1': { identity: pidgey, market_price: 3, price_variant: 'normal', price_grid: grid(3) } },
+    };
+  };
+
+  test('after confirming from Choose, tapping another version keeps the row confirmed with the new name and price', async () => {
+    const page = await popupWithChoose(confirmedThenVersion);
+    await page.locator('.choose-row [data-confirm-best]').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
+    await expect(page.locator('.choose-row')).toHaveCount(0);
+    await page.getByRole('radiogroup', { name: 'Choose the version' }).getByRole('radio', { name: /Pidgeotto/ }).click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgeotto');
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$6.00');
+    await expect(page.locator('.choose-row')).toHaveCount(0);
+    await expect(page.locator('#msg-bar')).not.toContainText('need your pick');
+    await expect(page.locator('.lt-guess b')).toHaveText('0');
+    await page.screenshot({ path: path.join(PICKER_SHOTS, 'version-swap.png') });
+    await page.close();
+  });
+
+  test('focus stays in the strip: on the chosen finish chip, the newly checked printing tile, and the new version tile', async () => {
+    const page = await popupWithChoose(finishScan);
+    const chips = page.getByRole('radiogroup', { name: /^Choose the finish/ }).getByRole('radio');
+    await chips.nth(0).focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$10.00');
+    expect(await page.evaluate(() => document.activeElement?.dataset.stripPick)).toBe('holofoil');
+    expect(await page.evaluate(() => document.activeElement?.dataset.stripKind)).toBe('finish');
+    await page.close();
+
+    const sets = await popupWithChoose(printingScan);
+    const tiles = sets.getByRole('radiogroup', { name: 'Choose the printing' }).getByRole('radio');
+    await tiles.first().focus();
+    await sets.keyboard.press('ArrowRight');
+    await sets.keyboard.press('ArrowRight');
+    await sets.keyboard.press('Enter');
+    await expect(sets.locator('.card-row .card-price')).toHaveText('$9.00');
+    await expect.poll(() => sets.evaluate(() => { const a = document.activeElement; return [a?.dataset.stripKind, a?.dataset.stripPick, a?.getAttribute('aria-checked')]; })).toEqual(['set', 'pre-74', 'true']);
+    await sets.close();
+
+    const versions = await popupWithChoose(versionScan);
+    const vt = versions.getByRole('radiogroup', { name: 'Choose the version' }).getByRole('radio');
+    await vt.first().focus();
+    await versions.keyboard.press('ArrowRight');
+    await versions.keyboard.press('Enter');
+    await expect(versions.locator('.card-row .card-name')).toContainText('Pikachu V');
+    await expect.poll(() => versions.evaluate(() => { const a = document.activeElement; return [a?.dataset.stripKind, a?.getAttribute('aria-checked'), a?.textContent]; })).toEqual(['version', 'true', expect.stringContaining('Pikachu V')]);
+    await versions.close();
+  });
 });

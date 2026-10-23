@@ -22,7 +22,7 @@ import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isDemotable } from "./lib/stakes.js";
 import { SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, markRepeatedNames } from "./lib/fusion.js";
-import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
+import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
@@ -1690,7 +1690,7 @@ async function guessFromTitle(card, hits, before) {
     return withSetRange({
       ...base,
       identity: { name: card.name },
-      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      setChoices: choices.map((row) => ({ ...choiceSummary(row), score: hitScore(hits, row.id) })),
       market_price: null, price_variant: null, price_grid: null,
     });
   }
@@ -2088,7 +2088,7 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
       identity: { name: identity.name },
       confidence,
       abstain,
-      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      setChoices: choices.map((row) => ({ ...choiceSummary(row), score: hitScore(hits, row.id) })),
       ocrText,
       ...unpriced,
       ...(await versionsAlongside(identity, hits, abstain)),
@@ -2113,7 +2113,7 @@ async function versionsAlongside(identity, hits, abstain) {
       console.log("[BG] no price for", card.id, err?.message || err);
       priceError = "Couldn't get a price. Try again.";
     }
-    entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced, ...(priceError ? { priceError } : {}), ...(await ownSetState(card, hits)) });
+    entries.push({ ...choiceSummary(card), ...priced, ...(priceError ? { priceError } : {}), ...(await ownSetState(card, hits)) });
   }
   return entries.length ? { versionChoices: entries } : {};
 }
@@ -2130,7 +2130,7 @@ async function ownSetState(card, hits) {
   if (own.length < 2) return {};
   const setRange = await rangeOfChoices(own);
   return {
-    setChoices: own.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
+    setChoices: own.map(choiceSummary),
     ...(setRange ? { setRange } : {}),
   };
 }

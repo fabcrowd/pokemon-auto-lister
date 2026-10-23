@@ -55,6 +55,7 @@ const bulkCancel    = document.getElementById("bulk-cancel");
 const bulkHint      = document.getElementById("bulk-hint");
 const bulkTickAll   = document.getElementById("bulk-tick-all");
 
+const MIN_ART_PX = 20;
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 
 let isScanning = false;
@@ -844,11 +845,14 @@ function openSearch(idx, via) {
 // Re-rendering drops the focused element, so keyboard users land back on a button in the same card: the opener
 // they used, else the row's one search opener (asked rows have only "search", identified rows only "wrong-card"),
 // else the first pick or other button in the row, so focus never falls back to the page.
-function focusOpener(idx, via = null) {
+function focusOpener(idx, via = null, strip = null) {
   const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
   if (!row) return;
-  const strip = via === "strip" ? row.querySelector('[role="radio"][aria-checked="true"]') : null;
-  const target = strip || (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
+  // After a pick in a strip or chip group, focus stays in that group: on its newly checked tile, else the one tapped.
+  const group = strip ? row.querySelector(`[data-strip="${strip.kind}"]`) : null;
+  const inGroup = group && (group.querySelector('[role="radio"][aria-checked="true"]')
+    || [...group.querySelectorAll("[data-strip-pick]")].find((el) => el.dataset.stripPick === strip.id));
+  const target = inGroup || (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
     || row.querySelector("[data-open-search]")
     || row.querySelector("button[data-pick], button, select, input");
   target?.focus();
@@ -1027,7 +1031,7 @@ function onStripPick(idx, button) {
     renderResults();
     pushOverlay();
     updateStats(_lastResult.cards);
-    focusOpener(idx, "strip");
+    focusOpener(idx, null, { kind: "finish", id: value });
   }
 }
 
@@ -1047,11 +1051,16 @@ function moveInGroup(e) {
 }
 
 // A thumbnail that fails to load becomes a text tile (name and set), so the choice is never lost.
-resultsEl.addEventListener("error", (e) => {
-  const art = e.target?.tagName === "IMG" ? e.target.closest(".strip-art") : null;
+function failStripArt(img) {
+  const art = img?.tagName === "IMG" ? img.closest(".strip-art") : null;
   if (!art) return;
   art.classList.add("no-art");
-  e.target.remove();
+  img.remove();
+}
+resultsEl.addEventListener("error", (e) => failStripArt(e.target), true);
+// A picture that decodes to a speck is a placeholder, not a card.
+resultsEl.addEventListener("load", (e) => {
+  if (e.target?.naturalWidth < MIN_ART_PX) failStripArt(e.target);
 }, true);
 
 /* ─── Review all: every card to choose beside its preselected candidate, kept or skipped, one Confirm N ─── */
@@ -1224,6 +1233,8 @@ function renderVersionRow(card, idx) {
 
 function replaceCard(idx, next) {
   const hadFocus = resultsEl.contains(document.activeElement);
+  const active = document.activeElement?.closest?.("[data-strip-kind]");
+  const strip = active ? { kind: active.dataset.stripKind, id: active.dataset.stripPick } : null;
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   refreshStatus();
@@ -1232,7 +1243,7 @@ function replaceCard(idx, next) {
   _variantPicked.delete(idx);
   seedVariant(next, idx);
   renderResults();
-  if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);
+  if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx, null, strip);
   updateStats(cards);
   pushOverlay();
 }

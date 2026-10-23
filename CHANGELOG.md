@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-23 (picker fixes: art for every printing, a version tap stays confirmed, focus stays in the strip)
+
+### Fixed
+- Printing tiles for Scarlet & Violet sets showed a card back: `background.js` built `setChoices` (two places), the per-version set choices and the version entries without `imageUrl`, and `thumbUrl` then asked pokemontcg.io for TCGdex set codes (`sv03`; pokemontcg uses `sv3`), which answers with a card-back picture. New `choiceSummary` (`lib/set-choice.js`) carries the catalog row's `imageUrl` into all of them. `thumbUrl` prefers `imageUrl`; with none it uses the catalog's own TCGdex host for `sv`/`me` set codes, pokemontcg.io only for the older series whose ids agree, and nothing (a text tile) otherwise. The learning-bundle rows (`lib/bundle.js`) already carry `imageUrl`. A tile whose picture decodes narrower than 20 px now falls back to a text tile like a failed load.
+- Tapping the other-version tile on a row the user had confirmed sent it back to Choose (`swapVersion` kept `unsure: true`). The tap is the user's answer: `unsure: false`, `userConfirmed: true`; price and range logic and saved corrections unchanged.
+- Focus after a pick stays in the strip: on the chosen finish chip (it jumped to the printing tile), and on the newly checked printing or version tile (it landed on "Wrong card?").
+
+### Tests
+- `card-display.test.js` (swapVersion of an unsure row), `card-picker.test.js` (`thumbUrl` never builds a pokemontcg.io URL for TCGdex codes), `set-choice.test.js` (`choiceSummary`), popup e2e (sv printing strip requests the catalog art and never pokemontcg.io, speck image fallback, version tap stays confirmed, focus in the strip).
+
 ## 2026-10-23 (image-first pickers: printings, versions and finishes are tapped, not named)
 
 ### Changed

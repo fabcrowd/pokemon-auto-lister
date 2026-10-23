@@ -38,7 +38,7 @@ test('setTiles: the confirmed printing is checked; a page guess is checked and s
 
 test('setTiles: art comes from the same thumb logic as candidate cards; a row with nothing to show has no art', () => {
   const tiles = setTiles({ setChoices: [{ id: 'a-1', name: 'X', set: 'S', setCode: 'sv02', number: '9' }, { id: 'b-1', name: 'X', set: 'T' }] });
-  assert.equal(tiles[0].art, 'https://images.pokemontcg.io/sv02/9.png');
+  assert.equal(tiles[0].art, 'https://assets.tcgdex.net/en/sv/sv02/9/high.webp');
   assert.equal(tiles[1].art, null);
 });
 

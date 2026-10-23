@@ -528,3 +528,14 @@ test('a card from another photo of the listing says which photo', () => {
   assert.equal(fromSeveralPhotos([{ photo: 1 }, { photo: 2 }]), true);
   assert.equal(fromSeveralPhotos([{ photo: 1, photos: [1, 2] }]), true);
 });
+
+test('swapping versions on an unsure row is the user confirming it: the row stays identified', () => {
+  const read = versionRead({ unsure: true, lowCertainty: true, confidence: 1 });
+  assert.equal(classifyCard(read), 'pick');
+  const out = swapVersion(read, 'sv8-57');
+  assert.equal(out.unsure, false);
+  assert.equal(out.userConfirmed, true);
+  assert.equal(classifyCard(out), 'identified');
+  assert.equal(out.market_price, 30);
+  assert.equal(out.confidence, 1, 'confidence is untouched');
+});

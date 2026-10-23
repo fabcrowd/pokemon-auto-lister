@@ -17,6 +17,11 @@ const MAX_CHOICES = 4;
 const BASIC_ENERGY = /^basic\s+(?=\S.*\senergy$)/i;
 const withoutBasic = (name) => String(name || "").trim().replace(BASIC_ENERGY, "");
 
+/** The fields of a catalog row a popup choice needs, art included, so a tile shows the row's own picture. */
+export function choiceSummary({ id, name, set, setCode, number, imageUrl }) {
+  return { id, name, set, setCode, number, ...(imageUrl ? { imageUrl } : {}) };
+}
+
 export function choiceName(name) {
   return withoutBasic(String(name || "").replace(/\s*δ$/u, "").trim()).toLowerCase();
 }

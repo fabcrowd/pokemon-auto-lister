@@ -407,3 +407,13 @@ test('renderPickList: marks the suggested card when asked and only then', () => 
   assert.ok(html.indexOf('Suggested') > html.indexOf('base1-4'));
   assert.doesNotMatch(renderPickList([META[0]], 3), /Suggested/);
 });
+
+test('thumbUrl never builds a pokemontcg.io url for a TCGdex set code; it uses the catalog host or nothing', () => {
+  assert.equal(thumbUrl({ setCode: 'sv03', number: '166' }), 'https://assets.tcgdex.net/en/sv/sv03/166/high.webp');
+  assert.equal(thumbUrl({ setCode: 'sve', number: '3' }), 'https://assets.tcgdex.net/en/sv/sve/3/high.webp');
+  assert.equal(thumbUrl({ setCode: 'me01', number: '12' }), 'https://assets.tcgdex.net/en/me/me01/12/high.webp');
+  assert.equal(thumbUrl({ imageUrl: 'https://img.test/a.png', setCode: 'sv03', number: '166' }), 'https://img.test/a.png');
+  for (const code of ['sv03', 'sv8', 'zzz9']) {
+    assert.doesNotMatch(String(thumbUrl({ setCode: code, number: '1' })), /pokemontcg\.io/);
+  }
+});
