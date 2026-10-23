@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-23 (corrections that stick: positive memory leads, negative memory, the why-record)
+
+### Changed
+- "Use my corrections" (was "Recognize cards I corrected before") is on by default. An unset setting reads as on; an explicit off stays off (`referencesInUse` is `!== false`, options page the same).
+- Reference memory uses per-height bars measured on labelled crops (`lib/reference-bars.js`, from `data/reports/g12/thresholds.json`; leave-one-out 541 fires, 0 wrong, 0 broken) instead of the single unmeasured `0.93`. By the read height of the new crop (100-149 / 150-199 / 200-299 / 300+ px): boost B .84 / .81 / .83 / .83, confirm C .86 / .83 / .86 / .84, high-price bar H .86; the 0.02 margin over the raw catalog top stays. Under 100 px memory does nothing. An unknown height uses the 200-299 row.
+- A reference at or above B moves the corrected card first and preselects it; at or above C (and not in conflict: two cards within 0.03 only boost) it CONFIRMS the card with source "your correction" (`confirmedBy: 'correction'`, confidence capped below high). A card worth $50 or more needs H, else it goes back to Choose with the card preselected (`lib/stakes.js`). The reference stores the exact card id; when other printings share the art the name is confirmed and the printing stays open with the earlier printing preselected (`lib/page-prior.js`).
+- Community pack rows keep the old 0.93 cut and only boost (`PACK_REFERENCE_MIN`); they were not part of the measurement.
+- Re-correcting the same crop no longer erases the earlier answer: the row keeps `history` (up to 3 earlier answers with their why-records) and a `count`; the same answer again is x2. Confirming the corrected card again from a different crop adds to the earlier row's count instead of storing a near-duplicate picture.
+- Corrections are capped at 400. Over the cap the oldest unprotected go first (protected: x2, or saved/agreed within 30 days), with their references. A full disk makes room, retries, and as a last resort keeps the answer without its picture; the row on screen is never lost.
+
+### Added
+- Negative memory (`negativeHit`, `memoryVerdict`): when a new crop is at or above B of a corrected crop and the model's top card is the one the user called wrong, that card is not auto-confirmed (Choose, the corrected card first, chip "You corrected this before"). A printing swap within the same name is not a "wrong card".
+- The why-record (`lib/why.js`) on every named card: source (picture, number, setHint, stamp, promoted, correction, user), cosine, lead over the next different card, rival, read height, the confirm row used, title verdict, stripe, top 5, price shown, model/crop/catalog tags. Saved with each correction (`why`, `wrongId`, `count`, `history`). Local only: `lib/contribution.js` has no field for it.
+- Popup: "Corrected, remembered" (x2) chip on a row the user corrected, "From your correction" on a row memory confirmed, "You corrected this before" on Choose rows, and a "Why this card?" button with a plain-words panel (`lib/why-text.js`, `lib/memory-ui.js`). "Wrong card?" is unchanged and works on every confirmed row.
+- `lib/correction-state.js`, `lib/correction-save.js`, `lib/memory-confirm.js`, `lib/reference-bars.js`, `fusion.confirmRowFor`.
+
+### Not in this pass
+- Shared-learning schema v2 / the opt-in "fix" pair, any change to fusion rows or the model, the lot export.
+
+### Tests
+- New: `memory-confirm.test.js`, `why.test.js`, `correction-state.test.js`, `correction-save.test.js`, `memory-ui.test.js`; additions to `stakes.test.js`, `page-prior.test.js`; popup e2e for the chips, the Why panel, the $50 rule, negative memory, "Wrong card?" saving the why-record, x2 and the settings switch.
+- Changed because the behaviour changed: `references.test.js` (the 0.93 placeholder test is now the margin and pack cut), `card-picker.test.js` (`correctionRecord` shape gains `wrongId`, `count`, `history`), `corrections-store.test.js` (heads gain `count`).
+
 ## 2026-10-23 (picker fixes: art for every printing, a version tap stays confirmed, focus stays in the strip)
 
 ### Fixed

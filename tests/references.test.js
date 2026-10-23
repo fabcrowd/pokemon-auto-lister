@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   EMBEDDING_DIM,
   REFERENCE_MARGIN,
-  REFERENCE_MIN,
+  PACK_REFERENCE_MIN,
   correctionsToEmbed,
   decodeEmbedding,
   encodeEmbedding,
@@ -30,8 +30,8 @@ function unit(...head) {
 const at = (score) => unit(score, Math.sqrt(1 - score * score));
 const query = unit(1);
 
-test('the thresholds are conservative placeholders', () => {
-  assert.equal(REFERENCE_MIN, 0.93);
+test('the margin is measured and the pack keeps the old conservative cut', () => {
+  assert.equal(PACK_REFERENCE_MIN, 0.93);
   assert.equal(REFERENCE_MARGIN, 0.02);
 });
 

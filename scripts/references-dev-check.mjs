@@ -1,14 +1,14 @@
 // Leave-one-out check of reference memory on your own corrections. Prints counts only.
 //
-//   node scripts/references-dev-check.mjs <corrections-export.json> [--min 0.93] [--margin 0.02]
+//   node scripts/references-dev-check.mjs <corrections-export.json> [--min 0.86] [--margin 0.02]
 //
 // Export from the extension settings page, under Corrections. Only corrections saved after models were
-// loaded carry an embedding. Choose REFERENCE_MIN and REFERENCE_MARGIN from this output, never from sealed scores.
+// loaded carry an embedding. Check the bars in lib/reference-bars.js and REFERENCE_MARGIN against this output, never from sealed scores.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { REFERENCE_MARGIN, REFERENCE_MIN } from '../tools/extension-wasm/lib/references.js';
+import { REFERENCE_MARGIN, referenceBar } from '../tools/extension-wasm/lib/references.js';
 import { gridReport, itemsFromExport, leaveOneOut, summarizeAt } from './lib/references-loo.mjs';
 import { isInside } from './lib/sealed-paths.mjs';
 
@@ -19,7 +19,8 @@ const flag = (name, fallback) => {
   return at >= 0 && args[at + 1] ? Number(args[at + 1]) : fallback;
 };
 const file = args.find((arg, i) => !arg.startsWith('--') && !args[i - 1]?.startsWith('--'));
-const min = flag('min', REFERENCE_MIN);
+// One flat cut for this export check; the extension itself uses the per-height bars (lib/reference-bars.js), default here is the 200-299 px confirm bar.
+const min = flag('min', referenceBar(250).confirm);
 const margin = flag('margin', REFERENCE_MARGIN);
 
 function fail(message) {
@@ -53,5 +54,5 @@ console.log(`At min ${min}, margin ${margin}: ${describe(summarizeAt(rows, { min
 console.log(`\nBy min (margin ${margin}):`);
 for (const g of gridReport(rows, { margin })) console.log(`  min ${g.min.toFixed(2)}  ${describe(g)}`);
 console.log(`\nCorrections saved without the catalog's top score: ${withoutCatalogTop} of ${items.length}. For those the margin is not applied.`);
-console.log('Neighbours from the same scan are left out. These counts are an upper bound for REFERENCE_MIN: they ignore whether the corrected card was in the catalog top 20.');
+console.log('Neighbours from the same scan are left out. These counts are an upper bound for the bars: they ignore whether the corrected card was in the catalog top 20.');
 if (withoutCatalogTop > 0) console.log('They cannot set REFERENCE_MARGIN until every correction has a catalog score (saved with corrections from this version on).');

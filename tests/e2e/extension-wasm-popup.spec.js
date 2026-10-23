@@ -422,27 +422,28 @@ test.describe('Consumer extension popup', () => {
 
   // Opens a popup whose scan returns { cards, priced } built by `build(crop, arts)` inside the page.
   // Records saveCorrection and overlay pushes; priceCard answers from `priced`.
-  async function popupWithChoose(build) {
+  async function popupWithChoose(build, saveResp = { ok: true }) {
     const crop = await swatch('#8855cc', 'jpeg');
     const arts = await Promise.all(['#cc5555', '#55aa66', '#5577cc', '#ccaa44', '#aa55aa'].map((c) => swatch(c, 'png')));
     const page = await context.newPage();
     await page.setViewportSize({ width: 420, height: 720 });
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
-    await page.evaluate(({ src, crop, arts }) => {
-      const { cards, priced } = new Function(`return (${src})`)()(crop, arts);
+    await page.evaluate(({ src, crop, arts, saveResp }) => {
+      const { cards, priced, found } = new Function(`return (${src})`)()(crop, arts);
       const real = chrome.runtime.sendMessage.bind(chrome.runtime);
       window.__sent = [];
       window.__overlay = [];
       window.__priceCalls = [];
       chrome.runtime.sendMessage = async (msg) => {
         if (msg?.action === 'scanPage') return { cards, scanId: 'c', srcWidth: 10, srcHeight: 10, pending: 0 };
-        if (msg?.action === 'saveCorrection') { window.__sent.push(msg); return { ok: true }; }
+        if (msg?.action === 'saveCorrection') { window.__sent.push(msg); return saveResp; }
+        if (msg?.action === 'findCards') return { cards: found || [] };
         if (msg?.action === 'priceCard') { window.__priceCalls.push(msg.id); return priced[msg.id] || { error: 'no price' }; }
         if (msg?.action === 'overlayWithGrid') { window.__overlay.push(msg); return { ok: true }; }
         if (msg?.action === 'highlightCard') return { ok: true };
         return real(msg);
       };
-    }, { src: build.toString(), crop, arts });
+    }, { src: build.toString(), crop, arts, saveResp });
     await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
     await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
     return page;
@@ -1158,5 +1159,140 @@ test.describe('Consumer extension popup', () => {
     await expect(versions.locator('.card-row .card-name')).toContainText('Pikachu V');
     await expect.poll(() => versions.evaluate(() => { const a = document.activeElement; return [a?.dataset.stripKind, a?.getAttribute('aria-checked'), a?.textContent]; })).toEqual(['version', 'true', expect.stringContaining('Pikachu V')]);
     await versions.close();
+  });
+  // ─── Corrections that stick: the why-record, the chips, and what memory confirms ───
+
+  const MEM_SHOTS = path.resolve(__dirname, '../../.tmp/g12');
+  // 0: confirmed by the user's earlier correction, $5     1: same, $80, below the high bar (back to Choose)
+  // 2: same, $80, at the high bar (stays confirmed)       3: picture-confirmed with a why-record (the one to correct)
+  // 4: a card to choose that negative memory knows
+  const memoryScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+    const oddish = row('m-1', 'Oddish', 'Jungle', 'base2', '58', arts[0]);
+    const venus = row('m-2', 'Venusaur', 'Base Set', 'base1', '15', arts[1]);
+    const blast = row('m-3', 'Blastoise', 'Base Set', 'base1', '2', arts[2]);
+    const other = row('m-4', 'Pidgey', 'Jungle', 'base2', '57', arts[3]);
+    const found = row('f-1', 'Raichu', 'Base Set', 'base1', '14', arts[4]);
+    const correctionWhy = (cos) => ({ w: 1, src: 'correction', cos, lead: 0.1, h: 240, others: ['Pidgey', 'Rattata'], ref: { id: 's0:1', cos, n: 1, ts: Date.UTC(2026, 9, 20), bar: 0.86 } });
+    const memory = (cardId, cos, n = 1) => ({ level: 'confirm', cardId, cos, refId: 's0:1', n, ts: Date.UTC(2026, 9, 20) });
+    const cards = [
+      { identity: oddish, confidence: 0.79, abstain: false, market_price: 5, price_grid: grid(5), confirmedBy: 'correction', memory: memory('m-1', 0.9), referencedId: 'm-1', why: correctionWhy(0.9), box: [0, 0, 1, 1] },
+      { identity: venus, confidence: 0.79, abstain: false, market_price: 80, price_grid: grid(80), confirmedBy: 'correction', memory: memory('m-2', 0.85), referencedId: 'm-2', why: correctionWhy(0.85), candidates: [other, venus], crop, box: [0, 0, 1, 1] },
+      { identity: blast, confidence: 0.79, abstain: false, market_price: 80, price_grid: grid(80), confirmedBy: 'correction', memory: memory('m-3', 0.87), referencedId: 'm-3', why: correctionWhy(0.87), candidates: [other, blast], crop, box: [0, 0, 1, 1] },
+      { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.7, abstain: false, market_price: 5, price_grid: grid(5), why: { w: 1, src: 'picture', cos: 0.812, lead: 0.05, h: 212, title: 'agree', others: ['Pidgey', 'Rattata'] }, box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.3, abstain: true, unsure: true, memory: { level: 'negative', cardId: 'm-1', cos: 0.85, refId: 's0:1', n: 1, wrongId: 'x-9' }, referencedId: 'm-1', candidates: [oddish, other], crop, box: [0, 0, 1, 1] },
+    ];
+    const priced = {
+      'm-1': { identity: oddish, market_price: 5, price_variant: 'normal', price_grid: grid(5) },
+      'm-2': { identity: venus, market_price: 80, price_variant: 'normal', price_grid: grid(80) },
+      'f-1': { identity: found, market_price: 7, price_variant: 'normal', price_grid: grid(7) },
+    };
+    return { cards, priced, found: [found] };
+  };
+
+  test('a row confirmed by an earlier correction says so, and "Why this card?" explains it in plain words', async () => {
+    const page = await popupWithChoose(memoryScan);
+    const row = page.locator('.card-row[data-idx="0"]');
+    await expect(row.locator('.card-name')).toContainText('Oddish');
+    await expect(row.locator('.memory-chip')).toHaveText('From your correction');
+    await expect(row.locator('.why-pop')).toHaveCount(0);
+    await row.locator('.why-btn').click();
+    await expect(row.locator('.why-btn')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#why-0')).toContainText('From your earlier correction on 2026-10-20: you said it was Oddish');
+    await expect(page.locator('#why-0')).toContainText('0.90 similarity (needed 0.86)');
+    await expect(page.locator('#why-0')).toContainText('Closest others: Pidgey, Rattata');
+    await expect(row.locator('[data-open-search]')).toHaveText('Wrong card?');
+    fs.mkdirSync(MEM_SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(MEM_SHOTS, 'why-popover.png') });
+    await row.locator('.why-btn').click();
+    await expect(page.locator('#why-0')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('a picture-confirmed row explains the match by picture', async () => {
+    const page = await popupWithChoose(memoryScan);
+    await page.locator('.card-row[data-idx="3"] .why-btn').click();
+    await expect(page.locator('#why-3')).toContainText('Matched by picture: 0.81 similarity, clearly ahead of the next card, 212 px tall.');
+    await expect(page.locator('#why-3')).toContainText('The title line agrees.');
+    await page.close();
+  });
+
+  test('a correction-confirmed card worth $50 or more needs the high bar: below it back to Choose with the card preselected, at it kept', async () => {
+    const page = await popupWithChoose(memoryScan);
+    const choose = page.locator('.choose-row[data-idx="1"]');
+    await expect(choose).toHaveCount(1);
+    await expect(choose.locator('.value-chip')).toHaveText('Check: high value');
+    await expect(choose.locator('.memory-chip')).toHaveText('You corrected this before');
+    await expect(choose.locator('.pick-choice').first()).toContainText('Venusaur');
+    await expect(choose.locator('[data-confirm-best]')).toHaveText('Confirm Venusaur');
+    const kept = page.locator('.card-row[data-idx="2"]');
+    await expect(kept.locator('.card-price')).toHaveText('$80.00');
+    await expect(kept.locator('.memory-chip')).toHaveText('From your correction');
+    await expect(page.locator('.choose-row[data-idx="2"]')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('negative memory: a card to choose that memory knows shows the corrected card first with the chip', async () => {
+    const page = await popupWithChoose(memoryScan);
+    const choose = page.locator('.choose-row[data-idx="4"]');
+    await expect(choose.locator('.memory-chip')).toHaveText('You corrected this before');
+    await expect(choose.locator('.pick-choice').first()).toContainText('Oddish');
+    await expect(choose.locator('.pick-best')).toHaveCount(1);
+    fs.mkdirSync(MEM_SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(MEM_SHOTS, 'choose-corrected-before.png') });
+    await page.close();
+  });
+
+  async function correctWrongCard(saveResp) {
+    const page = await popupWithChoose(memoryScan, saveResp);
+    const row = page.locator('.card-row[data-idx="3"]');
+    await row.locator('[data-open-search]').click();
+    await row.locator('.picker-input').fill('rai');
+    await row.locator('.picker-results [data-pick="f-1"]').click();
+    return page;
+  }
+
+  test('"Wrong card?" saves the correction with the why-record of the wrong confirmation, and the row says Corrected, remembered', async () => {
+    const page = await correctWrongCard({ ok: true, count: 1, remembered: true });
+    const row = page.locator('.card-row[data-idx="3"]');
+    await expect(row.locator('.card-name')).toContainText('Raichu');
+    await expect(row.locator('.memory-chip')).toHaveText('Corrected, remembered');
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveCorrection', index: 3, pickedId: 'f-1', via: 'wrong-card' });
+    expect(sent[0].guess.id).toBe('x-1');
+    expect(sent[0].guess.why).toMatchObject({ src: 'picture', cos: 0.812, h: 212, title: 'agree', price: 5 });
+    await row.locator('.why-btn').click();
+    await expect(page.locator('#why-3')).toContainText('You chose this. The picture alone said Raichu at 0.81.');
+    fs.mkdirSync(MEM_SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(MEM_SHOTS, 'corrected-row.png') });
+    await page.close();
+  });
+
+  test('a card corrected the same way twice says Corrected, remembered (x2)', async () => {
+    const page = await correctWrongCard({ ok: true, count: 2, remembered: true });
+    await expect(page.locator('.card-row[data-idx="3"] .memory-chip')).toHaveText('Corrected, remembered (x2)');
+    await page.close();
+  });
+
+  test('with "Use my corrections" off the row says only Corrected', async () => {
+    const page = await correctWrongCard({ ok: true, count: 1, remembered: false });
+    await expect(page.locator('.card-row[data-idx="3"] .memory-chip')).toHaveText('Corrected');
+    await page.close();
+  });
+
+  test('the settings page has "Use my corrections" on by default and remembers a switch-off', async () => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    const toggle = page.locator('#use-references');
+    await expect(toggle).toBeChecked();
+    await expect(page.locator('label[for="use-references"]')).toContainText('Use my corrections');
+    await toggle.uncheck();
+    expect(await page.evaluate(async () => (await chrome.storage.local.get('useReferences')).useReferences)).toBe(false);
+    await page.reload();
+    await expect(page.locator('#use-references')).not.toBeChecked();
+    await page.evaluate(() => chrome.storage.local.remove('useReferences'));
+    await page.close();
   });
 });

@@ -11,6 +11,7 @@
 import { confTier, isSetConfirmed, quotedPrice, rowRange, setRangeOf } from "./card-display.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP } from "./fusion.js";
 import { choiceName } from "./set-choice.js";
+import { BAR_EPSILON, HIGH_PRICE_BAR } from "./reference-bars.js";
 
 export const LOW_STAKES_MAX_USD = 5;
 export const HIGH_STAKES_MIN_USD = 50;
@@ -25,8 +26,14 @@ const isPrice = (value) => typeof value === "number" && Number.isFinite(value);
  *   open: "cheap" means every printing is cheap. priceTypical (demotion) is priceTypicalOf: the likely price of the card.
  *   Either is null/undefined when unknown, which never promotes or demotes.
  */
-export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical } = {}) {
+export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical, confirmedBy, correctionCos } = {}) {
   if (userConfirmed) return "keep";
+  // The user's own earlier correction confirmed it: at HIGH_STAKES_MIN_USD or more that needs the high bar (reference-bars.js),
+  // whatever the title line says. Below the bar it goes back to CHOOSE with the card preselected.
+  if (state === "confirmed" && confirmedBy === "correction") {
+    const strong = typeof correctionCos === "number" && correctionCos + BAR_EPSILON >= HIGH_PRICE_BAR;
+    return isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD && !strong ? "demote" : "keep";
+  }
   if (state === "choose" && smallRow === true && isPrice(priceHigh) && priceHigh <= LOW_STAKES_MAX_USD) return "promote";
   if (state === "confirmed" && tier !== "high" && !titleConfirmed && isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD) return "demote";
   return "keep";
@@ -71,7 +78,9 @@ export function priceTypicalOf(card, choice, enabledConditions = ["NM"]) {
  */
 export function isDemotable(card) {
   if (!card || card.cardBack || card.abstain || !(card.identity?.name || card.identity?.id)) return false;
-  if (card.userConfirmed || card.autoConfirmed || card.titleConfirmed || card.numberRead) return false;
+  if (card.userConfirmed || card.autoConfirmed || card.numberRead) return false;
+  if (card.confirmedBy === "correction") return true;
+  if (card.titleConfirmed) return false;
   return confTier(card.confidence) !== "high";
 }
 
@@ -93,6 +102,7 @@ export function promoteCard(card, resp) {
     abstain: false,
     confidence: BELOW_HIGH_CONFIDENCE,
     autoConfirmed: true,
+    ...(card.why ? { why: { ...card.why, src: "promoted" } } : {}),
     pricing: false,
     priceError: null,
   };

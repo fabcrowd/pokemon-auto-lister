@@ -167,3 +167,39 @@ test('isDemotable: only a named, non-high, not title-confirmed card that is not 
   assert.equal(isDemotable({ ...base, abstain: true }), false);
   assert.equal(isDemotable({ ...base, numberRead: '5/102' }), false, 'a printed number read is not picture-only evidence');
 });
+
+// A card confirmed by the user's own earlier correction (confirmedBy 'correction'): at $50 or more it needs H (0.86).
+const byCorrection = { state: 'confirmed', tier: 'medium', titleConfirmed: true, confirmedBy: 'correction', correctionCos: 0.9, priceTypical: 80 };
+
+test('a correction-confirmed card at $50 or more is kept at or above H, demoted below it, whatever the title says', () => {
+  assert.equal(stakesDecision(byCorrection), 'keep');
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.86 }), 'keep');
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.859 }), 'demote');
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: undefined }), 'demote');
+});
+
+test('a correction-confirmed card under $50 or with no price is kept', () => {
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.84, priceTypical: 49.99 }), 'keep');
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.84, priceTypical: null }), 'keep');
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.84, priceTypical: 50 }), 'demote');
+});
+
+test('a user pick is never demoted, even one that was confirmed by a correction before', () => {
+  assert.equal(stakesDecision({ ...byCorrection, correctionCos: 0.8, userConfirmed: true }), 'keep');
+});
+
+test('isDemotable accepts a correction-confirmed card (title confirmation does not shield it) but not a user pick or a number read', () => {
+  const card = { identity: { id: 'a', name: 'A' }, confidence: 0.79, confirmedBy: 'correction', titleConfirmed: true, memory: { cos: 0.84 } };
+  assert.equal(isDemotable(card), true);
+  assert.equal(isDemotable({ ...card, userConfirmed: true }), false);
+  assert.equal(isDemotable({ ...card, numberRead: '4/102' }), false);
+  assert.equal(isDemotable({ ...card, confirmedBy: undefined }), false);
+});
+
+test('promoteCard marks the why-record as promoted', () => {
+  const card = { identity: { name: 'A' }, why: { w: 1, src: 'picture', cos: 0.7 }, candidates: [] };
+  const out = promoteCard(card, { identity: { id: 'a', name: 'A' }, market_price: 1 });
+  assert.equal(out.why.src, 'promoted');
+  assert.equal(out.why.cos, 0.7);
+  assert.equal(promoteCard({ identity: {} }, { identity: { id: 'a' } }).why, undefined);
+});
