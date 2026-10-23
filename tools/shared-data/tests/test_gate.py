@@ -90,6 +90,58 @@ class Outcomes(unittest.TestCase):
         self.assertFalse(gate.better_outcome(base, {**base, "acceptedRight": 12}, top1_before=10, top1_after=10))  # top-1 must rise
 
 
+class ConfirmRule(unittest.TestCase):
+    """lib/fusion.js confirmDecision: height >= 200, a_top >= T(h), margin over the best different-name card >= G(h)."""
+
+    ROWS = {200: (0.62, 0.03), 250: (0.60, 0.01), 300: (0.69, 0.00), 350: (0.72, 0.00)}
+
+    def test_below_min_height_never_confirms(self):
+        self.assertFalse(gate.confirms(0.99, 0.5, 199))
+        self.assertTrue(gate.confirms(0.99, 0.5, 200))
+
+    def test_each_height_band_uses_its_own_pair(self):
+        for height, band in ((200, 200), (249, 200), (250, 250), (299, 250), (300, 300), (349, 300), (350, 350), (900, 350)):
+            t, g = self.ROWS[band]
+            self.assertTrue(gate.confirms(t, g, height), (height, "at T and G"))
+            self.assertFalse(gate.confirms(t - 0.001, g + 1, height), (height, "just under T"))
+            if g > 0:
+                self.assertFalse(gate.confirms(t + 1, g - 0.001, height), (height, "just under G"))
+
+    def test_boundary_heights_switch_band(self):
+        self.assertFalse(gate.confirms(0.61, 0.5, 249))  # T is 0.62 up to 249 ...
+        self.assertTrue(gate.confirms(0.61, 0.5, 250))  # ... and 0.60 from 250
+        self.assertTrue(gate.confirms(0.65, 0.5, 299))  # T is still 0.60 up to 299 ...
+        self.assertFalse(gate.confirms(0.65, 0.5, 300))  # ... and 0.69 from 300
+        self.assertTrue(gate.confirms(0.69, 0.0, 300))
+        self.assertTrue(gate.confirms(0.69, 0.0, 349))
+        self.assertFalse(gate.confirms(0.69, 0.0, 350))  # T is 0.72 from 350
+        self.assertFalse(gate.confirms(0.99, 0.0, 200))  # G is 0.03 in the 200 band
+
+    def test_unknown_height_uses_the_native_row(self):
+        self.assertTrue(gate.confirms(0.72, 0.0))
+        self.assertFalse(gate.confirms(0.719, 0.0))
+        self.assertTrue(gate.confirms(0.72, 0.0, 0))
+
+    def test_same_name_rival_is_ignored_different_name_counts(self):
+        ids = ["a", "b", "c", "d"]
+        names = ["pikachu", "pikachu", "raichu", "mew"]
+        # top a; b is a same-name printing at 0.99 of the top; c is the best different-name card
+        self.assertAlmostEqual(gate.rival_margin([0.90, 0.89, 0.80, 0.50], ids, names), 0.10)
+        self.assertEqual(gate.rival_margin([0.90, 0.89], ids, names), float("inf"))  # only same-name rivals
+        self.assertEqual(gate.rival_margin([0.90], ids, names), float("inf"))
+        # without names every other card is a different name
+        self.assertAlmostEqual(gate.rival_margin([0.90, 0.89, 0.80], ids, None), 0.01)
+
+    def test_catalog_names_must_line_up_with_ids(self):
+        with self.assertRaises(ValueError):
+            Catalog(np.stack([h.unit(k) for k in range(4)]), IDS, names=["a"])
+
+    def test_replay_rows_carry_no_height_so_the_native_row_applies(self):
+        # native row: T 0.72, G 0.00. Raw cosine 0.55 abstains, a clear 0.994 read is accepted.
+        res = gate.evaluate({}, {}, EMPTY, (np.stack([h.unit(0)] * 2), ["c-0", "c-1"]), catalog=catalog())
+        self.assertEqual(res["outcomes"]["regression"]["after"], {"acceptedRight": 1, "acceptedWrong": 1, "abstained": 0, "n": 2})
+
+
 class Gate(unittest.TestCase):
     def test_adapter_that_fixes_regression_is_improved(self):
         reg = (np.stack([between_01()] * 10), ["c-0"] * 10)

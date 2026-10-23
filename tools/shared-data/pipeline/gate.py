@@ -15,7 +15,16 @@ from .train_adapter import apply_adapter, parse_adapter
 
 MIN_EXAM_CASES = 30
 REF_MIN, REF_MARGIN = 0.93, 0.02  # exam.score_exam defaults (lib/references.js)
-ACCEPT_MIN, CLEAR_GAP, HIGH_SIM = 0.72, 0.02, 0.85  # lib/fusion.js (pins.json "accept")
+# Per-height confirm rule, mirrored from lib/fusion.js (tests/test_drift.py checks the values). A read is accepted iff
+# height >= CONFIRM_MIN_HEIGHT and top >= T(height) and top - best different-name card >= G(height). Rows are
+# (min_height, T, G), tallest first; the first row whose min_height the height reaches applies.
+# Regression and exam rows carry no read height (only embeddings and card ids), so every replayed row takes the
+# native row (the tallest, as lib/fusion.js does for an unknown height); no height is invented. Nightly rows carry no
+# title line either, so TITLE_NAME_PENALTY (the extension's demotion for a contradicting title) is mirrored but never applied.
+CONFIRM_MIN_HEIGHT = 200
+TITLE_NAME_PENALTY = 0.05
+CONFIRM_ROWS = ((350, 0.72, 0.00), (300, 0.69, 0.00), (250, 0.60, 0.01), (200, 0.62, 0.03))
+CONFIRM_EPSILON = 1e-9  # float slack so a value exactly at T or G passes
 MAX_ABSTAIN_RISE = 0.02  # abstain rate may not rise by more than 2 points
 
 
@@ -26,8 +35,26 @@ def _memory(part):
     return pack.card_ids, pack.dequantized()
 
 
-def _accepts(top, gap):
-    return top >= ACCEPT_MIN and (gap >= CLEAR_GAP or top >= HIGH_SIM)
+def confirms(top, margin, height=0):
+    """lib/fusion.js confirmDecision without a title: height 0 (unknown) uses the native row, a known height under
+    CONFIRM_MIN_HEIGHT never confirms."""
+    if height > 0 and height < CONFIRM_MIN_HEIGHT:
+        return False
+    _, min_sim, min_gap = CONFIRM_ROWS[0] if height <= 0 else next(r for r in CONFIRM_ROWS if height >= r[0])
+    return top + CONFIRM_EPSILON >= min_sim and margin + CONFIRM_EPSILON >= min_gap
+
+
+def rival_margin(ranks, ids, names=None):
+    """Top rank minus the best card with ANOTHER name (same-name printings never block). `ranks` is best first and
+    `ids` the card ids in the same order; names=None treats every card as a different name. inf when no rival is left,
+    as in fusion.js (-Infinity rival)."""
+    if len(ranks) == 0:
+        return float("inf")
+    top_key = ids[0] if names is None else names[0]
+    for rank, key in zip(ranks[1:], ids[1:] if names is None else names[1:]):
+        if key != top_key:
+            return float(ranks[0] - rank)
+    return float("inf")
 
 
 def _replay(parts, embeddings, truths, catalog):
@@ -43,10 +70,12 @@ def _replay(parts, embeddings, truths, catalog):
         idx, ranks = Catalog(apply_adapter(adapter, catalog.vectors), catalog.ids).top_k_batch(apply_adapter(adapter, embeddings), TOP_K)
         scores = np.einsum("nd,nkd->nk", embeddings, catalog.vectors[idx])
     mem_ids, mem_vecs = _memory(parts.get("memory"))
+    by_id = None if catalog.names is None else dict(zip(catalog.ids, catalog.names))
     for i, truth in enumerate(truths):
         top_ids = [catalog.ids[j] for j in idx[i]]
         predicted = top_ids[0]
-        gap = float(ranks[i][0] - ranks[i][1]) if len(ranks[i]) > 1 else float(scores[i][0])
+        row_names = None if by_id is None else [by_id[c] for c in top_ids]
+        gap = rival_margin(ranks[i], top_ids, row_names)
         high = is_high(raw_scores[i]) and predicted == catalog.ids[raw_idx[i][0]]
         if len(mem_ids):
             sims = mem_vecs @ embeddings[i]
@@ -55,7 +84,7 @@ def _replay(parts, embeddings, truths, catalog):
                 predicted, high, gap = mem_ids[best], False, 0.0  # promoted at the top score: a tie with the old top
         counts["right"] += predicted == truth
         counts["wrongHigh"] += high and predicted != truth
-        if _accepts(float(scores[i][0]), gap):
+        if confirms(float(scores[i][0]), gap):
             counts["acceptedRight" if predicted == truth else "acceptedWrong"] += 1
         else:
             counts["abstained"] += 1
