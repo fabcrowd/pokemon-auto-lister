@@ -351,6 +351,20 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  test('the lot summary says how many confirmed cards have no price data', async () => {
+    const page = await popupWithScan(() => {
+      const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+      return [
+        { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
+        { identity: { id: 'x-8', name: 'Machamp', set: 'Base', setCode: 'base1', number: '8' }, confidence: 0.9, abstain: false, market_price: null, price_grid: null, box: [0, 0, 1, 1] },
+      ];
+    });
+    const sure = page.locator('#lot-totals .lt-item').first();
+    await expect(sure).toContainText('Sure $5.00 (2, 1 without price)');
+    await expect(sure.locator('.lt-n')).toHaveAttribute('title', '1 confirmed card has no price data');
+    await page.close();
+  });
+
   const exportLot = () => {
     const grid = (nm) => ({ source: 'pokemontcg', updatedAt: '2026-10-20T00:00:00.000Z', variants: { normal: { market: nm, conditions: { NM: nm } } } });
     const pika = { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] };
@@ -650,7 +664,7 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
-  test('keyboard: Tab reaches the confirm button after the candidates, Enter confirms, focus stays in the row', async () => {
+  test('keyboard: Tab reaches the confirm button after the candidates, Enter confirms, focus moves on to the next row to confirm', async () => {
     const page = await popupWithChoose(chooseScan);
     await page.locator('.choose-row').first().locator('.pick-choice').first().focus();
     await page.keyboard.press('Tab');
@@ -660,8 +674,31 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.choose-row').first().locator('[data-confirm-best]')).toHaveAccessibleName(/Confirm the best match for card 2: Rattata, Base Set, number 61/);
     await page.keyboard.press('Enter');
     await expect(page.locator('.card-row[data-idx="1"] .card-name')).toContainText('Rattata');
-    const rowOfFocus = await page.evaluate(() => document.activeElement?.closest('.card-row')?.dataset.idx ?? null);
-    expect(rowOfFocus).toBe('1');
+    // The confirmed row is no longer a row to choose: focus advances to the next one's preselected Confirm button.
+    const next = page.locator('.choose-row[data-idx="3"] [data-confirm-best]');
+    await expect(next).toBeFocused();
+    await expect(page.locator('#msg-bar')).toHaveText('Confirmed Rattata. 3 to confirm.');
+    await page.close();
+  });
+
+  test('keyboard: confirming the last row to confirm moves focus to the lot Copy button and keeps it there', async () => {
+    const page = await popupWithChoose(chooseScan);
+    for (const idx of [1, 3, 4, 5]) {
+      const confirm = page.locator(`.choose-row[data-idx="${idx}"] [data-confirm-best]`);
+      await confirm.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator(`.card-row[data-idx="${idx}"] .card-price`)).toHaveText(/\$/);
+    }
+    await expect(page.locator('#lot-totals [data-lot-copy]')).toBeFocused();
+    await expect(page.locator('#msg-bar')).toHaveText(/^Confirmed .+\. Nothing left to confirm\.$/);
+    await page.close();
+  });
+
+  test('confirming with a mouse click does not move keyboard focus around the page', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row[data-idx="1"] [data-confirm-best]').click();
+    await expect(page.locator('.card-row[data-idx="1"] .card-name')).toContainText('Rattata');
+    await expect(page.locator('#msg-bar')).toContainText('Confirmed Rattata');
     await page.close();
   });
 
@@ -1239,7 +1276,29 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.choose-row')).toHaveCount(0);
     await expect(page.locator('#msg-bar')).not.toContainText('need your pick');
     await expect(page.locator('.lt-guess b')).toHaveText('0');
+    await expect(page.locator('#msg-bar')).not.toContainText('Price updated for Pidgey');
     await page.screenshot({ path: path.join(PICKER_SHOTS, 'version-swap.png') });
+    await page.close();
+  });
+
+  test('finishing the model download clears the progress text', async () => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.evaluate(() => {
+      const listeners = [];
+      const onMessage = chrome.runtime.onMessage;
+      const add = onMessage.addListener.bind(onMessage);
+      onMessage.addListener = (fn) => { listeners.push(fn); add(fn); };
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = async (msg) => {
+        if (msg?.action !== 'startSetup') return real(msg);
+        for (const fn of listeners) fn({ action: 'setupProgress', file: 'meta.json', fileIndex: 4, fileDone: true, totalFiles: 5, bytesLoaded: 1, bytesTotal: 1 });
+        if (!document.getElementById('setup-status').textContent.includes('Downloading 5 of 5')) throw new Error('progress text never shown');
+        return { ok: true };
+      };
+      document.getElementById('btn-setup').click();
+    });
+    await expect.poll(() => page.evaluate(() => document.getElementById('setup-status').textContent)).toBe('');
     await page.close();
   });
 

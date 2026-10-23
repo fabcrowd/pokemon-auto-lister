@@ -393,6 +393,116 @@ test('tags scale with the card and never sit on another tag', () => {
   assert.equal(pure.placeTag([100, 100, 200, 240], 90, 30, boxed, view), null);
 });
 
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const TAG_TOP_BAND_FOR_TEST = 24;
+const hitsBand = (rect, other) => rect.x < other[2] && other[0] < rect.x + rect.w && rect.y < other[1] + TAG_TOP_BAND_FOR_TEST && other[1] < rect.y + rect.h;
+
+test('a tag does not land on a neighbouring card when another spot is free', () => {
+  const view = { w: 1000, h: 800 };
+  const box = [100, 100, 200, 240];
+  // The card below starts 4 px under this one and the card above ends 2 px over it, so a spot above or below is on a neighbour.
+  const above = [100, 0, 200, 98];
+  const below = [100, 244, 200, 400];
+  const topTaken = { x: 102, y: 102, w: 90, h: 30 };
+  // Inside the top is taken: the inside bottom is free and is on no neighbour.
+  assert.equal(pure.placeTag(box, 90, 30, [topTaken], view, [above, below]).y, 208);
+  // Without neighbours given the old order is unchanged.
+  assert.deepEqual(plain(pure.placeTag(box, 90, 30, [], view)), { x: 102, y: 102, w: 90, h: 30 });
+  // A neighbour whose box overlaps this card's top: skip that spot, take the inside bottom.
+  const overlapping = [100, 60, 200, 130];
+  assert.equal(pure.placeTag(box, 90, 30, [], view, [overlapping]).y, 208);
+});
+
+test('the ladder shrinks to the short tag before it settles for a neighbour', () => {
+  const view = { w: 1000, h: 800 };
+  const box = [100, 100, 200, 240];
+  const above = [100, 0, 200, 98];
+  const below = [100, 244, 200, 400];
+  // Another card's tag sits on the right half of both inside spots, so the full tag (90 wide) fits neither inside spot,
+  // and the spots above and below are on neighbours. The short tag (48 wide) fits beside it, inside this card.
+  const taken = [{ x: 150, y: 102, w: 60, h: 30 }, { x: 150, y: 208, w: 60, h: 30 }];
+  const sizes = [{ w: 90, h: 30 }, { w: 48, h: 22 }];
+  const fit = pure.placeTagLadder(box, sizes, taken, view, [above, below]);
+  assert.equal(fit.size, 1);
+  assert.deepEqual(plain(fit.rect), { x: 102, y: 102, w: 48, h: 22 });
+  assert.deepEqual(plain(pure.placeTagLadder(box, sizes, taken, view, [above, below])), plain(fit));
+});
+
+test('the ladder gives up on neighbours last, never on another tag, and answers null when nothing is free', () => {
+  const view = { w: 1000, h: 800 };
+  const box = [100, 100, 200, 240];
+  const taken = [{ x: 102, y: 102, w: 90, h: 30 }, { x: 102, y: 208, w: 90, h: 30 }, { x: 102, y: 134, w: 90, h: 72 }];
+  const above = [100, 0, 200, 98];
+  const below = [100, 244, 200, 400];
+  const sizes = [{ w: 90, h: 30 }, { w: 50, h: 22 }];
+  // Inside is full of tags; above lies on the lower part of the neighbour but not its top band: the relaxed pass takes it.
+  const relaxed = pure.placeTagLadder(box, sizes, taken, view, [above, below]);
+  assert.equal(relaxed.size, 0);
+  assert.equal(relaxed.rect.y, 68);
+  assert.ok(!hitsBand(relaxed.rect, above) && !hitsBand(relaxed.rect, below));
+  // Neighbour tags above and below as well: nothing is free, the tag is left to hover.
+  const wall = [...taken, { x: 102, y: 66, w: 90, h: 32 }, { x: 102, y: 242, w: 90, h: 32 }];
+  assert.equal(pure.placeTagLadder(box, sizes, wall, view, [above, below]), null);
+});
+
+test('a crowded grid: no tag covers another tag or the top edge of another card, and every card keeps a tag', () => {
+  const view = { w: 520, h: 420 };
+  const boxes = [];
+  // Four rows of six 78 x 100 cards, 3 px apart, every other card nudged 7 px so neighbours overlap a little.
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 6; c += 1) {
+      const nudge = (r + c) % 2 ? 7 : 0;
+      const x = 6 + c * 81;
+      const y = 8 + r * 103 + nudge;
+      boxes.push([x, y, x + 78, y + 100]);
+    }
+  }
+  const sizes = [{ w: 74, h: 30 }, { w: 48, h: 22 }];
+  const run = (order) => {
+    const taken = [];
+    const placed = new Map();
+    for (const i of order) {
+      const others = boxes.filter((_, j) => j !== i);
+      const fit = pure.placeTagLadder(boxes[i], sizes, taken, view, others);
+      if (!fit) continue;
+      taken.push(fit.rect);
+      placed.set(i, plain(fit.rect));
+    }
+    return placed;
+  };
+  const order = boxes.map((_, i) => i);
+  const placed = run(order);
+  assert.equal(placed.size, boxes.length, 'every card keeps its tag');
+  for (const [i, rect] of placed) {
+    for (const [j, other] of placed) assert.ok(i === j || !(rect.x < other.x + other.w && other.x < rect.x + rect.w && rect.y < other.y + other.h && other.y < rect.y + rect.h), `tags ${i} and ${j} overlap`);
+    boxes.forEach((other, j) => assert.ok(i === j || !hitsBand(rect, other), `tag ${i} covers the top edge of card ${j}`));
+    assert.ok(rect.x >= 2 && rect.y >= 2 && rect.x + rect.w <= view.w - 2 && rect.y + rect.h <= view.h - 2);
+  }
+  // Deterministic: the same boxes in the same order give the same spots.
+  assert.deepEqual([...run(order)], [...placed]);
+});
+
+test('cards whose boxes overlap their neighbours still keep a tag, clear of every other tag', () => {
+  const view = { w: 520, h: 420 };
+  const boxes = [];
+  for (let r = 0; r < 4; r += 1) {
+    for (let c = 0; c < 6; c += 1) {
+      const x = 6 + c * 72;
+      const y = 8 + r * 103 + ((r + c) % 2 ? 9 : 0);
+      boxes.push([x, y, x + 78, y + 100]);
+    }
+  }
+  const sizes = [{ w: 74, h: 30 }, { w: 48, h: 22 }];
+  const taken = [];
+  boxes.forEach((box, i) => {
+    const fit = pure.placeTagLadder(box, sizes, taken, view, boxes.filter((_, j) => j !== i));
+    if (!fit) return;
+    assert.ok(!taken.some((other) => other.x < fit.rect.x + fit.rect.w && fit.rect.x < other.x + other.w && other.y < fit.rect.y + fit.rect.h && fit.rect.y < other.y + other.h), `tag ${i} overlaps a tag`);
+    taken.push(fit.rect);
+  });
+  assert.ok(taken.length >= 20, `${taken.length} of ${boxes.length} cards have a tag`);
+});
+
 test('tag rows: Choose never reads "Tap to c...", a price is never cut mid-number', () => {
   const m = (t) => t.length * 7; // 7 px per character
   const rows = (card, two, max) => JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(card), two, max, m)));

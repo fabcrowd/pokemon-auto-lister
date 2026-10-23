@@ -180,7 +180,7 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
   assert.equal(editionNote(card), 'Shadowless border');
 });
 
-import { classifyCard, isIdentified, lotEstimate, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
+import { classifyCard, isIdentified, lotEstimate, scanStatus, splitByRecognition, sureNote } from '../tools/extension-wasm/lib/card-display.js';
 
 const named = (extra = {}) => ({ identity: { id: 'a-1', name: 'Pikachu' }, confidence: 0.9, abstain: false, ...extra });
 const blank = (extra = {}) => ({ identity: {}, confidence: 0, abstain: true, candidates: [], ...extra });
@@ -443,7 +443,7 @@ const priceAt = (nm, extra = {}) => ({ ...named(extra), market_price: nm, price_
 
 test('lotEstimate: confirmed prices count at both ends, nothing else is invented', () => {
   const lot = lotEstimate([priceAt(5), priceAt(7.5), priceAt(2)], () => null);
-  assert.deepEqual(lot, { low: 14.5, high: 14.5, identified: 3, total: 3, toIdentify: 0, toCheck: 0 });
+  assert.deepEqual(lot, { low: 14.5, high: 14.5, identified: 3, total: 3, toIdentify: 0, toCheck: 0, noPrice: 0 });
 });
 
 test('lotEstimate: a mixed lot spans set ranges and counts guesses, unrecognised and unpriced rows as $0', () => {
@@ -538,4 +538,23 @@ test('swapping versions on an unsure row is the user confirming it: the row stay
   assert.equal(classifyCard(out), 'identified');
   assert.equal(out.market_price, 30);
   assert.equal(out.confidence, 1, 'confidence is untouched');
+});
+
+test('lotEstimate: an identified card with no price at all is counted as without price, not as $0 value', () => {
+  const lot = lotEstimate([priceAt(5), named({ market_price: null, price_grid: null })], () => null);
+  assert.equal(lot.identified, 2);
+  assert.equal(lot.noPrice, 1);
+  assert.equal(lot.high, 5);
+});
+
+test('lotEstimate: a card whose price is still loading is not "without price"', () => {
+  const lot = lotEstimate([named({ market_price: null, price_grid: null, pricing: true })], () => null);
+  assert.equal(lot.noPrice, 0);
+});
+
+test('sureNote: the count, then cards without price, then old prices; a tooltip only when some lack a price', () => {
+  assert.deepEqual(sureNote({ identified: 3, noPrice: 0, toCheck: 0 }), { text: '(3)', title: '' });
+  assert.deepEqual(sureNote({ identified: 3, noPrice: 1, toCheck: 0 }), { text: '(3, 1 without price)', title: '1 confirmed card has no price data' });
+  assert.deepEqual(sureNote({ identified: 5, noPrice: 2, toCheck: 1 }), { text: '(5, 2 without price, 1 old price to check)', title: '2 confirmed cards have no price data' });
+  assert.deepEqual(sureNote({ identified: 2, noPrice: 0, toCheck: 2 }), { text: '(2, 2 old prices to check)', title: '' });
 });

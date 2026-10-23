@@ -75,7 +75,7 @@ test('store manifest: exactly the specified permissions and hosts', win32, () =>
     'https://github.com/fabcrowd/card-scanner-data/releases/*',
   ]);
   assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
-  assert.equal(manifest.version, '3.0.0');
+  assert.equal(manifest.version, '3.1.0');
   assert.equal(manifest.minimum_chrome_version, '116');
   assert.equal('content_scripts' in manifest, false);
   assert.equal('web_accessible_resources' in manifest, false);
@@ -149,7 +149,7 @@ test('store files not stripped are identical to the source; stripped ones only l
 test('developer build keeps what the tests rely on and loses only what the store plan removes', win32, () => {
   const manifest = manifestOf(devDir);
   assert.equal(manifest.name, 'Pokémon Card Scanner');
-  assert.equal(manifest.version, '3.0.0');
+  assert.equal(manifest.version, '3.1.0');
   assert.equal(manifest.minimum_chrome_version, '116');
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
   assert.ok(manifest.host_permissions.includes('<all_urls>'));

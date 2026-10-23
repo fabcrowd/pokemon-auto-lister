@@ -370,7 +370,7 @@
     for (const [i, t] of _targets.entries()) {
       if (i === hit || t.index === _highlight) continue;
       ctx.save();
-      const rect = drawTag(t.box, t.card, taken);
+      const rect = drawTag(t.box, t.card, taken, _targets.filter((u) => u !== t).map((u) => u.box));
       ctx.restore();
       if (rect) {
         taken.push(rect);
@@ -534,19 +534,49 @@
     return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   }
 
-  /** Where a tag goes: inside the top of its card, inside the bottom, just above, just below; the first free spot. */
-  function placeTag(box, w, h, taken, view) {
+  // A neighbour's top edge is where its art starts and its own tag sits: a tag never covers that band.
+  const TAG_TOP_BAND = 24;
+
+  function onNeighbour(rect, other, topOnly) {
+    const band = { x: other[0], y: other[1], w: other[2] - other[0], h: topOnly ? Math.min(TAG_TOP_BAND, other[3] - other[1]) : other[3] - other[1] };
+    return overlaps(rect, band);
+  }
+
+  /**
+   * Where a tag goes: inside the top of its card, inside the bottom, just above, just below; the first free spot.
+   * A spot on another tag is never taken. A spot on a neighbouring card (others: the other cards' boxes) is skipped
+   * too, or, when relaxed, only a spot on a neighbour's top edge is.
+   */
+  function placeTag(box, w, h, taken, view, others = [], relaxed = false) {
+    // relaxed: false = clear of every neighbour; true = clear of neighbours' top edges; null = neighbours ignored.
     const [x1, y1, , y2] = box;
     const x = Math.max(2, Math.min(x1 + 2, view.w - w - 2));
     for (const y of [y1 + 2, y2 - h - 2, y1 - h - 2, y2 + 2]) {
       if (y < 2 || y + h > view.h - 2) continue;
       const rect = { x, y, w, h };
-      if (!taken.some((other) => overlaps(other, rect))) return rect;
+      if (taken.some((other) => overlaps(other, rect))) continue;
+      if (relaxed !== null && others.some((other) => onNeighbour(rect, other, relaxed))) continue;
+      return rect;
     }
     return null;
   }
 
-  function drawTag(box, card, taken) {
+  /**
+   * Tries each size (full first, then shorter) on no neighbour at all, then on no neighbour's top edge, and last,
+   * so a card whose box overlaps its neighbours' keeps a tag, anywhere clear of other tags.
+   * Returns { rect, size: index into sizes } or null, so a crowded photo shrinks a tag before it covers a card.
+   */
+  function placeTagLadder(box, sizes, taken, view, others = []) {
+    for (const relaxed of [false, true, null]) {
+      for (const [size, { w, h }] of sizes.entries()) {
+        const rect = placeTag(box, w, h, taken, view, others, relaxed);
+        if (rect) return { rect, size };
+      }
+    }
+    return null;
+  }
+
+  function drawTag(box, card, taken, others = []) {
     const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
     if (layout.maxWidth < TAG_MIN_W) return null;
     const tag = tagText(card);
@@ -557,22 +587,30 @@
     const GAP = 2;
     const textMax = Math.max(0, layout.maxWidth - ACCENT_W - PAD_X * 2);
     ctx.font = `800 ${layout.px}px ${LABEL_FONT}`;
-    const texts = tagRows(tag, layout.lines === 2, textMax, (t) => ctx.measureText(t).width);
-    const rows = texts.map((text, i) => ({
-      text,
-      font: `${texts.length === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
-      color: texts.length === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
-    }));
-    let widest = 0;
-    for (const row of rows) {
-      ctx.font = row.font;
-      widest = Math.max(widest, ctx.measureText(row.text).width);
-    }
-    if (!rows.some((row) => row.text)) return null;
-    const w = Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, layout.maxWidth);
-    const h = PAD_Y * 2 + rows.length * layout.px + GAP * (rows.length - 1);
-    const rect = placeTag(box, w, h, taken, { w: viewW(), h: viewH() });
-    if (!rect) return null;
+    // The tag as laid out for the card, and, on a tall card, its one-line form (the "Choose" short tag) for a crowded photo.
+    const build = (twoLines) => {
+      const texts = tagRows(tag, twoLines, textMax, (t) => ctx.measureText(t).width);
+      const rows = texts.map((text, i) => ({
+        text,
+        font: `${texts.length === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
+        color: texts.length === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
+      }));
+      let widest = 0;
+      for (const row of rows) {
+        ctx.font = row.font;
+        widest = Math.max(widest, ctx.measureText(row.text).width);
+      }
+      if (!rows.some((row) => row.text)) return null;
+      return { rows, w: Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, layout.maxWidth), h: PAD_Y * 2 + rows.length * layout.px + GAP * (rows.length - 1) };
+    };
+    const full = build(layout.lines === 2);
+    if (!full) return null;
+    const short = layout.lines === 2 ? build(false) : null;
+    const variants = short && short.h < full.h ? [full, short] : [full];
+    const fit = placeTagLadder(box, variants, taken, { w: viewW(), h: viewH() }, others);
+    if (!fit) return null;
+    const { rows, w, h } = variants[fit.size];
+    const rect = fit.rect;
     // A soft shadow and a thin state-coloured outline keep the tag readable on a busy photo.
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 6;
@@ -1263,6 +1301,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

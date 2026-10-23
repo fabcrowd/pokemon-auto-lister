@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -159,6 +159,9 @@ btnSetup.addEventListener("click", async () => {
   chrome.runtime.onMessage.removeListener(onSetupProgress);
   if (resp?.ok) {
     btnScan.disabled = false;
+    // The download is over: no "Downloading 5 of 5" may outlive it.
+    setupStatus.textContent = "";
+    setupBars.innerHTML = "";
     // Move the wizard forward: site access, then the PPT upsell (each skipped when already settled)
     await setOnboarding({ step: "access" });
     await maybeStartWizard(true);
@@ -583,16 +586,20 @@ function renderLotTotals(cards, choiceFor) {
   const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
   const cond = enabledConditions()[0] || "NM";
+  const note = sureNote(t);
   const labels = lotExportLabels(...currentLotCounts(cards, choiceFor));
   const actions = labels
     ? `<span class="lt-actions" title="${escHtml(labels.tip)}">`
       + `<button type="button" class="lt-btn" data-lot-copy aria-label="${escHtml(labels.copy)}" title="${escHtml(labels.tip)}">${escHtml(labels.copy)}</button>`
       + `<button type="button" class="lt-btn" data-lot-csv aria-label="${escHtml(labels.csv)}" title="${escHtml(labels.tip)}">${escHtml(labels.csv)}</button></span>`
     : "";
-  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n">(${t.identified}${t.toCheck ? `, ${t.toCheck} old ${t.toCheck === 1 ? "price" : "prices"} to check` : ""})</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(cond)}</span></span>`
+  const hadCopyFocus = lotTotalsEl.contains(document.activeElement) ? document.activeElement.closest("[data-lot-copy], [data-lot-csv]") : null;
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(cond)}</span></span>`
     + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
     + actions;
   lotTotalsEl.hidden = false;
+  // The strip is rewritten on every card change; a keyboard user on Copy or Download stays on it.
+  if (hadCopyFocus) lotTotalsEl.querySelector(hadCopyFocus.hasAttribute("data-lot-csv") ? "[data-lot-csv]" : "[data-lot-copy]")?.focus();
 }
 
 // Copy and Download write only the confirmed cards, on the user's click; nothing leaves the browser otherwise.
@@ -1008,6 +1015,8 @@ function pickCard(idx, id, via, row) {
   if (!scan?.cards?.[idx]) return;
   _picker.delete(idx);
   const card = scan.cards[idx];
+  const advance = chooseState(card) === "choose" && resultsEl.contains(document.activeElement);
+  if (advance) _advanceNote.add(idx); else _advanceNote.delete(idx);
   // What the scanner believed (its why-record, the price shown) is saved with the answer, before the row says "you chose".
   const price = priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
   const guess = guessWithWhy(card, price);
@@ -1020,7 +1029,29 @@ function pickCard(idx, id, via, row) {
     const current = _lastResult?.scanId === scan.scanId ? _lastResult.cards[idx] : null;
     if (corrected && current) replaceCard(idx, { ...current, corrected });
   }).catch((err) => showMessage(explainScanError(err?.message || err), true));
-  return pickSet(idx, id, row ?? { id });
+  const priced = pickSet(idx, id, row ?? { id });
+  if (advance) advanceAfterConfirm(idx, row?.name || card.identity?.name);
+  return priced;
+}
+
+// A confirmed Choose row leaves the group, so keyboard focus moves to what is next to do: the next row's preselected
+// Confirm button, else the lot's Copy button, else Scan. The change is spoken through the message bar.
+const _advanceNote = new Set();   // card indexes confirmed from a Choose row: their message says what is left
+function toConfirmCount() {
+  const cards = _lastResult?.cards || [];
+  return splitByRecognition(cards).shown.filter((i) => chooseState(cards[i]) === "choose").length;
+}
+function confirmedNote(name) {
+  const left = toConfirmCount();
+  return `Confirmed ${name || "card"}. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`;
+}
+function advanceAfterConfirm(idx, name) {
+  const rows = [...resultsEl.querySelectorAll(".choose-row[data-idx]")];
+  const next = rows.find((row) => Number(row.dataset.idx) > idx) || rows[0];
+  const target = (next?.querySelector("button[data-confirm-best]") || next?.querySelector("button[data-pick], [data-open-search]"))
+    || lotTotalsEl?.querySelector("[data-lot-copy]") || btnScan;
+  target.focus({ preventScroll: false });
+  showMessage(confirmedNote(name));
 }
 
 resultsEl.addEventListener("click", (e) => {
@@ -1113,6 +1144,8 @@ function onStripPick(idx, button) {
     pickSet(idx, value);
   } else if (kind === "version") {
     replaceCard(idx, swapVersion(card, value));
+    // An earlier "Price updated for <old name>" no longer describes this row.
+    refreshStatus(true);
   } else if (kind === "finish") {
     _variantSuggest.delete(idx);
     _variantChoice.set(idx, value);
@@ -1324,6 +1357,9 @@ function replaceCard(idx, next) {
   const hadFocus = resultsEl.contains(document.activeElement);
   const active = document.activeElement?.closest?.("[data-strip-kind]");
   const strip = active ? { kind: active.dataset.stripKind, id: active.dataset.stripPick } : null;
+  // Focus on another row's Confirm button (moved there after a confirm) stays on that button through the re-render.
+  const keptConfirm = document.activeElement?.matches?.("[data-confirm-best]") && Number(document.activeElement.dataset.idx) !== idx
+    ? Number(document.activeElement.dataset.idx) : null;
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   refreshStatus();
@@ -1332,7 +1368,10 @@ function replaceCard(idx, next) {
   _variantPicked.delete(idx);
   seedVariant(next, idx);
   renderResults();
-  if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx, null, strip);
+  if (hadFocus && !resultsEl.contains(document.activeElement)) {
+    const kept = keptConfirm === null ? null : resultsEl.querySelector(`.choose-row[data-idx="${keptConfirm}"] [data-confirm-best]`);
+    if (kept) kept.focus(); else focusOpener(idx, null, strip);
+  }
   updateStats(cards);
   pushOverlay();
 }
@@ -1386,7 +1425,7 @@ async function pickSet(idx, id, picked = null) {
     pricing: false,
     priceError: null,
   });
-  if (picked) showMessage(`Price updated for ${resp.identity?.name || label}.`);
+  if (picked) showMessage(_advanceNote.delete(idx) ? confirmedNote(resp.identity?.name || label) : `Price updated for ${resp.identity?.name || label}.`);
 }
 
 // A printing settled by the printed number prices at once; one the picture suggests only preselects the menu.

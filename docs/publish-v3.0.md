@@ -21,7 +21,7 @@ Until the release exists, a fresh install of this build shows "This update isn't
 Update its `pins.json` to match `tools/shared-data/pins.json` (clip release v3.0, the sha256 above, cropVersion 3) so the nightly job builds and signs a bundle for model prefix `0dba1302580da2a6`. Until then the build runs without the shared adapter and shared memory (safe). Also publish the `prices` pre-release so the price snapshot URL stops returning 404. The nightly gate now mirrors the new confirm rule, so any stored gate figures measured under the old rule are stale and should be re-run.
 
 ## Store package
-`scripts/build-wasm-extension.ps1 -Store` builds `dist/extension-wasm-store.zip` (manifest 3.0.0). Submit it only after the release above exists.
+`scripts/build-wasm-extension.ps1 -Store` builds `dist/extension-wasm-store.zip` (manifest 3.1.0). Submit it only after the release above exists.
 
 ## Real Chrome check on your PC (the one thing I could not test)
 The signed Facebook photo links can't be fetched outside your own browser, so the Facebook full-size path was never exercised. To check it:

@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.0 (release/3.1: fewer taps, no stale text, honest lot strip)
+
+### Changed
+- Keyboard focus after confirming a card from a Choose row now moves to the next Choose row's preselected Confirm button, then to the lot's Copy button, then to Scan; the message bar says "Confirmed <name>. N to confirm." (or "Nothing left to confirm."). Focus after a printing, version or finish pick is unchanged. The lot strip keeps focus on Copy / Download through its re-renders.
+- Lot strip: "Sure $x (n, k without price)" when k confirmed cards have no price data at all, with the tooltip "k confirmed cards have no price data" (`lotEstimate.noPrice`, `sureNote` in `lib/card-display.js`). The export is unchanged.
+- Overlay tags (`content.js` `placeTag`, new `placeTagLadder`): a tag skips a spot on a neighbouring card, then shrinks to its one-line form, then avoids only a neighbour's top edge, and last takes any spot clear of other tags (the old behaviour), so no card loses its tag.
+- Extension version 3.0.0 to 3.1.0 (`tools/extension-wasm/manifest.json`); the two pins in `tests/store-build.test.js` updated deliberately.
+
+### Fixed
+- After a version swap the message bar no longer keeps "Price updated for <old name>."; it shows the scan status again.
+- The setup status line no longer keeps "Downloading 5 of 5" after the download finishes.
+
 ## 2026-10-23 (corrections fixes from the real-model QA: exam photos, printing-only corrections)
 
 ### Fixed

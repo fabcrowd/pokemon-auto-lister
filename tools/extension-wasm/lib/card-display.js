@@ -388,7 +388,7 @@ export const isStale = (card) => card?.price_grid?.stale === true;
  */
 export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
   const condition = enabledConditions?.[0] || 'NM';
-  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0 };
+  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0, noPrice: 0 };
   for (const card of cards || []) {
     if (card?.cardBack) continue;
     out.total += 1;
@@ -411,9 +411,21 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
     if (range) {
       out.low += range.low;
       out.high += range.high;
+    } else if (!card.pricing) {
+      out.noPrice += 1;
     }
   }
   return out;
+}
+
+/** The lot strip's note beside "Sure": confirmed cards, those with no price data at all, and stale prices; the tooltip only when some lack a price. */
+export function sureNote(lot) {
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [String(lot.identified)];
+  if (lot.noPrice) parts.push(`${lot.noPrice} without price`);
+  if (lot.toCheck) parts.push(`${plural(lot.toCheck, 'old price', 'old prices')} to check`);
+  const title = lot.noPrice ? `${lot.noPrice} confirmed ${lot.noPrice === 1 ? 'card has' : 'cards have'} no price data` : '';
+  return { text: `(${parts.join(', ')})`, title };
 }
 
 /** The lot's value as "$12.50" or "$14.00–$30.00", with the "2 of 3 cards identified" detail; value is null while no card is identified. */
