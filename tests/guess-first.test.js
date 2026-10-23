@@ -1,17 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topGuessOf, lotEstimate, quotedPrice, detectedVariant, suggestedVariant, needsEdition, editionVariant, needsPrinting, isIdentified, isSetConfirmed, confirmGuess, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
+import { lotEstimate, quotedPrice, detectedVariant, suggestedVariant, needsEdition, editionVariant, needsPrinting, isIdentified, isSetConfirmed, confirmGuess, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
 import { largerRendition } from '../tools/extension-wasm/lib/full-size.js';
-
-const cand = (id, name) => ({ id, name, set: 'Base Set', setCode: 'base1', number: '58' });
-
-test('a nameless card with candidates gets its closest card as the top guess; named cards and backs do not', () => {
-  assert.deepEqual(topGuessOf({ abstain: true, candidates: [cand('base1-58', 'Pikachu'), cand('x', 'Raichu')] }),
-    { id: 'base1-58', name: 'Pikachu', set: 'Base Set', setCode: 'base1', number: '58' });
-  assert.equal(topGuessOf({ abstain: true, candidates: [] }), null);
-  assert.equal(topGuessOf({ identity: { name: 'Mew' }, unsure: true, candidates: [cand('a', 'Mew')] }), null);
-  assert.equal(topGuessOf({ cardBack: true, candidates: [cand('a', 'Mew')] }), null);
-});
 
 test('small crops are flagged under 150 px; unknown height is not small', () => {
   assert.equal(readFromSmallCrop({ readHeight: 120 }), true);
@@ -27,11 +17,11 @@ const sureRow = (extra = {}) => ({ identity: { id: 'e-1', name: 'Eevee' }, confi
 
 test('an unknown card shows no price and adds nothing to the lot, however priced its guess or name is', () => {
   const sure = sureRow({ market_price: 100, price_grid: multiGrid({ normal: 100 }) });
-  const topGuess = { abstain: true, topGuess: { id: 'b', name: 'Pikachu', price: 1.2 } };
-  const unpriced = { abstain: true, topGuess: { id: 'c', name: 'Mew', price: null } };
+  const choosing = { abstain: true, candidates: [{ id: 'b', name: 'Pikachu' }] };
+  const unpriced = { abstain: true, candidates: [] };
   const asked = { identity: { id: 'd', name: 'Magcargo' }, unsure: true, confidence: 0.3, market_price: 2, price_grid: multiGrid({ normal: 2 }) };
   const back = { cardBack: true };
-  const lot = lotEstimate([sure, topGuess, unpriced, asked, back], () => null);
+  const lot = lotEstimate([sure, choosing, unpriced, asked, back], () => null);
   assert.equal(lot.low, 100);
   assert.equal(lot.high, 100);
   assert.equal(lot.identified, 1);
@@ -160,7 +150,7 @@ test('a stale-grid price is to check, not summed, however sure the row is', () =
 });
 
 test('the lot reports how many cards are still to confirm', () => {
-  const cards = [sureRow({ market_price: 3, price_grid: multiGrid({ normal: 3 }) }), { abstain: true, topGuess: { id: 'b', name: 'Pikachu' } }, { abstain: true }, { cardBack: true }];
+  const cards = [sureRow({ market_price: 3, price_grid: multiGrid({ normal: 3 }) }), { abstain: true, candidates: [{ id: 'b', name: 'Pikachu' }] }, { abstain: true }, { cardBack: true }];
   assert.equal(lotEstimate(cards, () => null).toIdentify, 2);
 });
 

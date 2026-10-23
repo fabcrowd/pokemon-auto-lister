@@ -6,7 +6,9 @@
  */
 
 import { test, expect, chromium } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -205,9 +207,10 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('#s-value')).toHaveText('$12.50');
     await expect(page.locator('#s-value')).toHaveAttribute('title', '2 of 3 cards identified · 1 still to identify');
     await expect(page.locator('#stat-value')).toHaveAttribute('aria-label', '2 of 3 cards identified · 1 still to identify');
-    await expect(page.locator('.card-price')).toHaveText(['$5.00', '$7.50', '—']);
+    // The card to choose comes first, under "To confirm"; confirmed rows follow.
+    await expect(page.locator('.card-price')).toHaveText(['—', '$5.00', '$7.50']);
     await expect(page.locator('.card-row .picker-title')).toHaveText('Which card is this?');
-    await expect(page.locator('.picker-sub')).toHaveText('Closest matches');
+    await expect(page.locator('.picker-sub')).toHaveText('Closest matches, best one first');
     await expect(page.locator('.pick-card')).toHaveCount(2);
     await expect(page.locator('.unrec-toggle')).toHaveCount(0);
 
@@ -333,7 +336,7 @@ test.describe('Consumer extension popup', () => {
       const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
       return [
         { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
-        { identity: null, confidence: 0.3, abstain: true, topGuess: { id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }, box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.3, abstain: true, candidates: [{ id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }], box: [0, 0, 1, 1] },
         { identity: null, confidence: 0.2, abstain: true, box: [0, 0, 1, 1] },
         { cardBack: true, box: [0, 0, 1, 1] },
       ];
@@ -383,6 +386,191 @@ test.describe('Consumer extension popup', () => {
 
     await lot.selectOption('shadowless');
     await expect(prices).toHaveText(['$300.00', '$3000.00', '$5.00']);
+    await page.close();
+  });
+
+  // ─── Choose flow: two states only, confirmed or choose ───
+
+  const SHOTS = path.resolve(__dirname, '../../.tmp/choose-flow');
+
+  // Real pictures for the crop and the card art, so screenshots show what the list looks like.
+  async function swatch(color, format) {
+    const image = sharp({ create: { width: 126, height: 176, channels: 3, background: color } });
+    const buffer = format === 'png' ? await image.png().toBuffer() : await image.jpeg().toBuffer();
+    return `data:image/${format};base64,${buffer.toString('base64')}`;
+  }
+
+  // Opens a popup whose scan returns { cards, priced } built by `build(crop, arts)` inside the page.
+  // Records saveCorrection and overlay pushes; priceCard answers from `priced`.
+  async function popupWithChoose(build) {
+    const crop = await swatch('#8855cc', 'jpeg');
+    const arts = await Promise.all(['#cc5555', '#55aa66', '#5577cc', '#ccaa44', '#aa55aa'].map((c) => swatch(c, 'png')));
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 720 });
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.evaluate(({ src, crop, arts }) => {
+      const { cards, priced } = new Function(`return (${src})`)()(crop, arts);
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      window.__sent = [];
+      window.__overlay = [];
+      chrome.runtime.sendMessage = async (msg) => {
+        if (msg?.action === 'scanPage') return { cards, scanId: 'c', srcWidth: 10, srcHeight: 10, pending: 0 };
+        if (msg?.action === 'saveCorrection') { window.__sent.push(msg); return { ok: true }; }
+        if (msg?.action === 'priceCard') return priced[msg.id] || { error: 'no price' };
+        if (msg?.action === 'overlayWithGrid') { window.__overlay.push(msg); return { ok: true }; }
+        if (msg?.action === 'highlightCard') return { ok: true };
+        return real(msg);
+      };
+    }, { src: build.toString(), crop, arts });
+    await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
+    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    return page;
+  }
+
+  // Two confirmed cards and three to choose; the second candidate of the first choice matches the photo's name line.
+  const chooseScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const multi = { source: 'pokemontcg', variants: {
+      normal: { market: 2, conditions: { NM: 2 } },
+      holofoil: { market: 10, conditions: { NM: 10 } },
+    } };
+    const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+    const a1 = row('a-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+    const b2 = row('b-2', 'Rattata', 'Base Set', 'base1', '61', arts[1]);
+    const c3 = row('c-3', 'Spearow', 'Jungle', 'base2', '62', arts[2]);
+    const d4 = row('d-4', 'Zubat', 'Fossil', 'base3', '57', arts[3]);
+    const e5 = row('e-5', 'Gastly', 'Fossil', 'base3', '50', arts[4]);
+    const cards = [
+      { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.3, abstain: true, candidates: [a1, b2, c3], titleContradicts: 'Rattata', crop, box: [0, 0, 1, 1] },
+      { identity: { id: 'x-2', name: 'Raichu', set: 'Base', setCode: 'base1', number: '14' }, confidence: 0.9, abstain: false, market_price: 7.5, price_grid: grid(7.5), box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.2, abstain: true, candidates: [d4, e5], crop, box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.2, abstain: true, candidates: [c3], crop, box: [0, 0, 1, 1] },
+    ];
+    const priced = {
+      'a-1': { identity: a1, market_price: 3, price_variant: 'normal', price_grid: multi },
+      'b-2': { identity: b2, market_price: 4, price_variant: 'normal', price_grid: grid(4) },
+      'c-3': { identity: c3, market_price: 6, price_variant: 'normal', price_grid: grid(6) },
+      'd-4': { identity: d4, market_price: 1, price_variant: 'normal', price_grid: grid(1) },
+    };
+    return { cards, priced };
+  };
+
+  test('a card below the bar is a choice: its crop beside the closest cards, best preselected, no name or price', async () => {
+    const page = await popupWithChoose(chooseScan);
+    const group = page.locator('#results > .choose-group');
+    await expect(group).toHaveCount(1);
+    await expect(group.locator('.choose-toggle')).toHaveText('To confirm (3)');
+    await expect(page.locator('.choose-review')).toHaveText('Review all 3');
+    const row = page.locator('.choose-row').first();
+    await expect(row.locator('.scanned-card img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+    await expect(row.locator('.pick-choice')).toHaveCount(3);
+    await expect(row.locator('.pick-choice').first().locator('.pick-best')).toHaveText('Best match');
+    await expect(row.locator('.pick-best')).toHaveCount(1);
+    await expect(row.locator('.pick-choice').first().locator('img')).toHaveAttribute('src', /^data:image\/png/);
+    await expect(row.locator('.pick-choice').first()).toContainText('Pidgey');
+    await expect(row.locator('.pick-choice').first()).toContainText('Jungle #57');
+    // Only the candidate whose name matches the photo's name line carries the agreement mark.
+    await expect(row.locator('.pick-agree')).toHaveCount(1);
+    await expect(row.locator('.pick-choice[data-pick="b-2"] .pick-agree')).toHaveCount(1);
+    await expect(row.locator('.card-price')).toHaveText('—');
+    await expect(row.locator('.card-name')).toHaveText('Card 2');
+    await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Pidgey');
+    await expect(row.locator('[data-open-search]')).toHaveText('None of these? Search');
+    await expect(page.locator('#s-value')).toHaveText('$12.50');
+    // The page overlay is told: choose for the three, identified for the two, and nothing to name.
+    const overlay = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => [c.display?.state, c.display?.name ?? null, c.display?.price ?? null]));
+    expect(overlay).toEqual([['identified', 'Pikachu', 5], ['choose', null, null], ['identified', 'Raichu', 7.5], ['choose', null, null], ['choose', null, null]]);
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, 'choose-list.png') });
+    await page.close();
+  });
+
+  test('confirming the preselected card saves it as before, moves the row to confirmed and shows a range until the printing is picked', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (2)');
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'c', index: 1, pickedId: 'a-1', via: 'candidates' });
+    // Pidgey has two printings: a range, not one auto-picked price.
+    await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$2.00–$10.00');
+    await expect(page.locator('.card-row[data-idx="1"] .card-name')).toContainText('Pidgey');
+    await expect(page.locator('.choose-row')).toHaveCount(2);
+    await page.close();
+  });
+
+  test('tapping another candidate confirms that one, with its price', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row').first().locator('.pick-choice[data-pick="b-2"]').click();
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ index: 1, pickedId: 'b-2', via: 'candidates' });
+    await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$4.00');
+    await expect(page.locator('.card-row[data-idx="1"] .card-name')).toContainText('Rattata');
+    await page.close();
+  });
+
+  test('keyboard: Tab reaches the confirm button after the candidates, Enter confirms, focus stays in the row', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row').first().locator('.pick-choice').first().focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('.choose-row').first().locator('[data-confirm-best]')).toBeFocused();
+    await expect(page.locator('.choose-row').first().locator('[data-confirm-best]')).toHaveAccessibleName(/Confirm the best match for card 2: Pidgey, Jungle, number 57/);
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.card-row[data-idx="1"] .card-name')).toContainText('Pidgey');
+    const rowOfFocus = await page.evaluate(() => document.activeElement?.closest('.card-row')?.dataset.idx ?? null);
+    expect(rowOfFocus).toBe('1');
+    await page.close();
+  });
+
+  test('review all: pairs with keep toggles, Confirm N, a skipped pair stays to confirm, Escape closes', async () => {
+    const page = await popupWithChoose(chooseScan);
+    const panel = page.locator('#bulk-panel');
+    await expect(panel).toBeHidden();
+    await page.locator('.choose-review').click();
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('.bulk-pair')).toHaveCount(3);
+    await expect(panel.locator('.bulk-keep:checked')).toHaveCount(3);
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 3');
+    await expect(panel.locator('.bulk-pair').first()).toContainText('Pidgey');
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, 'bulk-grid.png') });
+
+    // Escape closes without confirming anything, and focus goes back to the button that opened it.
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(page.locator('.choose-review')).toBeFocused();
+    expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+
+    await page.locator('.choose-review').click();
+    await panel.locator('.bulk-keep[data-idx="3"]').uncheck();
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 2');
+    await expect(panel.locator('.bulk-pair.skipped')).toHaveCount(1);
+    await page.locator('#bulk-confirm').click();
+    await expect(panel).toBeHidden();
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (1)');
+    await expect(page.locator('.choose-row')).toHaveCount(1);
+    await expect(page.locator('.choose-row')).toHaveAttribute('data-idx', '3');
+    const sent = await page.evaluate(() => window.__sent.map((m) => [m.index, m.pickedId, m.via]));
+    expect(sent).toEqual([[1, 'a-1', 'candidates'], [4, 'c-3', 'candidates']]);
+    await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$2.00–$10.00');
+    await expect(page.locator('.card-row[data-idx="4"] .card-price')).toHaveText('$6.00');
+    await page.close();
+  });
+
+  test('review all can be driven from the keyboard: Space toggles a pair, Tab stays inside the panel', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-review').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#bulk-panel .bulk-keep').first()).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 2');
+    for (let i = 0; i < 8; i += 1) await page.keyboard.press('Tab');
+    const inside = await page.evaluate(() => document.getElementById('bulk-panel').contains(document.activeElement));
+    expect(inside).toBe(true);
     await page.close();
   });
 });

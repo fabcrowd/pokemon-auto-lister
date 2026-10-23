@@ -448,18 +448,6 @@ export function explainScanError(message) {
   return raw;
 }
 
-/**
- * The scanner's top guess for a card it could not name: the closest catalog card, shown as a name to confirm and
- * never with a price. Null for a named card, a card back, or a card with no candidates.
- * It never names the card: identity, confidence and "identified" stay as they were.
- */
-export function topGuessOf(card) {
-  if (!card || card.cardBack || card.identity?.name || card.identity?.id) return null;
-  const top = card.candidates?.[0];
-  if (!top?.id || !top.name) return null;
-  return { id: top.id, name: top.name, set: top.set || null, setCode: top.setCode || null, number: top.number || null };
-}
-
 /** Under this many pixels the reader saw so little of the card that its guess is a long shot (shown as a note). */
 export const SMALL_READ_PX = 150;
 export function readFromSmallCrop(card) {

@@ -234,7 +234,10 @@ test('a card label shows only its name and one price', () => {
   assert.deepEqual(label({ identity: id, price_grid: grid }), { name: 'Charmeleon', price: '$1.25–$38.99' });
   assert.deepEqual(label({ identity: id, market_price: 2 }), { name: 'Charmeleon', price: '$2.00' });
   assert.equal(label({ identity: id }).price, '—');
-  assert.equal(label({ identity: null, abstain: true }).name, 'Not recognised');
+  // A card to choose has no name on its label: the label asks for a pick and never asserts a card.
+  assert.equal(label({ identity: null, abstain: true }).name, 'Choose a card');
+  assert.equal(label({ identity: id, display: { state: 'choose' } }).name, 'Choose a card');
+  assert.equal(label({ cardBack: true, display: { state: 'none' } }).name, 'Not recognised');
 });
 
 test('hovering picks the smallest card frame under the pointer', () => {
@@ -357,16 +360,22 @@ test('restoreOverlay brings back a hidden overlay', () => {
   assert.equal(page.canvas.style.visibility, 'visible');
 });
 
-test('every card tag says its state: identified, printing to pick, your pick, not recognised', () => {
+test('every card tag says its state: identified, printing to pick, choose, card back', () => {
   const id = { name: 'Charizard', number: '4' };
   const tag = (card) => JSON.parse(JSON.stringify(pure.tagText(card)));
   assert.deepEqual(tag({ identity: id, display: { state: 'identified', price: 954.65 } }).lines, ['Charizard #4', '$954.65']);
   assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: 'set not sure · $120.00–$950.00' } }).lines,
     ['Charizard #4', '$120.00–$950.00 · pick printing']);
-  assert.deepEqual(tag({ identity: id, display: { state: 'ask' } }).lines, ['Charizard?', 'Pick in scanner']);
-  assert.equal(tag({ identity: null, abstain: true }).state, 'none');
+  // Choose: no name and no price, only the ask.
+  assert.deepEqual(tag({ identity: id, display: { state: 'choose' } }).lines, ['Choose', 'Tap to choose']);
+  assert.equal(tag({ identity: id, display: { state: 'choose' } }).short, 'Choose');
+  assert.equal(tag({ identity: null, abstain: true }).state, 'choose');
+  assert.equal(tag({ cardBack: true }).state, 'none');
+  assert.deepEqual(tag({ cardBack: true }).lines, ['Not recognised', 'Turn it over']);
   // Straight from the background, before the popup has drawn: the card's own fields decide.
-  assert.equal(pure.cardState({ identity: id, unsure: true }), 'ask');
+  assert.equal(pure.cardState({ identity: id, unsure: true }), 'choose');
+  // The removed guess tier is not a state any more.
+  assert.equal(pure.cardState({ identity: id, display: { state: 'guess', guess: { name: 'Charizard' } } }), 'identified');
   assert.equal(pure.cardState({ identity: id, confidence: 0.9 }), 'identified');
 });
 

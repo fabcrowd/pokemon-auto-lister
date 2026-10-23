@@ -208,10 +208,7 @@
     .lot-edition select { font-family: inherit; font-size: 11px; font-weight: 700; height: 26px; padding: 0 6px; border-radius: 8px; border: 1px solid #1e2130; background: #0e1018; color: #c5cadc; cursor: pointer; }
     .lot-edition select:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
 
-    /* GUESS ROWS — a card the reader could not name, shown as its top guess */
-    .card-name.guess-name { color: #e9d6a8; font-style: italic; font-weight: 600; }
-    .card-price.guess-price { color: #c8a45c; font-style: italic; border-bottom: 1px dashed #6b5a35; }
-    .guess-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #c8a45c; border: 1px dashed #6b5a35; border-radius: 4px; padding: 0 4px; }
+    /* CHOOSE ROWS — a card below the bar: pick from the closest cards, no name and no price until picked */
     .small-chip { font-size: 9px; color: #8b92ab; border: 1px solid #2a2e40; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
     .card-row.flash { outline: 2px solid #6366f1; outline-offset: -2px; transition: outline-color 0.4s; }
 
@@ -457,6 +454,42 @@
     .scanned-card img, .scanned-card .pick-blank { display: block; width: 62px; height: 87px; border-radius: 3px; background: #14172a; object-fit: cover; }
     .scanned-label { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
     .card-row.asking:hover, .card-row.asking:focus-within { background: #0c0d16; }
+    .choose-group { border-bottom: 1px solid #1a1d2a; }
+    .choose-head { display: flex; align-items: center; background: #0b0c12; border-bottom: 1px solid #0e1018; }
+    .choose-toggle { flex: 1; display: flex; align-items: center; min-height: 36px; padding: 8px 16px; background: none; border: none; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #fcd34d; text-align: left; cursor: pointer; }
+    .choose-toggle::before { content: "\25BE"; margin-right: 6px; }
+    .choose-toggle[aria-expanded="false"]::before { content: "\25B8"; }
+    .choose-row .card-price { color: #5d6480; }
+    .choose-review { margin-right: 12px; min-height: 28px; padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; color: #c7c9ff; background: #6366f114; border: 1px solid #6366f1; border-radius: 6px; cursor: pointer; }
+    .choose-list[hidden] { display: none; }
+    .choose-toggle:focus-visible, .choose-review:focus-visible, .choose-confirm:focus-visible, .bulk-keep:focus-visible, .bulk-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .choose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+    .choose-confirm { min-height: 28px; max-width: 100%; padding: 4px 12px; font: inherit; font-size: 11px; font-weight: 700; color: #fff; background: #4f46e5; border: none; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .choose-confirm:hover { background: #5b5ef4; }
+    .pick-best-card { border-color: #f59e0b; }
+    .pick-best { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
+    .pick-agree { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #34d399; text-align: center; }
+    .pick-choice { width: 76px; }
+    .bulk-panel { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #08090d; }
+    .bulk-panel[hidden] { display: none; }
+    .bulk-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #1a1d2a; }
+    .bulk-title { flex: 1; margin: 0; font-size: 13px; font-weight: 700; color: #e4e6f0; }
+    .bulk-note { padding: 6px 16px; font-size: 11px; color: #8b92ab; }
+    .bulk-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+    .bulk-pair { border-bottom: 1px solid #0e1018; }
+    .bulk-pair.skipped { opacity: 0.55; }
+    .bulk-label { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; }
+    .bulk-keep { width: 18px; height: 18px; flex-shrink: 0; accent-color: #6366f1; }
+    .bulk-img { display: block; width: 46px; height: 64px; flex-shrink: 0; border-radius: 3px; background: #14172a; object-fit: cover; }
+    .bulk-arrow { color: #5d6480; }
+    .bulk-text { min-width: 0; font-size: 11px; color: #c5cadc; }
+    .bulk-text b { font-weight: 700; }
+    .bulk-text .pick-agree { display: inline; }
+    .bulk-sub { font-size: 10px; color: #8b92ab; }
+    .bulk-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid #1a1d2a; }
+    .bulk-btn { min-height: 32px; padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 700; color: #c5cadc; background: #0e1018; border: 1px solid #2a2e40; border-radius: 6px; cursor: pointer; }
+    .bulk-btn.primary { color: #fff; background: #4f46e5; border-color: #4f46e5; }
+    .bulk-btn:disabled { opacity: 0.45; cursor: default; }
 
     /* SETUP OVERLAY */
     .setup-overlay {
@@ -660,6 +693,19 @@
       </div>
     </div>
 
+  </div>
+
+  <div class="bulk-panel" id="bulk-panel" role="dialog" aria-modal="true" aria-labelledby="bulk-title" hidden>
+    <div class="bulk-head">
+      <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
+      <button type="button" class="bulk-btn" id="bulk-close" aria-label="Close review">&#10005;</button>
+    </div>
+    <div class="bulk-note">Each photo beside its best match. Untick any that look wrong; they stay to confirm.</div>
+    <ul class="bulk-list" id="bulk-list"></ul>
+    <div class="bulk-foot">
+      <button type="button" class="bulk-btn" id="bulk-cancel">Cancel</button>
+      <button type="button" class="bulk-btn primary" id="bulk-confirm">Confirm 0</button>
+    </div>
   </div>
 
   <script type="module" src="popup.js"></script>

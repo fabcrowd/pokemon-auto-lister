@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-10-22 (choose flow)
+
+Two identification states (branch `feat/choose-flow`): Confirmed and Choose.
+
+### Added
+- Popup: a "To confirm (N)" group first in the list. Each card below the bar shows its crop beside up to 5 candidate cards (art when the catalog has it, name, set, number, printing when known), the best match preselected with a one-press "Confirm <name>" button, any other candidate confirmed with one tap, and "None of these? Search". A candidate whose name agrees with the photo's name line (existing title verdict: `titleConfirmed`, `titleReranked`, `titleContradicts`) carries a check mark.
+- Popup: "Review all N" opens an in-popup panel with every card to confirm beside its preselected candidate, a keep/skip checkbox per pair (default keep) and one "Confirm N" button. Skipped pairs stay in Choose; Escape or Cancel closes; Tab stays inside the panel.
+- `lib/choose-flow.js`: `chooseState`, `overlayStateOf`, `nameAgreesWithPhoto`, `candidateView`, `candidatesOfCard`, `bulkPairs`, and the candidate and group renderers.
+
+### Changed
+- The page overlay has no guess tier: a card to choose is amber with the tag "Choose" / "Tap to choose", no name and no price; its hover label says "Choose a card". Confirmed cards keep green (blue while the printing is open); card backs stay grey ("Not recognised" / "Turn it over").
+- A row to choose shows "Card N", no name and "—" for the price; confirming goes through the existing pick path (same saveCorrection, `via: candidates`, same price lookup), so teaching and shared learning receive exactly what they did.
+- Tests updated for the removed guess tier: `tests/content-pure.test.js` (tag, label and state assertions), `tests/guess-first.test.js` (`topGuessOf` test removed, guess fixtures now candidate-based), `tests/e2e/extension-wasm-popup.spec.js` (row order puts the choice first, picker sub-line, fixture without `topGuess`).
+
+### Removed
+- `topGuessOf`, the popup's "Top guess" chip and italic guess styling, the overlay `guess` state and its dashed outline. Thresholds, fusion, detector, price rules, manifest, permissions and host lists are unchanged.
+
+## 2026-10-22
+
+Rendition upgrade (branch `feat/rendition-upgrade`).
+
+### Added
+- `lib/rendition.js` `upgradeRenditionUrl`: the largest rendition a listing site serves, from measured URL rules (Mercari drops `/thumb` and the width/quality query; HiBid `w=0&h=0&sz=MAX`; ShopGoodwill `t<k>.jpeg` to `<k>.jpg`; Craigslist 50x50c / 300x300 / 600x450 to 1200x900; Poshmark `s_`/`m_` to `l_`, `_wp_` webp twins kept). Same host, https only, null for anything else. The photo read, gallery photos and the tile source look try it first and fall back silently to the shown URL; `largerRendition` counts it as a known larger rendition. No new hosts or permissions.
+
 ## 2026-10-22
 
 Pricing guards (branch `feat/pricing-guards`).

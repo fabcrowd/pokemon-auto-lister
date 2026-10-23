@@ -463,35 +463,29 @@
     ctx.stroke();
   }
 
-  // What a card's frame and tag say: identified (green), identified with its printing to pick (blue), the user's pick
-  // needed (amber), not recognised (grey, dashed). The popup sends its own verdict (display.state) so the page and the
-  // list agree; a relay straight from the background falls back to the card's own fields.
-  // guess: a card the reader could not name, shown as its top guess (lighter amber, dashed) so a lot can be priced.
-  const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', ask: '#f59e0b', guess: '#c8a45c', none: '#9ca3af' };
-  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', ask: '#fcd34d', guess: '#e9d6a8', none: '#d1d5db' };
+  // What a card's frame and tag say: identified (green), identified with its printing to pick (blue), choose (amber:
+  // the user picks the card, no name or price shown), card back (grey, dashed). The popup sends its own verdict
+  // (display.state) so the page and the list agree; a relay straight from the background falls back to the card's own fields.
+  const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', choose: '#f59e0b', none: '#9ca3af' };
+  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', choose: '#fcd34d', none: '#d1d5db' };
 
   function cardState(card) {
     const state = card?.display?.state;
-    if (state === 'guess' && !card.display.guess?.name) return 'none';
     if (state && STATE_COLORS[state]) return state;
-    if (card?.abstain || !card?.identity?.name) return 'none';
-    if (card.unsure || card.lowCertainty) return 'ask';
+    if (card?.cardBack) return 'none';
+    if (card?.abstain || !card?.identity?.name || card.unsure || card.lowCertainty) return 'choose';
     return 'identified';
   }
 
   /** A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do. */
   function tagText(card) {
     const state = cardState(card);
-    if (state === 'none') return { state, lines: ['Not recognised', 'Pick in scanner'], short: '?' };
-    if (state === 'guess') {
-      const guess = card.display.guess;
-      return { state, lines: [`${guess.name}?`, 'Guess · tap to confirm'], short: `${guess.name}?` };
-    }
+    if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
+    if (state === 'choose') return { state, lines: ['Choose', 'Tap to choose'], short: 'Choose' };
     const { name, price } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
     const title = number ? `${name} #${number}` : name;
     const priced = price && price !== '—' ? price : '';
-    if (state === 'ask') return { state, lines: [`${name}?`, 'Pick in scanner'], short: `${name}?` };
     if (state === 'printing') return { state, lines: [title, priced ? `${priced} · pick printing` : 'Pick printing'], short: priced || name };
     return { state, lines: [title, priced || '—'], short: priced || name };
   }
@@ -556,7 +550,6 @@
     ctx.strokeStyle = STATE_COLORS[state];
     ctx.globalAlpha = 0.7;
     ctx.lineWidth = 1;
-    if (state === 'guess') ctx.setLineDash([3, 2]);
     ctx.beginPath();
     ctx.roundRect(rect.x + 0.5, rect.y + 0.5, w - 1, h - 1, 5);
     ctx.stroke();
@@ -581,12 +574,8 @@
 
   /** The two lines a card's label shows: its name and one price (or a price range while the set is open). */
   function labelText(card) {
-    const guess = card.display?.state === 'guess' ? card.display.guess : null;
-    if (guess?.name) {
-      const note = card.display.small ? ' · small picture' : '';
-      return { name: `${guess.name}? (guess)`, price: 'Confirm to see a price' + note + ' · click to fix', muted: true };
-    }
-    if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Pick it in the scanner', muted: true };
+    if (cardState(card) === 'choose') return { name: 'Choose a card', price: 'Tap to pick it in the scanner', muted: true };
+    if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Turn it over to identify it', muted: true };
     const disp = card.display || null;
     if (disp?.price != null) return { name: card.identity.name, price: money(disp.price) };
     const note = disp?.printingNote || '';

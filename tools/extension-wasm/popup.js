@@ -1,7 +1,8 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
-import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup } from "./lib/choose-flow.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
@@ -43,6 +44,11 @@ const accessAllow   = document.getElementById("access-allow");
 const accessAllowAll = document.getElementById("access-allow-all");
 const accessSkip    = document.getElementById("access-skip");
 const accessRescan  = document.getElementById("access-rescan");
+const bulkPanel     = document.getElementById("bulk-panel");
+const bulkList      = document.getElementById("bulk-list");
+const bulkConfirm   = document.getElementById("bulk-confirm");
+const bulkClose     = document.getElementById("bulk-close");
+const bulkCancel    = document.getElementById("bulk-cancel");
 
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 
@@ -56,6 +62,8 @@ let _variantPicked = new Set(); // card indexes whose printing the user set them
 let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
+let _showChoose = true;         // the "To confirm" group is open
+let _bulk = null;               // { pairs, skipped, opener, scan } while the review-all panel is open
 let _searchTimer = null;
 let _pickSeq = 0;
 const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
@@ -220,6 +228,8 @@ btnClear.addEventListener("click", () => {
   _lotEdition = "";
   _picker = new Map();
   _showUnrecognised = false;
+  _showChoose = true;
+  closeBulk(false);
   examStrip.hidden = true;
   resetResults();
   showMessage("");
@@ -260,10 +270,7 @@ async function scanPage() {
 // A scan's result in the list, the stats and the page overlay. A rescan the page started (pictures that loaded
 // later) comes here too, so the list always matches what the overlay shows.
 function applyScanResult(data) {
-  const cards = (data.cards || []).map((card) => {
-    const topGuess = topGuessOf(card);
-    return { ...card, guess: guessOf(card), ...(topGuess ? { topGuess } : {}) };
-  });
+  const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
   _variantChoice = new Map();
@@ -273,6 +280,8 @@ function applyScanResult(data) {
   _picker = new Map();
   _userEdits = false;
   _showUnrecognised = false;
+  _showChoose = true;
+  closeBulk(false);
   _lastResult.cards.forEach(seedVariant);
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
@@ -500,9 +509,10 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
   setTimeout(() => { if (!isScanning) scanPage(); }, 600);
 });
 
-// A click on a guess or question tag on the page: the card's row and its picks, ready to fix.
+// A click on a Choose tag on the page: the card's row and its picks, ready to choose.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.action !== "overlayPick" || !Number.isInteger(msg.index)) return;
+  if (!_showChoose) { _showChoose = true; renderResults(); }
   const row = resultsEl.querySelector(`.card-row[data-idx="${msg.index}"]`);
   if (!row) return;
   row.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -541,7 +551,10 @@ function renderResults() {
   emptyHint.remove();
 
   const { shown, hidden } = splitByRecognition(cards);
-  resultsEl.innerHTML = shown.map((idx) => renderCardRow(cards[idx], idx)).join("")
+  const toChoose = shown.filter((idx) => chooseState(cards[idx]) === "choose");
+  const confirmed = shown.filter((idx) => chooseState(cards[idx]) !== "choose");
+  resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
+    + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
 
   document.querySelectorAll(".set-select-row select").forEach((sel) => {
@@ -577,9 +590,7 @@ function renderResults() {
 
 function renderCardRow(card, idx) {
   const id   = card.identity || {};
-  // A guess stays a guess until the user picks a card; once the row is named the guess is history.
-  const guess = id.name || id.id ? null : card.topGuess || null;
-  const name = id.name    || (card.cardBack ? "Card back" : guess ? `${guess.name}?` : "Not recognised");
+  const name = id.name    || "Card";
   const code = id.setCode || "";
   const set  = id.set     || "";
   const num  = id.number  || "";
@@ -588,22 +599,15 @@ function renderCardRow(card, idx) {
   const setKnown = isSetConfirmed(card);
 
   const setHtml = code ? `<span class="set-chip">${escHtml(code)}</span>` : "";
-  const smallHtml = readFromSmallCrop(card)
-    ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall): the guess is a long shot. A full-size photo reads better.">small photo</span>`
-    : "";
-  const subHtml = guess
-    ? `<span class="guess-chip">Top guess</span> ${escHtml(guess.set || "")}${guess.number ? ` <span class="card-number">#${escHtml(guess.number)}</span>` : ""}${smallHtml}`
-    : setKnown
-      ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
-      : "Set not sure";
+  const subHtml = setKnown
+    ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
+    : "Set not sure";
   const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
   const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
 
-  // An asked row offers search once, under its picks; an identified row offers it as "Wrong card?" in the head.
-  const asked      = isAskedRow(card);
-  const askRow     = renderAskRow(card, idx);
-  // The candidates already include the set choices; a second menu would ask the same question twice.
-  const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
+  // A confirmed row offers search as "Wrong card?" in its head; the box opens under the head.
+  const searchRow  = renderSearchPanel(idx);
+  const setRow     = renderSetRow(card, idx);
   const versionRow = renderVersionRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
@@ -612,20 +616,17 @@ function renderCardRow(card, idx) {
     ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
     : "";
 
-  // An asked card shows its picture in the question instead.
-  const thumb = id.name || askRow ? null : cropThumb(card);
-  return `<div class="card-row${askRow ? " asking" : ""}" data-idx="${idx}">
+  return `<div class="card-row" data-idx="${idx}">
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
-      ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
-        <div class="card-name${guess ? " guess-name" : ""}"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
+        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
         <div class="card-sub">${subHtml}${photoHtml}</div>
       </div>
       ${renderPrice(card, idx)}
-      ${asked ? "" : `<button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>`}
+      <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
-    ${askRow}
+    ${searchRow}
     ${setRow}
     ${versionRow}
     ${variantRow}
@@ -641,8 +642,8 @@ function renderPrice(card, idx) {
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
-  // A card the scanner only guesses at is a name to confirm: no price is chosen for it.
-  if (!isIdentified(card)) return cell("—", "Confirm the card to see a price");
+  // A card still to choose has no price: it is quoted only once the user picks it.
+  if (!isIdentified(card)) return cell("—", "Choose the card to see a price");
   const conditions = enabledConditions();
   // Name sure, printing open: the range across the printings it could be, until the user picks one.
   const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
@@ -691,19 +692,43 @@ function searchResultsHtml(state, idx) {
   return renderPickList(state.results, idx);
 }
 
-const isAskedRow = (card) => isUnsure(card) && !card.pricing;
-
-function renderAskRow(card, idx) {
+// A card to choose: the picture beside the closest cards (art, name, set, number), the best one preselected and
+// confirmed with one press. No name is asserted for the card and no price is shown until it is picked.
+function renderChooseRow(card, idx) {
+  const candidates = candidatesOfCard(card);
+  const best = candidates[0] ? candidateView(card, candidates[0], { best: true }) : null;
   const state = _picker.get(idx);
-  const ask = isAskedRow(card)
-    ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
-        <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
-        ${(card.identity?.name && !card.lowCertainty) || !card.candidates?.length ? "" : `<div class="picker-sub">${card.lowCertainty ? "Best guess first, then the closest matches" : "Closest matches"}</div>`}
-        <div class="pick-row">${renderScannedCard(card, idx)}${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
-        ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`}
-      </div>`
+  const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
+  const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
+  const smallHtml = readFromSmallCrop(card)
+    ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall). A full-size photo reads better.">small photo</span>`
     : "";
-  return ask + renderSearchPanel(idx);
+  const repeatMark = card.repeatedName
+    ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
+    : "";
+  const confirm = best
+    ? `<button type="button" class="choose-confirm" data-confirm-best data-idx="${idx}" aria-label="${escHtml(`Confirm the best match for card ${idx + 1}: ${best.label}`)}">Confirm ${escHtml(best.name)}</button>`
+    : "";
+  const search = state
+    ? ""
+    : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`;
+  return `<div class="card-row choose-row asking" data-idx="${idx}">
+    <div class="card-head">
+      <div class="conf-stripe abstain"></div>
+      <div class="card-meta">
+        <div class="card-name">Card ${idx + 1}${repeatMark}</div>
+        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}</div>
+      </div>
+      ${renderPrice(card, idx)}
+    </div>
+    <div class="picker" role="group" aria-labelledby="picker-title-${idx}">
+      <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
+      <div class="picker-sub">${candidates.length ? "Closest matches, best one first" : "No close matches"}</div>
+      <div class="pick-row">${renderScannedCard(card, idx)}${renderCandidateCards(card, idx)}</div>
+      <div class="choose-actions">${confirm}${search}</div>
+    </div>
+    ${renderSearchPanel(idx)}
+  </div>`;
 }
 
 // The picture the question is about; pressing it scrolls the page to that card.
@@ -842,8 +867,21 @@ resultsEl.addEventListener("click", (e) => {
     resultsEl.querySelector("#unrec-list").hidden = !_showUnrecognised;
     return;
   }
+  if ("chooseToggle" in button.dataset) {
+    _showChoose = !_showChoose;
+    button.setAttribute("aria-expanded", String(_showChoose));
+    resultsEl.querySelector("#choose-list").hidden = !_showChoose;
+    return;
+  }
+  if ("reviewAll" in button.dataset) {
+    openBulk(button);
+    return;
+  }
   const idx = Number(button.dataset.idx);
-  if ("variantConfirm" in button.dataset) {
+  if ("confirmBest" in button.dataset) {
+    const best = candidatesOfCard(_lastResult?.cards?.[idx])[0];
+    if (best?.id) pickCard(idx, best.id, "candidates", best);
+  } else if ("variantConfirm" in button.dataset) {
     const suggested = _variantSuggest.get(idx);
     if (!suggested) return;
     _variantChoice.set(idx, suggested);
@@ -859,7 +897,7 @@ resultsEl.addEventListener("click", (e) => {
     replaceCard(idx, confirmGuess(card));
   } else if (button.dataset.pick) {
     const fromSearch = Boolean(button.closest(".picker-results"));
-    const shown = fromSearch ? _picker.get(idx)?.results : _lastResult?.cards?.[idx]?.candidates;
+    const shown = fromSearch ? _picker.get(idx)?.results : candidatesOfCard(_lastResult?.cards?.[idx]);
     pickCard(
       idx,
       button.dataset.pick,
@@ -873,6 +911,94 @@ resultsEl.addEventListener("click", (e) => {
   } else if ("showOnPage" in button.dataset) {
     highlightOnPage(idx, true);
   }
+});
+
+/* ─── Review all: every card to choose beside its preselected candidate, kept or skipped, one Confirm N ─── */
+
+function bulkPairHtml(pair) {
+  const card = _bulk.scan.cards[pair.idx];
+  const view = candidateView(card, pair.candidate, { best: true });
+  const crop = cropThumb(card);
+  const kept = !_bulk.skipped.has(pair.idx);
+  const sub = [view.set, view.number ? `#${view.number}` : "", view.printing].filter(Boolean).join(" · ");
+  return `<li class="bulk-pair${kept ? "" : " skipped"}" data-idx="${pair.idx}">
+    <label class="bulk-label">
+      <input type="checkbox" class="bulk-keep" data-bulk-keep data-idx="${pair.idx}"${kept ? " checked" : ""} aria-label="${escHtml(`Keep card ${pair.idx + 1}: ${view.label}`)}">
+      ${crop ? `<img class="bulk-img" src="${escHtml(crop)}" alt="" width="46" height="64">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      <span class="bulk-arrow" aria-hidden="true">&rarr;</span>
+      ${view.art ? `<img class="bulk-img" src="${escHtml(view.art)}" alt="" loading="lazy" width="46" height="64">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      <span class="bulk-text"><b>${escHtml(view.name)}</b>${view.agrees ? ` <span class="pick-agree" title="The name on the card matches">&#10003; name</span>` : ""}<br><span class="bulk-sub">${escHtml(sub)}</span></span>
+    </label>
+  </li>`;
+}
+
+function updateBulkCount() {
+  const kept = _bulk.pairs.filter((pair) => !_bulk.skipped.has(pair.idx)).length;
+  bulkConfirm.textContent = confirmLabel(kept);
+  bulkConfirm.disabled = kept === 0;
+  return kept;
+}
+
+function openBulk(opener) {
+  const scan = _lastResult;
+  const pairs = bulkPairs(scan?.cards);
+  if (!pairs.length) return;
+  _bulk = { pairs, skipped: new Set(), opener: opener || document.activeElement, scan };
+  bulkList.innerHTML = pairs.map(bulkPairHtml).join("");
+  updateBulkCount();
+  bulkPanel.hidden = false;
+  bulkList.querySelector("input")?.focus();
+}
+
+// restoreFocus: false when the list is about to be replaced anyway.
+function closeBulk(restoreFocus = true) {
+  if (!_bulk) return;
+  const opener = _bulk.opener;
+  _bulk = null;
+  bulkPanel.hidden = true;
+  bulkList.innerHTML = "";
+  if (!restoreFocus) return;
+  const target = opener?.isConnected ? opener : resultsEl.querySelector("[data-review-all], [data-choose-toggle], .card-row button") || btnScan;
+  target.focus();
+}
+
+function confirmBulk() {
+  if (!_bulk) return;
+  const { pairs, skipped, scan } = _bulk;
+  const kept = pairs.filter((pair) => !skipped.has(pair.idx));
+  closeBulk(false);
+  if (_lastResult !== scan) return;
+  // Each pair goes through the same pick as a single confirm, so the saved answer and the price are the same.
+  for (const pair of kept) pickCard(pair.idx, pair.candidate.id, "candidates", pair.candidate);
+  showMessage(`Confirmed ${kept.length} ${kept.length === 1 ? "card" : "cards"}. Prices are loading.`);
+  (resultsEl.querySelector("[data-review-all], [data-choose-toggle]") || btnScan).focus();
+}
+
+bulkList.addEventListener("change", (e) => {
+  if (!_bulk || !e.target.matches("[data-bulk-keep]")) return;
+  const idx = Number(e.target.dataset.idx);
+  if (e.target.checked) _bulk.skipped.delete(idx);
+  else _bulk.skipped.add(idx);
+  e.target.closest(".bulk-pair").classList.toggle("skipped", !e.target.checked);
+  updateBulkCount();
+});
+bulkConfirm.addEventListener("click", confirmBulk);
+bulkClose.addEventListener("click", () => closeBulk());
+bulkCancel.addEventListener("click", () => closeBulk());
+bulkPanel.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeBulk();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  // The panel covers the popup: keep Tab inside it.
+  const focusable = [...bulkPanel.querySelectorAll("input, button")].filter((el) => !el.disabled);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
 
 let _highlighted = null;
@@ -1084,8 +1210,7 @@ function pushOverlay() {
     ...(c.inGallery ? { inGallery: true } : {}),
     display: {
       ...computeDisplayForOverlay(c, idx),
-      state: overlayState(c),
-      ...(c.topGuess ? { guess: { name: c.topGuess.name } } : {}),
+      state: overlayStateOf(c),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
     },
   }));
@@ -1098,19 +1223,9 @@ function pushOverlay() {
   }).catch(() => {});
 }
 
-// The same verdict the list shows: identified, identified with the printing to pick, asked, or not recognised.
-function overlayState(card) {
-  if (card.cardBack) return "none";
-  // A card with no name shows its top guess, or "not recognised" when the reader had no candidates at all.
-  if (!card.identity?.name && !card.identity?.id && isUnsure(card)) return card.topGuess ? "guess" : "none";
-  if (isUnsure(card)) return "ask";
-  const kind = classifyCard(card);
-  if (kind === "identified") return needsPrinting(card) ? "printing" : "identified";
-  return kind === "pick" ? "ask" : "none";
-}
-
 function computeDisplayForOverlay(card, idx) {
-  if (card.abstain) return null;
+  // A card to choose shows neither a name nor a price on the page.
+  if (card.abstain || chooseState(card) === "choose") return null;
   const id = card.identity || {};
   if (!isSetConfirmed(card)) {
     const range = setRangeNote(card.setRange, enabledConditions());
