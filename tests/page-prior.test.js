@@ -141,3 +141,14 @@ test('two unranked choices tie-break by id in either input order', () => {
   assert.equal(decideGuesses([open(...choices)], { rank })[0].choice.id, 'a');
   assert.equal(decideGuesses([open(...[...choices].reverse())], { rank })[0].choice.id, 'a');
 });
+
+test('a printing the user corrected to before is the preselected guess, ahead of the page and the picture', () => {
+  const read = { ...open(opt('a', 'sv01', 'A', 0.9), opt('b', 'sv02', 'B', 0.1)), referencedId: 'b' };
+  const out = decideGuesses([settled('sv01'), read], { hint: 'sv01' });
+  assert.equal(out[1].choice.id, 'b');
+  assert.equal(out[1].source, 'correction');
+  assert.match(out[1].reason, /corrected/i);
+  // A referenced card that is not one of the choices changes nothing.
+  const other = { ...open(opt('a', 'sv01', 'A', 0.9), opt('b', 'sv02', 'B', 0.1)), referencedId: 'zzz' };
+  assert.equal(decideGuesses([other])[0].choice.id, 'a');
+});

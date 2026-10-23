@@ -2,9 +2,11 @@ import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
-import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
+import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
+import { userWhy } from "./lib/why.js";
 import { demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { CONDITION_TIP, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
@@ -69,6 +71,7 @@ let _variantSuggest = new Map(); // card index -> printing the picture suggests:
 let _variantPicked = new Set(); // card indexes whose printing the user set themselves: the lot edition leaves them alone
 let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
 let _stripMore = new Set();     // "idx:kind" of the picker strips expanded past their first 8 tiles
+let _whyOpen = new Set();       // card indexes whose "Why this card?" text is open
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _showChoose = true;         // the "To confirm" group is open
@@ -244,6 +247,7 @@ btnClear.addEventListener("click", () => {
   _variantPicked = new Set();
   _lotEdition = "";
   _picker = new Map();
+  _whyOpen = new Set();
   _stripMore = new Set();
   _showUnrecognised = false;
   _showChoose = true;
@@ -377,6 +381,8 @@ function demoteExpensive(cards) {
       tier: confTier(card.confidence),
       titleConfirmed: Boolean(card.titleConfirmed),
       userConfirmed: Boolean(card.userConfirmed),
+      confirmedBy: card.confirmedBy,
+      correctionCos: card.memory?.cos,
       priceTypical: priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions()),
     });
     return decision === "demote" ? demoteCard(card) : card;
@@ -765,12 +771,13 @@ function renderCardRow(card, idx) {
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
       <div class="card-meta">
-        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
+        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}${memoryChipHtml(card)}</div>
         <div class="card-sub">${subHtml}${photoHtml}</div>
       </div>
       ${renderPrice(card, idx)}
       <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
+    ${whyHtml(card, idx, _whyOpen.has(idx))}
     ${searchRow}
     ${setRow}
     ${versionRow}
@@ -865,7 +872,7 @@ function renderChooseRow(card, idx) {
       <div class="conf-stripe abstain"></div>
       <div class="card-meta">
         <div class="card-name">Card ${idx + 1}${repeatMark}</div>
-        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}${valueHtml}</div>
+        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}${valueHtml}${memoryChipHtml(card, { choose: true })}</div>
       </div>
       ${renderPrice(card, idx)}
     </div>
@@ -1000,10 +1007,18 @@ function pickCard(idx, id, via, row) {
   const scan = _lastResult;
   if (!scan?.cards?.[idx]) return;
   _picker.delete(idx);
+  const card = scan.cards[idx];
+  // What the scanner believed (its why-record, the price shown) is saved with the answer, before the row says "you chose".
+  const price = priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
+  const guess = guessWithWhy(card, price);
+  scan.cards[idx] = { ...card, why: userWhy(card.why) };
   chrome.runtime.sendMessage({
-    action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess: scan.cards[idx].guess, pickedId: id, via,
+    action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via,
   }).then((resp) => {
-    if (resp?.error) showMessage(resp.error, true);
+    if (resp?.error) { showMessage(resp.error, true); return; }
+    const corrected = correctedMark(guess, id, resp);
+    const current = _lastResult?.scanId === scan.scanId ? _lastResult.cards[idx] : null;
+    if (corrected && current) replaceCard(idx, { ...current, corrected });
   }).catch((err) => showMessage(explainScanError(err?.message || err), true));
   return pickSet(idx, id, row ?? { id });
 }
@@ -1042,6 +1057,10 @@ resultsEl.addEventListener("click", (e) => {
     renderResults();
     pushOverlay();
     updateStats(_lastResult.cards);
+  } else if ("why" in button.dataset) {
+    if (_whyOpen.has(idx)) _whyOpen.delete(idx); else _whyOpen.add(idx);
+    renderResults();
+    resultsEl.querySelector(`.why-btn[data-idx="${idx}"]`)?.focus();
   } else if ("guessConfirm" in button.dataset) {
     confirmSuggestedSet(idx);
   } else if ("stripMore" in button.dataset) {

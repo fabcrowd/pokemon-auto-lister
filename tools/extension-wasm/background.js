@@ -27,10 +27,14 @@ import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
 import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
-import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
+import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, wrongIdOf } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
+import { agreeWithReference, storeCorrection } from "./lib/correction-save.js";
+import { memoryVerdict } from "./lib/memory-confirm.js";
+import { referenceBar } from "./lib/reference-bars.js";
+import { whyOf, withVerdicts } from "./lib/why.js";
 import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
@@ -1195,7 +1199,16 @@ const _ownPageActions = {
       await _corrections.saveScan({ ...scan, examPicks: { ...scan.examPicks, [msg.index]: { cardId: msg.pickedId, source } } });
       return { ok: true };
     }
-    const record = correctionRecord({
+    // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
+    // correction instead of storing a near-duplicate picture.
+    const agreed = await agreeWithReference(_corrections, msg);
+    if (agreed) {
+      referencesChanged();
+      contributeTeachPick(scan, msg);
+      return { ok: true, count: agreed.count, agreed: true, remembered: await referencesInUse() };
+    }
+    const wrongId = wrongIdOf(msg.guess?.id, msg.pickedId, (id) => catalogCard(id)?.name);
+    const draft = correctionRecord({
       ts: Date.now(),
       scanId: msg.scanId,
       index: msg.index,
@@ -1205,16 +1218,15 @@ const _ownPageActions = {
       via: msg.via,
       crop: scan?.crops?.[msg.index],
       extVersion: chrome.runtime.getManifest().version,
+      why: msg.guess?.why,
+      wrongId,
     });
-    // The old answer's vector must not outlive it; a failed delete is caught by the ts check in correctionsToEmbed.
-    if (record.id) {
-      await _corrections.deleteReference(record.id).catch((err) => console.error("[BG] dropping the old reference failed:", err?.message || err));
-      referencesChanged();
-    }
-    await _corrections.save(record);
+    // History, the x2 count, the cap and a full disk are handled in lib/correction-save.js.
+    const record = await storeCorrection(_corrections, draft);
+    referencesChanged();
     if (_ready) embedPendingReferences();
     contributeTeachPick(scan, msg);
-    return { ok: true };
+    return { ok: true, count: record.count, remembered: await referencesInUse() };
   },
   confirmExam: (msg) => confirmExam(msg),
   shareStatus: async () => ({ available: _sharing.available(), enabled: await _sharing.enabled(), installId: await _sharing.installId() }),
@@ -1388,7 +1400,8 @@ async function lookalikePenaltyInUse() {
 
 async function referencesInUse() {
   try {
-    return (await chrome.storage.local.get("useReferences")).useReferences === true;
+    // On unless the user switched it off.
+    return (await chrome.storage.local.get("useReferences")).useReferences !== false;
   } catch {
     return false;
   }
@@ -1423,16 +1436,16 @@ async function boxLooksLikeCard(canvas) {
 
 // A reference only reorders cards the catalog already returned, at the catalog's own top score, so a
 // reprint of a corrected card is not made certain. Any failure leaves the catalog hits as they were.
-async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0) {
+async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0, height = 0) {
   try {
     // The community pack is in use only after it passed the exam gate (lib/bundle.js); the user's own rows need their setting.
     const own = (await referencesInUse()) ? await loadedReferences() : [];
     const pack = _packRows;
     // Same as pipeline/gate.py: the raw embedding against the rows, beaten against the raw catalog top score.
-    return applyMemory(embedding, pack.length ? own.concat(pack) : own, hits, rawTop, _meta);
+    return applyMemory(embedding, own, hits, rawTop, _meta, { height, pack });
   } catch (err) {
     console.error("[BG] reference lookup failed:", err?.message || err);
-    return { hits, referencedId: null };
+    return { hits, referencedId: null, memory: null };
   }
 }
 
@@ -1629,7 +1642,9 @@ async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanva
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
   const settled = capUnconfirmedSet(await withSetRange(read));
-  return checkTitle(markChoose(settled, capHeight), cardCanvas, capHeight, era);
+  const checked = await checkTitle(markChoose(settled, capHeight), cardCanvas, capHeight, era);
+  // The title verdict, the stripe and a number read are only known now: they complete the why-record.
+  return checked?.why ? { ...checked, why: withVerdicts(checked.why, checked) } : checked;
 }
 
 // The title line is read from crops this tall up: the confirm rule (lib/fusion.js) uses it before it decides, and
@@ -2004,7 +2019,8 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0, capHeight
   const seen = {};
   const result = await recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight);
   // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
-  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.choose && !result.numberRead ? { choose: true } : {}),
+  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.memory ? { memory: seen.memory } : {}),
+    ...(seen.confirmedBy ? { confirmedBy: seen.confirmedBy } : {}), ...(seen.why && !result.abstain ? { why: seen.why } : {}), ...(seen.choose && !result.numberRead ? { choose: true } : {}),
     ...(seen.smallRowCos != null && !result.numberRead ? { smallRow: true, smallRowCos: seen.smallRowCos } : {}) };
 }
 
@@ -2034,11 +2050,21 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
-  const { hits, referencedId } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0);
+  const { hits, referencedId, memory } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
   seen.referencedId = referencedId;
+  seen.memory = memory;
   seen.ranked = rankedIds(hits);
   const confirm = await confirmContext(cardCanvas, capHeight);
-  const fused = capAdapterChange(fuseResults(hits, null, _meta, _idMap, confirm), hits, inEraHits ? hits : rawHits, _meta, confirm);
+  const pictureRead = capAdapterChange(fuseResults(hits, null, _meta, _idMap, confirm), hits, inEraHits ? hits : rawHits, _meta, confirm);
+  // The user's own earlier correction may confirm the card (source "your correction"), or stop a card they called wrong.
+  const verdict = memoryVerdict(pictureRead, memory, { hits, meta: _meta });
+  const fused = verdict.fused;
+  seen.confirmedBy = verdict.confirmedBy;
+  seen.why = whyOf({
+    src: verdict.confirmedBy ? "correction" : "picture",
+    hits, ranked: seen.ranked, meta: _meta, height: capHeight, tags: modelTags(),
+    ref: memory && !memory.pack ? { id: memory.refId, cos: memory.cos, n: memory.n, ts: memory.ts, bar: referenceBar(capHeight)?.confirm } : undefined,
+  });
   const { identity, confidence, abstain } = fused;
   seen.choose = fused.choose === true;
   seen.smallRowCos = fused.smallRow === true ? fused.smallRowCos : null;

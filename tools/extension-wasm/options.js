@@ -239,7 +239,7 @@ async function refreshReferenceCount() {
 
 async function loadReferencesToggle() {
   const { useReferences } = await chrome.storage.local.get("useReferences").catch(() => ({}));
-  referencesToggle.checked = useReferences === true;
+  referencesToggle.checked = useReferences !== false;
 }
 
 referencesToggle.addEventListener("change", async () => {

@@ -227,7 +227,7 @@ test('correctionRecord builds the stored shape', () => {
     }),
     {
       ts: 123, scanId: null, index: null, pageUrl: 'https://example.com/lot', guess, pickedId: 'b', via: 'candidates',
-      crop: 'data:image/jpeg;base64,AAAA', extVersion: '2.0.1',
+      crop: 'data:image/jpeg;base64,AAAA', extVersion: '2.0.1', wrongId: null, count: 1, history: [],
     },
   );
 });

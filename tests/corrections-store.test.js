@@ -129,8 +129,8 @@ test('correctionHeads lists what decides "needs embedding" without the pictures'
   await store.save({ id: 's:1', ts: 5, pickedId: 'b', crop: null });
   const heads = (await store.correctionHeads()).sort((a, b) => a.id.localeCompare(b.id));
   assert.deepEqual(heads, [
-    { id: 's:0', ts: 4, pickedId: 'a', hasCrop: true },
-    { id: 's:1', ts: 5, pickedId: 'b', hasCrop: false },
+    { id: 's:0', ts: 4, pickedId: 'a', hasCrop: true, count: 1 },
+    { id: 's:1', ts: 5, pickedId: 'b', hasCrop: false, count: 1 },
   ]);
   assert.deepEqual(await createCorrectionsStore(fakeIndexedDB()).correctionHeads(), []);
 });

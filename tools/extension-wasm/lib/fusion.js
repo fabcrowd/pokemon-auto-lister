@@ -57,6 +57,13 @@ export const SMALL_ROWS = Object.freeze([
 export const UNKNOWN_HEIGHT_ROW = CONFIRM_ROWS.find((r) => r.minHeight === 200);
 const CONFIRM_EPSILON = 1e-9;   // float slack so a value exactly at T or G passes
 
+/** The CONFIRM row a read height falls in; null under CONFIRM_MIN_HEIGHT, the 200 px row when the height is unknown. */
+export function confirmRowFor(height) {
+  const known = Number.isFinite(height) && height > 0;
+  if (!known) return UNKNOWN_HEIGHT_ROW;
+  return height < CONFIRM_MIN_HEIGHT ? null : CONFIRM_ROWS.find((r) => height >= r.minHeight);
+}
+
 /**
  * Whether the picture (and the title line, when readable) confirms the top card at this card height.
  * contradicts(name) is true when the title spells another catalog name than `name`; omit when there is no title.
@@ -78,7 +85,7 @@ export function confirmDecision(clipHits, meta, { height = 0, contradicts = null
   const margin = aTop - rival;
   const known = Number.isFinite(height) && height > 0;
   if (known && height < CONFIRM_MIN_HEIGHT) return { confirm: false, aTop, margin };
-  const row = known ? CONFIRM_ROWS.find((r) => height >= r.minHeight) : UNKNOWN_HEIGHT_ROW;
+  const row = confirmRowFor(height);
   const confirm = aTop + CONFIRM_EPSILON >= row.minSim && margin + CONFIRM_EPSILON >= row.minGap;
   return { confirm, aTop, margin };
 }

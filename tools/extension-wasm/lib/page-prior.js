@@ -49,6 +49,9 @@ export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
   }
   return reads.map((read) => {
     if (!isOpen(read)) return null;
+    // The printing the user corrected this card to before leads: their own answer outranks the page and the picture.
+    const corrected = read.referencedId ? read.setChoices.find((choice) => choice.id === read.referencedId) : null;
+    if (corrected) return { choice: corrected, source: "correction", reason: "You corrected this to this printing before" };
     const named = hint ? read.setChoices.find((choice) => choice.setCode === hint) : null;
     if (named) return { choice: named, source: "hint", reason: `Page says ${named.set || hint}` };
     // A 1st Edition stamp rules out sets that never had one; it is picture evidence, so it only preselects.

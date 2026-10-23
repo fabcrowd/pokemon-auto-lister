@@ -78,12 +78,13 @@ export function createCorrectionsStore(idb = globalThis.indexedDB) {
       cursor.onsuccess = () => {
         const at = cursor.result;
         if (!at) return;
-        const { id, ts, pickedId, crop } = at.value;
-        heads.push({ id, ts, pickedId, hasCrop: Boolean(crop) });
+        const { id, ts, pickedId, crop, count, wrongId, lastAgreed } = at.value;
+        heads.push({ id, ts, pickedId, hasCrop: Boolean(crop), count: count || 1, ...(wrongId ? { wrongId } : {}), ...(lastAgreed ? { lastAgreed } : {}) });
         at.continue();
       };
       return { get result() { return heads; } };
     }),
+    deleteCorrection: (id) => run("readwrite", CORRECTIONS, (store) => store.delete(id)),
     all: () => run("readonly", CORRECTIONS, (store) => store.getAll()),
     count: () => run("readonly", CORRECTIONS, (store) => store.count()),
     clear: () => run("readwrite", CORRECTIONS, (store) => store.clear()),

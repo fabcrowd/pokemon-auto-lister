@@ -5,6 +5,7 @@ import { isUnsure } from "./card-display.js";
 import { ERAS, inEra, seriesOf } from "./era.js";
 import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
+import { sanitizeWhy } from "./why.js";
 
 const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed"];
 const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
@@ -190,6 +191,25 @@ export function guessOf(card) {
   };
 }
 
+/**
+ * The scanner's guess as it is saved with an answer: what it said at scan time, plus the why-record of the row as it
+ * stands now (with the price shown, which only the popup knows) and which reference, if any, was involved.
+ */
+export function guessWithWhy(card, price = null) {
+  const guess = card?.guess ? { ...card.guess } : {};
+  if (card?.why) guess.why = { ...card.why, ...(Number.isFinite(price) ? { price } : {}) };
+  if (card?.memory?.refId) guess.memory = { refId: card.memory.refId, cardId: card.memory.cardId };
+  return guess;
+}
+
+/** The card the scanner showed that the user said was wrong, or null: same card, no guess, or only another printing of the name. */
+export function wrongIdOf(guessId, pickedId, nameOf) {
+  if (!guessId || guessId === pickedId) return null;
+  const guessName = nameOf(guessId);
+  if (guessName && choiceName(guessName) === choiceName(nameOf(pickedId))) return null;
+  return guessId;
+}
+
 /** Where the listing was, without the query string, hash or login that could identify the user. */
 export function pageUrlForStorage(url) {
   try {
@@ -207,9 +227,10 @@ export function matchesLabel(count) {
 }
 
 /** One saved answer. Throws on a record that would be useless as a label. */
-export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion }) {
+export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion, why, wrongId, count, history }) {
   if (!VIAS.includes(via)) throw new Error(`correction via must be one of ${VIAS.join(", ")}`);
   if (typeof pickedId !== "string" || !pickedId) throw new Error("correction needs a pickedId");
+  const cleanWhy = sanitizeWhy(why);
   const linked = typeof scanId === "string" && scanId && Number.isInteger(index) && index >= 0;
   return {
     // One crop has one answer: a later pick for the same scan card replaces the earlier one.
@@ -229,6 +250,11 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
     via,
     crop: typeof crop === "string" && JPEG_DATA_URL.test(crop) ? crop : null,
     extVersion: typeof extVersion === "string" ? extVersion : null,
+    // Local only. why: what the scanner believed about the row being corrected; wrongId: the card it showed that was wrong.
+    ...(cleanWhy ? { why: cleanWhy } : {}),
+    wrongId: typeof wrongId === "string" && wrongId ? wrongId : null,
+    count: Number.isInteger(count) && count > 0 ? count : 1,
+    history: Array.isArray(history) ? history.slice(-3) : [],
   };
 }
 
@@ -239,7 +265,7 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
 export function setMenuCorrection(scan, index, pickedId, via) {
   const card = scan?.cards?.[index];
   if (!card || !pickedId) return null;
-  return { action: "saveCorrection", scanId: scan.bgScanId, index, guess: card.guess, pickedId, via };
+  return { action: "saveCorrection", scanId: scan.bgScanId, index, guess: guessWithWhy(card), pickedId, via };
 }
 
 export function escHtml(s) {
