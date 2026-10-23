@@ -2,6 +2,13 @@
 
 ## 2026-10-22
 
+Rendition upgrade (branch `feat/rendition-upgrade`).
+
+### Added
+- `lib/rendition.js` `upgradeRenditionUrl`: the largest rendition a listing site serves, from measured URL rules (Mercari drops `/thumb` and the width/quality query; HiBid `w=0&h=0&sz=MAX`; ShopGoodwill `t<k>.jpeg` to `<k>.jpg`; Craigslist 50x50c / 300x300 / 600x450 to 1200x900; Poshmark `s_`/`m_` to `l_`, `_wp_` webp twins kept). Same host, https only, null for anything else. The photo read, gallery photos and the tile source look try it first and fall back silently to the shown URL; `largerRendition` counts it as a known larger rendition. No new hosts or permissions.
+
+## 2026-10-22 (earlier)
+
 Pricing guards (branch `feat/pricing-guards`).
 
 ### Added

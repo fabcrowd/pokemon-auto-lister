@@ -52,6 +52,7 @@ import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-rea
 import { decideGuesses, withGuess } from "./lib/page-prior.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
+import { loadTileSource as loadTileSourceWith } from "./lib/rendition.js";
 import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from "./lib/photo-fetch.js";
 import { FIRST_EDITION_MIN_SCORE, editionAfterEreader, editionAfterPromo, editionForSets, grayFromRgba, hasFirstEdition, pricedEdition, stampAfterFirst, stampBelowText, stampScore } from "./lib/edition-stamp.js";
 import { SHADOW_MIN_DEPTH, borderEdition, shadowDepth } from "./lib/frame-shadow.js";
@@ -570,7 +571,7 @@ async function handleScanPage(sendResponse, era) {
         let bitmap = null;
         try {
           if (!(await canReadPhotoSource(tileHints[i].src))) { failures = REFINE_MAX_FAILURES; break; }
-          bitmap = await loadPhotoSource(tileHints[i].src, { allowedHosts: pageImageHosts, budget, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
+          bitmap = await loadTileSource(tileHints[i].src, { allowedHosts: pageImageHosts, budget, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
           if (!bitmap || !looksLikeCard(bitmap.width, bitmap.height)) { if (!bitmap) failures++; continue; }
           const tileCanvas = rectifyCard(bitmap, [0, 0, bitmap.width, bitmap.height]);
           const read = await identifyCard(tileCanvas, era, bitmap.height, null, bitmap.height);
@@ -2424,6 +2425,14 @@ async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget 
       return found;
     });
 }
+
+// A grid tile's own picture: the site's largest rendition first, the shown one when that is not a read of one card.
+const loadTileSource = (rawUrl, limits) => loadTileSourceWith(rawUrl, {
+  load: loadPhotoSource,
+  readable: canReadPhotoSource,
+  limits,
+  fits: (bitmap) => looksLikeCard(bitmap.width, bitmap.height),
+});
 
 function photoRejected(reason, url) {
   console.log("[BG] photo fetch rejected:", reason, url?.hostname || "");

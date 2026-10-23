@@ -5,6 +5,7 @@
 
 import { publicHttpsUrl } from "./net.js";
 import { sameImageUrl } from "./page-focus.js";
+import { isMeasuredRenditionHost, upgradeRenditionUrl } from "./rendition.js";
 
 const TARGET_SIDE = 1600;            // the rendition requested from CDNs that resize on demand
 const MAX_CANDIDATES = 4;            // each one costs a fetch, so only the likeliest few are tried
@@ -13,7 +14,7 @@ const ASPECT_TOLERANCE = 0.03;       // a rewrite that changes the shape is a di
 const IMAGE_EXTENSION = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 
 // Rough size each kind of hint is expected to have, only used to order the tries.
-const ASSUMED = { rewrite: TARGET_SIDE, original: 1500, attribute: 1400, link: 1300, og: 1200 };
+const ASSUMED = { site: 2000, rewrite: TARGET_SIDE, original: 1500, attribute: 1400, link: 1300, og: 1200 };
 
 // Facebook's CDN. Its signed URLs refuse any change to the size in `stp`, but the `ctp` resize on the og:image is
 // outside the signature: without it the same URL serves the upload itself (a Marketplace photo shown at 720x960 came
@@ -131,7 +132,9 @@ export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0
 
   for (const raw of [src, currentSrc]) {
     const url = resolve(raw, base);
-    if (url) rewrites(url).forEach((entry) => add(entry.href, entry.size));
+    if (url && !isMeasuredRenditionHost(url.hostname)) rewrites(url).forEach((entry) => add(entry.href, entry.size));
+    const site = url && upgradeRenditionUrl(url.href);
+    if (site) add(site, ASSUMED.site);
     const original = url && facebookOriginal(url.href);
     if (original) add(original, facebookSize(original));
   }
@@ -202,6 +205,11 @@ export function largerRendition({ src = "", currentSrc = "", naturalWidth = 0, n
   for (const entry of parseSrcset(srcset, naturalWidth)) {
     if (!(naturalWidth > 0) || !/\s\d+(?:\.\d+)?w\b/.test(srcset)) break;
     if (entry.size >= naturalWidth * MIN_GROWTH) offer(resolve(entry.raw, base)?.href, Math.round(entry.size * (naturalHeight > 0 ? Math.max(1, naturalHeight / naturalWidth) : 1)));
+  }
+  for (const raw of [src, currentSrc]) {
+    const url = resolve(raw, base);
+    const site = url && upgradeRenditionUrl(url.href);
+    if (site) offer(site, null);
   }
   const facebook = [src, currentSrc, ...(Array.isArray(ogImages) ? ogImages.filter((og) => sameFacebookImage(og, src || currentSrc)) : [])];
   for (const raw of facebook) {
