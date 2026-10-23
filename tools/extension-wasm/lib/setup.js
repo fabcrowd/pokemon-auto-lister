@@ -28,7 +28,7 @@ export const ASSETS = [
     name: "clip_visual_int8.onnx",
     bytes: 88_999_043,
     release: "v3.0",
-    sha256: "d15ade1768efb9c395d39fe0f4b513e06ce503116d01a28d7cf2833e5f811e6c",
+    sha256: "0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b",
   },
   {
     name: "card_detect.onnx",

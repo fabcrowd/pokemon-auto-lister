@@ -17,7 +17,7 @@ const BASE = 'https://pack.test/pack/';
 const DIM = 512;
 // The build under test: clip v3 (first 16 hex of its pinned sha256) and crop version 3. OLD_BUILD is clip v2.0, which
 // the adapter, memory and 'is this a card' check of a bundle made for it do not fit.
-const EXPECTED = { model: 'd15ade1768efb9c3', crop: 3 };
+const EXPECTED = { model: '0dba1302580da2a6', crop: 3 };
 const OLD_BUILD = { model: '77538aade655907f', crop: 2 };
 const T0 = Date.parse('2026-10-15T12:00:00Z');
 const DAY = 24 * 3600 * 1000;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-23 (model E and the per-height confirm rule)
+
+### Changed
+- The shipped recognizer is model E (`fastE_all/epoch16-ema-int8.onnx`, release `v3.0`, 88,999,043 bytes, sha256 `0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b`; tag prefix `0dba1302580da2a6`). Pinned in `lib/setup.js` and `tools/shared-data/pins.json`; `CACHE_NAME` and the catalog are unchanged. Tests that echo the pin updated. Staged release files in `dist/release-v3.0/` replaced (old file kept as `_F-clip_visual_int8.onnx.bak`); `docs/release-v3.0-notes.md` has the new sha and model description, and says E results are pending.
+- `CARD_BACK` re-derived for E from the 71 verified training backs (`cardback-E/cardback_vector.json`); `CARD_BACK_BUILT_FOR` is `0dba1302580da2a6` / crop 3. `BACK_MIN` stays 0.84 (held-out precision 1.000, recall 0.882).
+- `lib/fusion.js`: the accept gate and the height caps are replaced by the per-height confirm rule (`confirmDecision`, table `CONFIRM_ROWS`, fitted for E per `card-scanner-data/data/reports/fusion-study-E/README.md`; refit whenever the model, crop or catalog changes). Confirm needs a card height of at least 200 px, `a_top >= T(h)` and a lead of at least `G(h)` over the best card with a different name, where a candidate loses 0.05 when the title line spells another catalog name. Under 200 px nothing confirms. An unconfirmed read that the previous gate could name is a CHOOSE (unsure, 0.49, guess first); otherwise it abstains as before. The high tier (`HIGH_TIER_SIM` / `HIGH_TIER_GAP`) and `CLEAR_GAP` are unchanged.
+- `background.js`: the title line is read before the decision for crops of 200 px and up (`TITLE_MIN_HEIGHT` 200, was 150) and its contradiction demotes candidates inside the rule. A title that agrees adds nothing (no bonus), so it no longer lifts a CHOOSE to identified; contradiction handling after the decision is unchanged.
+
+### Removed
+- `capSmallSource`, `MIN_RELIABLE_HEIGHT`, `MIN_NAME_HEIGHT` (replaced by the confirm rule and `markChoose`).
+
 ## 2026-10-23 (review all: scores, printing-only pairs, Tick all)
 
 ### Changed

@@ -50,7 +50,7 @@ test('the card finder comes from v2.1, the recognizer from v3.0 and the rest fro
 test('the recognizer (clip v3) is pinned to its published hash and exact size', () => {
   const clip = ASSETS.find((a) => a.name === 'clip_visual_int8.onnx');
   assert.equal(clip.release, 'v3.0');
-  assert.equal(clip.sha256, 'd15ade1768efb9c395d39fe0f4b513e06ce503116d01a28d7cf2833e5f811e6c');
+  assert.equal(clip.sha256, '0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b');
   assert.equal(clip.bytes, 88_999_043);
 });
 

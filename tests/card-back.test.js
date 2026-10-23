@@ -12,7 +12,7 @@ test('the reference is a unit-length 512-d embedding', () => {
 
 test('the reference was built for the pinned model and crop', () => {
   assert.deepEqual({ ...CARD_BACK_BUILT_FOR }, { clip: modelTags().clip, crop: modelTags().crop });
-  assert.equal(CARD_BACK_BUILT_FOR.clip, 'd15ade1768efb9c3');
+  assert.equal(CARD_BACK_BUILT_FOR.clip, '0dba1302580da2a6');
 });
 
 test('a card back that looks more like the back than any card is a back', () => {

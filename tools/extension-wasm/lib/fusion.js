@@ -2,16 +2,68 @@
 //
 // The catalog contains many near-duplicate card artworks (Base Set reprints across
 // Legendary Collection, Expedition, etc.) so a strict margin threshold rejects most
-// correct top-1 matches. Instead, we accept when any of these holds:
+// correct top-1 matches.
+//
+// A read is CONFIRMED by the per-height rule in confirmDecision (below). The rival that counts is the best card
+// with ANOTHER name; same-name printings never block a confirmation. A read the rule does not confirm is a CHOOSE:
+// if the older gate still finds a name for it, it is returned unsure (the picker asks, the guess first);
+// otherwise it abstains. The older gate (kept for exactly that fallback) accepts when any of these holds:
 //   1. Top-1 raw CLIP similarity is clearly ahead of top-2 (gap ≥ CLEAR_GAP)
 //   2. Top-1 and top-2 share the same Pokémon name — same art, different printings
 //   3. Top-1 similarity is very high in absolute terms (likely exact catalog match)
 //   4. Among the top 3 near-tied hits, one name appears more often than the others
 
-const MIN_ACCEPT_SIM = 0.72;  // below this → always abstain
+import { choiceName } from "./set-choice.js";
+
+const MIN_ACCEPT_SIM = 0.72;  // below this the fallback gate abstains
 export const CLEAR_GAP = 0.02;  // gap over #2 that definitively accepts
 const HIGH_SIM       = 0.85;  // absolute similarity that overrides gap
 const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much sim
+
+// Per-height confirm rule, fitted for model E (clip v3.0, sha256 0dba1302...) on the geometry set; see
+// data/reports/fusion-study-E/README.md in card-scanner-data (section 1). Refit whenever the model, the crop or
+// the catalog changes. Not tuned here: do not adjust a number without a new study.
+//   a_c = cos_c - TITLE_NAME_PENALTY when the card's title line spells ANOTHER catalog name than c's (silent or
+//         unreadable title = no change, no bonus)
+//   CONFIRM iff height >= CONFIRM_MIN_HEIGHT and a_top >= T(height) and
+//         a_top - max{a_c : choiceName(c) != choiceName(top)} >= G(height); else CHOOSE.
+// Between fitted heights the pair of the next lower fitted height applies. An unknown height (0 or missing: grid
+// tiles, where no size judgement is made) uses the native row.
+export const CONFIRM_MIN_HEIGHT = 200;
+export const TITLE_NAME_PENALTY = 0.05;
+export const CONFIRM_ROWS = Object.freeze([
+  Object.freeze({ minHeight: 350, minSim: 0.72, minGap: 0.00 }),
+  Object.freeze({ minHeight: 300, minSim: 0.69, minGap: 0.00 }),
+  Object.freeze({ minHeight: 250, minSim: 0.60, minGap: 0.01 }),
+  Object.freeze({ minHeight: 200, minSim: 0.62, minGap: 0.03 }),
+]);
+const CONFIRM_EPSILON = 1e-9;   // float slack so a value exactly at T or G passes
+
+/**
+ * Whether the picture (and the title line, when readable) confirms the top card at this card height.
+ * contradicts(name) is true when the title spells another catalog name than `name`; omit when there is no title.
+ * @returns {{confirm: boolean, aTop: number, margin: number}}
+ */
+export function confirmDecision(clipHits, meta, { height = 0, contradicts = null } = {}) {
+  const top = clipHits?.[0];
+  if (!top || !meta?.[top.index]) return { confirm: false, aTop: 0, margin: 0 };
+  const topName = meta[top.index].name;
+  const adjusted = (hit) => hit.score - (contradicts?.(meta[hit.index]?.name) ? TITLE_NAME_PENALTY : 0);
+  const aTop = adjusted(top);
+  const topKey = choiceName(topName);
+  let rival = -Infinity;
+  for (const hit of clipHits.slice(1)) {
+    const name = meta[hit.index]?.name;
+    if (choiceName(name) === topKey) continue;
+    rival = Math.max(rival, adjusted(hit));
+  }
+  const margin = aTop - rival;
+  const known = height > 0;
+  if (known && height < CONFIRM_MIN_HEIGHT) return { confirm: false, aTop, margin };
+  const row = known ? CONFIRM_ROWS.find((r) => height >= r.minHeight) : CONFIRM_ROWS[0];
+  const confirm = aTop + CONFIRM_EPSILON >= row.minSim && margin + CONFIRM_EPSILON >= row.minGap;
+  return { confirm, aTop, margin };
+}
 
 // What earns the green "high" stripe is a colour/honesty signal, not a gate: a read that is accepted but does
 // not qualify keeps its name and price and shows "medium". Fit on the centre-crop embeddings (crop 34bc430,
@@ -41,11 +93,18 @@ export const BELOW_HIGH_CONFIDENCE = 0.79;
 // Order and the distance between neighbours are judged on rank; what a similarity means, on score.
 const rankOf = (hit) => hit.rank ?? hit.score;
 
-export function fuseResults(clipHits, _ocrText, meta) {
-  const read = fuseUntiered(clipHits, meta);
-  if (read.abstain || read.confidence <= BELOW_HIGH_CONFIDENCE) return read;
-  const lead = clipHits[1] ? rankOf(clipHits[0]) - rankOf(clipHits[1]) : clipHits[0].score;
-  const high = read.reason === "clear_gap" && clipHits[0].score >= HIGH_TIER_SIM && lead >= HIGH_TIER_GAP;
+export function fuseResults(clipHits, _ocrText, meta, _idMap, options = {}) {
+  if (!confirmDecision(clipHits, meta, options).confirm) {
+    const fallback = fuseUntiered(clipHits, meta);
+    if (fallback.abstain) return fallback;
+    // CHOOSE: the picture has a guess but the rule does not vouch for it. Below "medium" so the picker asks.
+    return { ...fallback, confidence: Math.min(fallback.confidence, SMALL_SOURCE_CONFIDENCE_CAP), reason: "choose", choose: true };
+  }
+  const topSim = clipHits[0].score;
+  const read = { identity: meta[clipHits[0].index], confidence: topSim, abstain: false, reason: "confirmed" };
+  if (read.confidence <= BELOW_HIGH_CONFIDENCE) return read;
+  const lead = clipHits[1] ? rankOf(clipHits[0]) - rankOf(clipHits[1]) : topSim;
+  const high = topSim >= HIGH_TIER_SIM && lead >= HIGH_TIER_GAP;
   return high ? read : { ...read, confidence: BELOW_HIGH_CONFIDENCE };
 }
 
@@ -54,9 +113,9 @@ export function fuseResults(clipHits, _ocrText, meta) {
  * the final top card must be the raw top card, and the raw read must itself be high. Otherwise the adapter or
  * memory changed the answer, which is advisory and never high. Without an adapter rawHits is the same array as hits.
  */
-export function capAdapterChange(result, hits, rawHits, meta) {
+export function capAdapterChange(result, hits, rawHits, meta, options = {}) {
   if (!result || result.abstain || rawHits === hits || result.confidence <= BELOW_HIGH_CONFIDENCE) return result;
-  const rawRead = rawHits?.length ? fuseResults(rawHits, null, meta) : null;
+  const rawRead = rawHits?.length ? fuseResults(rawHits, null, meta, null, options) : null;
   const same = hits[0] && rawHits?.[0] && meta[hits[0].index]?.id === meta[rawHits[0].index]?.id;
   if (same && rawRead && !rawRead.abstain && rawRead.confidence > BELOW_HIGH_CONFIDENCE) return result;
   return { ...result, confidence: BELOW_HIGH_CONFIDENCE, confidenceBeforeAdapterCap: result.confidence };
@@ -170,20 +229,8 @@ export function markRepeatedNames(reads) {
   });
 }
 
-// A card read from a crop shorter than this is a few hundred blurry pixels, and CLIP matches look-alike
-// art with high similarity. Heights are the pixels the matcher actually sees (informationHeight).
-// This rests on few samples: in the 2026-10-16 run every read we could verify against the listing title
-// came from a crop of at least 271 px, and the confident wrong ones in the first report came from
-// thumbnail-class crops. Grid and lot pages had no ground truth, so 300 is a conservative guess, not a fit.
-export const MIN_RELIABLE_HEIGHT = 300;
 // Below the "medium" tier (0.50) so the scan's picker asks the user, with the guess first.
 export const SMALL_SOURCE_CONFIDENCE_CAP = 0.49;
-// From this height up to MIN_RELIABLE_HEIGHT a read the gate accepted keeps its name (shown as identified, never
-// high), and only the printing is left to the user. Measured on 11 Facebook Marketplace photos (2026-10-19, ground
-// truth by eye, both the source-photo and screenshot paths): accepted reads from 200-299 px crops named the right
-// card 75 times out of 84 (89%, close to the ~90% the accept gate gives on HiBid crops); 120-199 px: 35 of 69; under
-// 120 px: 4 of 25. Below 200 px a read stays a suggestion.
-export const MIN_NAME_HEIGHT = 200;
 
 // Just under the "high" tier (0.80, card-display.js confTier): a name that is sure while the printing is not
 // is shown as medium until a number, set symbol or stamp read settles the set.
@@ -207,20 +254,17 @@ export function capUnconfirmedSet(result) {
 }
 
 /**
- * An automatic read from a small crop may be listed as a suggestion, but never as sure. From MIN_NAME_HEIGHT up
- * it keeps its name (below high, the printing still open); below that it is a suggestion.
- * Unknown height (0 or missing) is not small. Reads that already abstained or are unsure pass through.
+ * A read the confirm rule did not vouch for (fuseResults flagged it `choose`) is returned as a suggestion: its name
+ * stays, but it is unsure so the picker asks. Under CONFIRM_MIN_HEIGHT it is also flagged smallSource (a known
+ * height only; 0 or missing is unknown, not small). Abstained and confirmed reads pass through unchanged.
  */
-export function capSmallSource(result, sourceHeight) {
-  if (!result || result.abstain) return result;
-  if (!(sourceHeight > 0) || sourceHeight >= MIN_RELIABLE_HEIGHT) return result;
-  if (!(result.confidence > SMALL_SOURCE_CONFIDENCE_CAP)) return result;
-  if (sourceHeight >= MIN_NAME_HEIGHT) {
-    // The name stands; the printing is not something a crop this size settles.
-    if (!(result.confidence > BELOW_HIGH_CONFIDENCE)) return { ...result, smallSource: true };
-    return { ...result, confidence: BELOW_HIGH_CONFIDENCE, confidenceBeforeSmallCap: result.confidence, smallSource: true };
-  }
-  return { ...result, confidence: SMALL_SOURCE_CONFIDENCE_CAP, smallSource: true, unsure: true };
+export function markChoose(result, height) {
+  if (!result?.choose) return result;
+  const rest = { ...result };
+  delete rest.choose;
+  if (rest.abstain) return rest;
+  const small = height > 0 && height < CONFIRM_MIN_HEIGHT;
+  return { ...rest, confidence: Math.min(rest.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, ...(small ? { smallSource: true } : {}) };
 }
 
 /**

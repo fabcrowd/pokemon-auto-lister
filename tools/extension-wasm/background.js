@@ -20,7 +20,7 @@ import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
-import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
+import { SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
@@ -1623,24 +1623,25 @@ const STAMP_CARD_H = 525;
  * A stamp rules out the set choices that never had a 1st Edition.
  */
 async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null, capHeight = sourceHeight, numberSource = null) {
-  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource);
+  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource, capHeight);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
   const settled = capUnconfirmedSet(await withSetRange(read));
-  return checkTitle(capSmallSource(settled, capHeight), settled, cardCanvas, capHeight, era);
+  return checkTitle(markChoose(settled, capHeight), cardCanvas, capHeight, era);
 }
 
-// The title line is read from crops this tall up (none below 150 px was legible on the 11 Facebook photos).
-const TITLE_MIN_HEIGHT = 150;
+// The title line is read from crops this tall up: the confirm rule (lib/fusion.js) uses it before it decides, and
+// nothing below the rule's own minimum height can confirm.
+const TITLE_MIN_HEIGHT = CONFIRM_MIN_HEIGHT;
 const TITLE_RERANK_DEPTH = 20;
 
 /**
  * The card's own title line as a second opinion on the picture match (lib/set-choice.js titleVerdict).
- * Agreeing, a name the small-crop cap left unsure may show as identified. Naming another catalog card, that card
+ * Its demotion already acted inside the confirm rule (recognizeWith). Naming another catalog card, that card
  * becomes the guess when it is among the closest matches, else the picture's name is only asked about.
  * Silent, nothing changes. A changed name is always asked about, never shown as identified.
  */
-async function checkTitle(result, uncapped, cardCanvas, height, era) {
+async function checkTitle(result, cardCanvas, height, era) {
   if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
   const name = result.abstain ? null : result.identity?.name || null;
   let text = "";
@@ -1652,12 +1653,8 @@ async function checkTitle(result, uncapped, cardCanvas, height, era) {
   }
   const verdict = titleVerdict(name, text, catalogNames());
   if (verdict.kind === "silent") return result;
-  if (verdict.kind === "agree") {
-    const capped = result.unsure && result.smallSource && !uncapped.unsure && !uncapped.abstain && uncapped.confidence > SMALL_SOURCE_CONFIDENCE_CAP;
-    if (!capped) return { ...result, titleConfirmed: true };
-    console.log("[BG]   title confirms", JSON.stringify(name), "- shown as identified");
-    return { ...uncapped, confidence: Math.min(uncapped.confidence, BELOW_HIGH_CONFIDENCE), smallSource: true, titleConfirmed: true };
-  }
+  // Agreeing adds nothing to the confirm rule (no bonus), so a CHOOSE stays one.
+  if (verdict.kind === "agree") return { ...result, titleConfirmed: true };
   const { hits } = await searchBoth(await embedSerial(cardCanvas));
   const wanted = choiceName(verdict.titleName);
   const hit = hits.slice(0, TITLE_RERANK_DEPTH).find((h) => {
@@ -1757,8 +1754,8 @@ async function rangeOfChoices(choices) {
   return setRangeSummary(priced);
 }
 
-async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource = null) {
-  const result = await recognizeCard(cardCanvas, era, sourceHeight);
+async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource = null, capHeight = sourceHeight) {
+  const result = await recognizeCard(cardCanvas, era, sourceHeight, capHeight);
   if (result.numberRead && result.identity?.id && !result.setChoices) result.setEvidence = "number";
   await settleFromCorners(result, numberSource);
   const setCodes = result.setChoices ? result.setChoices.map((c) => c.setCode) : [result.identity?.setCode];
@@ -2001,14 +1998,30 @@ function cardGrayFull(cardCanvas) {
  */
 const closestIds = (hits) => closestMatches(hits, _meta).map((row) => row.id);
 
-async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
+async function recognizeCard(cardCanvas, era = null, sourceHeight = 0, capHeight = sourceHeight) {
   const seen = {};
-  const result = await recognizeWith(cardCanvas, era, sourceHeight, seen);
+  const result = await recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight);
   // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
-  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}) };
+  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.choose && !result.numberRead ? { choose: true } : {}) };
 }
 
-async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
+// What the confirm rule (lib/fusion.js) needs besides the matches: the card's read height and, from crops tall
+// enough to read, whether the title line spells another catalog name than a candidate's. A failed read is silent.
+async function confirmContext(cardCanvas, capHeight) {
+  const options = { height: capHeight };
+  if (!(capHeight >= TITLE_MIN_HEIGHT)) return options;
+  let text = "";
+  try {
+    text = await readOnce(cardCanvas, "name", readCardName);
+  } catch (err) {
+    console.log("[BG]   title read failed:", err?.message || err);
+    return options;
+  }
+  const known = catalogNames();
+  return { ...options, contradicts: (name) => Boolean(name) && titleVerdict(name, text, known).kind === "contradict" };
+}
+
+async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = sourceHeight) {
   const embedding = await embedSerial(cardCanvas);
   const { hits: catalogHits, rawHits } = await searchBoth(embedding);
   seen.catalogTop = rawHits[0]?.score ?? null;
@@ -2021,7 +2034,10 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   const { hits, referencedId } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0);
   seen.referencedId = referencedId;
   seen.ranked = rankedIds(hits);
-  const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, inEraHits ? hits : rawHits, _meta);
+  const confirm = await confirmContext(cardCanvas, capHeight);
+  const fused = capAdapterChange(fuseResults(hits, null, _meta, _idMap, confirm), hits, inEraHits ? hits : rawHits, _meta, confirm);
+  const { identity, confidence, abstain } = fused;
+  seen.choose = fused.choose === true;
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;
   const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits, era) : null;
