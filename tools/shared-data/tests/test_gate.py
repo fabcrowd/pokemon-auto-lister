@@ -94,7 +94,7 @@ class Outcomes(unittest.TestCase):
 class ConfirmRule(unittest.TestCase):
     """lib/fusion.js confirmDecision: height >= 200, a_top >= T(h), margin over the best different-name card >= G(h)."""
 
-    ROWS = {200: (0.62, 0.03), 250: (0.60, 0.01), 300: (0.69, 0.00), 350: (0.72, 0.00)}
+    ROWS = {200: (0.68, 0.03), 250: (0.72, 0.03), 300: (0.74, 0.02), 350: (0.76, 0.02)}
 
     def test_below_min_height_never_confirms(self):
         self.assertFalse(gate.confirms(0.99, 0.5, 199))
@@ -109,22 +109,22 @@ class ConfirmRule(unittest.TestCase):
                 self.assertFalse(gate.confirms(t + 1, g - 0.001, height), (height, "just under G"))
 
     def test_boundary_heights_switch_band(self):
-        self.assertFalse(gate.confirms(0.61, 0.5, 249))  # T is 0.62 up to 249 ...
-        self.assertTrue(gate.confirms(0.61, 0.5, 250))  # ... and 0.60 from 250
-        self.assertTrue(gate.confirms(0.65, 0.5, 299))  # T is still 0.60 up to 299 ...
-        self.assertFalse(gate.confirms(0.65, 0.5, 300))  # ... and 0.69 from 300
-        self.assertTrue(gate.confirms(0.69, 0.0, 300))
-        self.assertTrue(gate.confirms(0.69, 0.0, 349))
-        self.assertFalse(gate.confirms(0.69, 0.0, 350))  # T is 0.72 from 350
+        self.assertTrue(gate.confirms(0.70, 0.5, 249))  # T is 0.68 up to 249 ...
+        self.assertFalse(gate.confirms(0.70, 0.5, 250))  # ... and 0.72 from 250
+        self.assertTrue(gate.confirms(0.73, 0.5, 299))  # T is still 0.72 up to 299 ...
+        self.assertFalse(gate.confirms(0.73, 0.5, 300))  # ... and 0.74 from 300
+        self.assertTrue(gate.confirms(0.75, 0.5, 349))  # T is still 0.74 up to 349 ...
+        self.assertFalse(gate.confirms(0.75, 0.5, 350))  # ... and 0.76 from 350
         self.assertFalse(gate.confirms(0.99, 0.0, 200))  # G is 0.03 in the 200 band
+        self.assertFalse(gate.confirms(0.99, 0.01, 350))  # and 0.02 from 300 up
 
     def test_unknown_height_uses_the_200_row(self):
-        self.assertEqual(gate.UNKNOWN_HEIGHT_ROW, (200, 0.62, 0.03))
-        self.assertFalse(gate.confirms(0.72, 0.0))  # the native row would confirm; the 200 row needs a 0.03 lead
-        self.assertTrue(gate.confirms(0.65, 0.05))
-        self.assertFalse(gate.confirms(0.65, 0.01))
-        self.assertFalse(gate.confirms(0.61, 0.5))
-        self.assertTrue(gate.confirms(0.62, 0.03, 0))
+        self.assertEqual(gate.UNKNOWN_HEIGHT_ROW, (200, 0.68, 0.03))
+        self.assertFalse(gate.confirms(0.77, 0.0))  # the native row would need only a 0.02 lead; the 200 row needs 0.03
+        self.assertTrue(gate.confirms(0.70, 0.05))
+        self.assertFalse(gate.confirms(0.70, 0.01))
+        self.assertFalse(gate.confirms(0.67, 0.5))
+        self.assertTrue(gate.confirms(0.68, 0.03, 0))
 
     def test_same_name_rival_is_ignored_different_name_counts(self):
         ids = ["a", "b", "c", "d"]

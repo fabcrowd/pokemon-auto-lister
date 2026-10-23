@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CONFIRM_ROWS, UNKNOWN_HEIGHT_ROW, confirmDecision, fuseResults, markChoose } from '../tools/extension-wasm/lib/fusion.js';
+import { CONFIRM_ROWS, SMALL_ROWS, UNKNOWN_HEIGHT_ROW, confirmDecision, fuseResults, markChoose, smallRowDecision } from '../tools/extension-wasm/lib/fusion.js';
 
-// Per-height confirm rule for model E (data/reports/fusion-study-E/README.md): the numbers are pinned here so a change is deliberate.
+// Per-height confirm rule for model E (fusion-study-E/README.md and floor/README.md in card-scanner-data): the numbers are pinned here so a change is deliberate.
 const META = [{ name: 'Pikachu', id: 'a' }, { name: 'Raichu', id: 'b' }, { name: 'Pikachu', id: 'c' }];
 const hits = (top, rival, rivalIndex = 1) => [{ index: 0, score: top }, { index: rivalIndex, score: rival }];
 const confirms = (h, top, rival, opts = {}) => confirmDecision(hits(top, rival), META, { height: h, ...opts }).confirm;
 
-test('the table is the study table', () => {
-  assert.deepEqual(CONFIRM_ROWS.map((r) => [r.minHeight, r.minSim, r.minGap]), [[350, 0.72, 0], [300, 0.69, 0], [250, 0.6, 0.01], [200, 0.62, 0.03]]);
+test('the table is the study table (floor analysis rows)', () => {
+  assert.deepEqual(CONFIRM_ROWS.map((r) => [r.minHeight, r.minSim, r.minGap]), [[350, 0.76, 0.02], [300, 0.74, 0.02], [250, 0.72, 0.03], [200, 0.68, 0.03]]);
 });
 
 test('nothing under 200 px confirms, however strong the match', () => {
@@ -17,34 +17,50 @@ test('nothing under 200 px confirms, however strong the match', () => {
 });
 
 test('height boundaries pick the next lower fitted row', () => {
-  // 249 uses (0.62, 0.03); 250 uses (0.60, 0.01)
-  assert.equal(confirms(249, 0.61, 0.5), false);
-  assert.equal(confirms(250, 0.61, 0.5), true);
-  // 299 uses (0.60, 0.01); 300 uses (0.69, 0)
-  assert.equal(confirms(299, 0.65, 0.5), true);
-  assert.equal(confirms(300, 0.65, 0.5), false);
-  // 349 uses (0.69, 0); 350 uses (0.72, 0)
-  assert.equal(confirms(349, 0.70, 0.5), true);
-  assert.equal(confirms(350, 0.70, 0.5), false);
-  assert.equal(confirms(1200, 0.72, 0.5), true);
+  // 199 never; 200 uses (0.68, 0.03)
+  assert.equal(confirms(199, 0.70, 0.5), false);
+  assert.equal(confirms(200, 0.70, 0.5), true);
+  // 249 uses (0.68, 0.03); 250 uses (0.72, 0.03)
+  assert.equal(confirms(249, 0.70, 0.5), true);
+  assert.equal(confirms(250, 0.70, 0.5), false);
+  // 299 uses (0.72, 0.03); 300 uses (0.74, 0.02)
+  assert.equal(confirms(299, 0.73, 0.5), true);
+  assert.equal(confirms(300, 0.73, 0.5), false);
+  // 349 uses (0.74, 0.02); 350 uses (0.76, 0.02)
+  assert.equal(confirms(349, 0.75, 0.5), true);
+  assert.equal(confirms(350, 0.75, 0.5), false);
+  assert.equal(confirms(1200, 0.76, 0.5), true);
 });
 
 test('exactly at T confirms, just under does not', () => {
-  assert.equal(confirms(200, 0.62, 0.1), true);
-  assert.equal(confirms(200, 0.6199, 0.1), false);
-  assert.equal(confirms(250, 0.60, 0.1), true);
-  assert.equal(confirms(300, 0.69, 0.1), true);
-  assert.equal(confirms(350, 0.72, 0.1), true);
-  assert.equal(confirms(350, 0.7199, 0.1), false);
+  assert.equal(confirms(200, 0.68, 0.1), true);
+  assert.equal(confirms(200, 0.6799, 0.1), false);
+  assert.equal(confirms(250, 0.72, 0.1), true);
+  assert.equal(confirms(250, 0.7199, 0.1), false);
+  assert.equal(confirms(300, 0.74, 0.1), true);
+  assert.equal(confirms(300, 0.7399, 0.1), false);
+  assert.equal(confirms(350, 0.76, 0.1), true);
+  assert.equal(confirms(350, 0.7599, 0.1), false);
 });
 
 test('exactly at G confirms, just under does not', () => {
   assert.equal(confirms(200, 0.70, 0.67), true);
   assert.equal(confirms(200, 0.70, 0.6701), false);
-  assert.equal(confirms(250, 0.70, 0.69), true);
-  assert.equal(confirms(250, 0.70, 0.6901), false);
-  assert.equal(confirms(300, 0.75, 0.75), true);
-  assert.equal(confirms(300, 0.75, 0.7501), false);
+  assert.equal(confirms(250, 0.75, 0.72), true);
+  assert.equal(confirms(250, 0.75, 0.7201), false);
+  assert.equal(confirms(300, 0.78, 0.76), true);
+  assert.equal(confirms(300, 0.78, 0.7601), false);
+  assert.equal(confirms(350, 0.80, 0.78), true);
+  assert.equal(confirms(350, 0.80, 0.7801), false);
+});
+
+test('QA D-1 regression: the two wrong priced cards (cos 0.73 at 312 px and 334 px) are no longer confirmed', () => {
+  // Regice ex read at 312 px and Regirock ex at 334 px were confirmed at cosine 0.73 under the old 300 row (0.69).
+  for (const h of [312, 334]) {
+    assert.equal(confirms(h, 0.73, 0.5), false, `rival, ${h}`);
+    assert.equal(confirms(h, 0.73, 0.1), false, `weak rival, ${h}`);
+    assert.equal(confirmDecision([{ index: 0, score: 0.73 }], META, { height: h }).confirm, false, `no rival, ${h}`);
+  }
 });
 
 test('a rival with the same card name is ignored', () => {
@@ -55,21 +71,21 @@ test('a rival with the same card name is ignored', () => {
 
 test('a title spelling another name demotes that candidate by 0.05 and can flip the decision', () => {
   const spellsRaichu = (name) => name !== 'Raichu';
-  // top contradicted: 0.66 -> 0.61 < T(200)
-  assert.equal(confirms(200, 0.66, 0.5), true);
-  assert.equal(confirms(200, 0.66, 0.5, { contradicts: (n) => n === 'Pikachu' }), false);
+  // top contradicted: 0.70 -> 0.65 < T(200)
+  assert.equal(confirms(200, 0.70, 0.5), true);
+  assert.equal(confirms(200, 0.70, 0.5, { contradicts: (n) => n === 'Pikachu' }), false);
   // rival contradicted: gap 0.01 -> 0.06 clears G(200)
-  assert.equal(confirms(200, 0.64, 0.63), false);
-  assert.equal(confirms(200, 0.64, 0.63, { contradicts: (n) => n === 'Raichu' }), true);
+  assert.equal(confirms(200, 0.70, 0.69), false);
+  assert.equal(confirms(200, 0.70, 0.69, { contradicts: (n) => n === 'Raichu' }), true);
   assert.equal(spellsRaichu('Pikachu'), true);
-  const decision = confirmDecision(hits(0.64, 0.63), META, { height: 200, contradicts: (n) => n === 'Raichu' });
-  assert.ok(Math.abs(decision.aTop - 0.64) < 1e-12);
+  const decision = confirmDecision(hits(0.70, 0.69), META, { height: 200, contradicts: (n) => n === 'Raichu' });
+  assert.ok(Math.abs(decision.aTop - 0.70) < 1e-12);
   assert.ok(Math.abs(decision.margin - 0.06) < 1e-12);
 });
 
 test('no title evidence is neutral', () => {
-  const none = confirmDecision(hits(0.66, 0.62), META, { height: 200 });
-  const silent = confirmDecision(hits(0.66, 0.62), META, { height: 200, contradicts: () => false });
+  const none = confirmDecision(hits(0.70, 0.62), META, { height: 200 });
+  const silent = confirmDecision(hits(0.70, 0.62), META, { height: 200, contradicts: () => false });
   assert.deepEqual(none, silent);
 });
 
@@ -77,11 +93,11 @@ test('an unknown height uses the 200-249 px row (thumbnails are about 200 px)', 
   assert.equal(UNKNOWN_HEIGHT_ROW, CONFIRM_ROWS.find((r) => r.minHeight === 200));
   for (const opts of [{ height: 0 }, {}, { height: undefined }, { height: NaN }, { height: -5 }]) {
     const at = (top, rival) => confirmDecision(hits(top, rival), META, opts).confirm;
-    assert.equal(at(0.65, 0.64), false, 'cos 0.65 vs rival 0.64: lead 0.01 < G 0.03');
-    assert.equal(at(0.65, 0.60), true, 'cos 0.65 vs rival 0.60: lead 0.05 clears G');
-    assert.equal(at(0.62, 0.50), true, 'exactly at T');
-    assert.equal(at(0.61, 0.10), false, 'under T never confirms');
-    assert.equal(at(0.71, 0.70), false, 'the native row would have confirmed this');
+    assert.equal(at(0.70, 0.69), false, 'cos 0.70 vs rival 0.69: lead 0.01 < G 0.03');
+    assert.equal(at(0.70, 0.65), true, 'cos 0.70 vs rival 0.65: lead 0.05 clears G');
+    assert.equal(at(0.68, 0.50), true, 'exactly at T');
+    assert.equal(at(0.67, 0.10), false, 'under T never confirms');
+    assert.equal(at(0.77, 0.76), false, 'the native row would have confirmed this');
   }
 });
 
@@ -95,7 +111,7 @@ test('two different-name candidates within 0.03 at an unknown height are a CHOOS
 });
 
 test('no rival of another name means the gap condition holds', () => {
-  assert.equal(confirmDecision([{ index: 0, score: 0.63 }], META, { height: 200 }).confirm, true);
+  assert.equal(confirmDecision([{ index: 0, score: 0.69 }], META, { height: 200 }).confirm, true);
 });
 
 test('fuseResults: a confirmed read keeps the tier rule, an unconfirmed one is a CHOOSE', () => {
@@ -103,11 +119,14 @@ test('fuseResults: a confirmed read keeps the tier rule, an unconfirmed one is a
   assert.equal(sure.reason, 'confirmed');
   assert.equal(sure.confidence, 0.9);
   assert.equal(sure.abstain, false);
-  const noLead = fuseResults(hits(0.9, 0.89), null, META, [], { height: 400 });
+  const noLead = fuseResults(hits(0.9, 0.88), null, META, [], { height: 400 });
+  assert.equal(noLead.reason, 'confirmed');
   assert.equal(noLead.confidence, 0.79);
-  const mid = fuseResults(hits(0.65, 0.5), null, META, [], { height: 250 });
+  const tooClose = fuseResults(hits(0.9, 0.89), null, META, [], { height: 400 });
+  assert.equal(tooClose.choose, true);
+  const mid = fuseResults(hits(0.73, 0.5), null, META, [], { height: 250 });
   assert.equal(mid.reason, 'confirmed');
-  assert.equal(mid.confidence, 0.65);
+  assert.equal(mid.confidence, 0.73);
   const small = fuseResults(hits(0.9, 0.5), null, META, [], { height: 199 });
   assert.equal(small.choose, true);
   assert.equal(small.reason, 'choose');
@@ -131,4 +150,56 @@ test('markChoose makes the guess unsure and flags small sources only for a known
   const confirmed = { identity: { name: 'Pikachu' }, confidence: 0.7, abstain: false };
   assert.equal(markChoose(confirmed, 100), confirmed);
   assert.equal(markChoose(null, 100), null);
+});
+
+// Small-photo rows (100-199 px): a read that passes one stays a CHOOSE but is flagged so the popup can look at its price.
+const small = (h, top, rival, opts = {}) => smallRowDecision(hits(top, rival), META, { height: h, ...opts });
+
+test('SMALL_ROWS are the PM-set rows', () => {
+  assert.deepEqual(SMALL_ROWS.map((r) => [r.minHeight, r.minSim, r.minGap]), [[150, 0.65, 0.05], [100, 0.68, 0.05]]);
+});
+
+test('small rows: boundaries 99/100/149/150/199 and exactly-at-T/G', () => {
+  assert.equal(small(99, 0.99, 0.1).pass, false, 'under 100 nothing is flagged');
+  assert.equal(small(100, 0.68, 0.5).pass, true);
+  assert.equal(small(100, 0.6799, 0.5).pass, false);
+  assert.equal(small(149, 0.68, 0.5).pass, true);
+  assert.equal(small(149, 0.66, 0.5).pass, false, '149 still needs 0.68');
+  assert.equal(small(150, 0.66, 0.5).pass, true, '150 needs only 0.65');
+  assert.equal(small(150, 0.65, 0.5).pass, true);
+  assert.equal(small(150, 0.6499, 0.5).pass, false);
+  assert.equal(small(199, 0.65, 0.5).pass, true);
+  assert.equal(small(200, 0.99, 0.1).pass, false, 'from 200 px the confirm rows apply');
+  assert.equal(small(150, 0.70, 0.65).pass, true, 'lead exactly 0.05');
+  assert.equal(small(150, 0.70, 0.6501).pass, false, 'lead just under 0.05');
+});
+
+test('small rows: unknown height is never flagged; the title demotion does not apply', () => {
+  for (const h of [0, undefined, NaN, -3]) assert.equal(small(h, 0.99, 0.1).pass, false, String(h));
+  assert.equal(small(150, 0.70, 0.68, { contradicts: (n) => n === 'Raichu' }).pass, false, 'a contradicted rival is not demoted');
+  assert.equal(small(150, 0.70, 0.40, { contradicts: (n) => n === 'Pikachu' }).pass, true, 'a contradicted top is not demoted');
+  assert.equal(smallRowDecision(hits(0.70, 0.70, 2), META, { height: 150 }).pass, true, 'same-name rival ignored');
+  assert.equal(smallRowDecision([{ index: 0, score: 0.7 }], META, { height: 150 }).pass, true, 'no rival');
+});
+
+test('a small read that passes its row is a CHOOSE carrying smallRow and smallRowCos; one that fails carries neither', () => {
+  const passed = markChoose(fuseResults(hits(0.74, 0.60), null, META, [], { height: 150 }), 150);
+  assert.equal(passed.unsure, true);
+  assert.equal(passed.smallSource, true);
+  assert.equal(passed.smallRow, true);
+  assert.equal(passed.smallRowCos, 0.74);
+  const failed = markChoose(fuseResults(hits(0.74, 0.70), null, META, [], { height: 150 }), 150);
+  assert.equal(failed.smallRow, undefined);
+  assert.equal(failed.smallRowCos, undefined);
+  const tiny = markChoose(fuseResults(hits(0.90, 0.10), null, META, [], { height: 99 }), 99);
+  assert.equal(tiny.smallRow, undefined);
+  const big = fuseResults(hits(0.90, 0.10), null, META, [], { height: 400 });
+  assert.equal(big.smallRow, undefined);
+});
+
+test('a small read below the older gate still abstains but keeps the smallRow flag (candidates carry it)', () => {
+  const low = fuseResults(hits(0.66, 0.50), null, META, [], { height: 150 });
+  assert.equal(low.abstain, true);
+  assert.equal(low.smallRow, true);
+  assert.equal(low.smallRowCos, 0.66);
 });

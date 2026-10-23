@@ -4,6 +4,7 @@ import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
+import { demoteCard, isDemotable, priceHighOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
@@ -290,6 +291,7 @@ function applyScanResult(data) {
   _showChoose = true;
   closeBulk(false);
   _lastResult.cards.forEach(seedVariant);
+  _lastResult = { ..._lastResult, cards: demoteExpensive(_lastResult.cards) };
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
   updateStats(_lastResult.cards);
@@ -303,11 +305,87 @@ function applyScanResult(data) {
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
       : "";
-    showMessage(`${scanStatus(cards)}${truncationNote(data.truncated)}.${stillLoading}`);
+    showMessage(`${scanStatus(_lastResult.cards)}${truncationNote(data.truncated)}.${stillLoading}`);
   }
 
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
+  promoteCheap(_lastResult);
+}
+
+/* ─── Stakes: price decides how much picture evidence a card needs (lib/stakes.js) ─── */
+
+// Only small-photo cards (smallRow) are priced here, a few at a time, one price per candidate id, from the same
+// priceCard call a pick uses. No other host is asked.
+const STAKES_FETCH_LIMIT = 6;
+const _candidatePrice = new Map();
+const _stakesQueue = [];
+let _stakesActive = 0;
+
+function limitedFetch(task) {
+  return new Promise((resolve) => {
+    const run = async () => {
+      _stakesActive += 1;
+      try { resolve(await task()); } finally {
+        _stakesActive -= 1;
+        _stakesQueue.shift()?.();
+      }
+    };
+    if (_stakesActive < STAKES_FETCH_LIMIT) run(); else _stakesQueue.push(run);
+  });
+}
+
+function candidatePrice(id) {
+  if (!_candidatePrice.has(id)) {
+    const asked = limitedFetch(async () => {
+      try { return await chrome.runtime.sendMessage({ action: "priceCard", id }); } catch (err) { return { error: explainScanError(err?.message || err) }; }
+    }).then((resp) => {
+      if (!resp || resp.error) _candidatePrice.delete(id);
+      return resp;
+    });
+    _candidatePrice.set(id, asked);
+  }
+  return _candidatePrice.get(id);
+}
+
+// A card the picture confirmed, without the "high" tier or a title that agrees, whose price is high, is asked about instead.
+function demoteExpensive(cards) {
+  return cards.map((card, idx) => {
+    if (chooseState(card) !== "confirmed" || !isDemotable(card)) return card;
+    const decision = stakesDecision({
+      state: "confirmed",
+      tier: confTier(card.confidence),
+      titleConfirmed: Boolean(card.titleConfirmed),
+      userConfirmed: Boolean(card.userConfirmed),
+      priceHigh: priceHighOf(card, chosenPrinting(card, idx), enabledConditions()),
+    });
+    return decision === "demote" ? demoteCard(card) : card;
+  });
+}
+
+// A small-photo card to choose whose best candidate is cheap is confirmed without asking. This is not the user's answer:
+// nothing is saved as a correction or sent for learning, and "Wrong card?" is still on the row.
+function promoteCheap(scan) {
+  scan.cards.forEach((card, idx) => {
+    if (card.smallRow !== true || chooseState(card) !== "choose") return;
+    const top = candidatesOfCard(card)[0];
+    if (!top?.id) return;
+    candidatePrice(top.id).then((resp) => {
+      if (!resp || resp.error || _lastResult?.scanId !== scan.scanId) return;
+      const current = _lastResult.cards[idx];
+      if (!current || current.smallRow !== true || chooseState(current) !== "choose" || _picker.has(idx)) return;
+      if (candidatesOfCard(current)[0]?.id !== top.id) return;
+      const probe = { identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price };
+      const decision = stakesDecision({
+        state: "choose",
+        tier: confTier(current.confidence),
+        smallRow: true,
+        userConfirmed: Boolean(current.userConfirmed),
+        priceHigh: priceHighOf(probe, null, enabledConditions()),
+      });
+      if (decision === "promote") replaceCard(idx, promoteCard(current, resp));
+    });
+  });
 }
 
 // The background rescans on its own when more card pictures load. A pick in progress is never thrown away: the list
@@ -712,6 +790,9 @@ function renderChooseRow(card, idx) {
   const smallHtml = readFromSmallCrop(card)
     ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall). A full-size photo reads better.">small photo</span>`
     : "";
+  const valueHtml = card.valueCheck
+    ? ` <span class="value-chip" title="This card is worth enough that the picture alone is not trusted. Check it.">Check: high value</span>`
+    : "";
   const repeatMark = card.repeatedName
     ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
     : "";
@@ -726,7 +807,7 @@ function renderChooseRow(card, idx) {
       <div class="conf-stripe abstain"></div>
       <div class="card-meta">
         <div class="card-name">Card ${idx + 1}${repeatMark}</div>
-        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}</div>
+        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}${valueHtml}</div>
       </div>
       ${renderPrice(card, idx)}
     </div>
@@ -1151,6 +1232,7 @@ async function pickSet(idx, id, picked = null) {
     price_variant: resp.price_variant,
     price_grid: resp.price_grid,
     setConfirmed: true,
+    userConfirmed: true,
     // A card the scanner gave up on is still a card the user named.
     ...(picked ? { abstain: false, confidence: 1 } : {}),
     pricing: false,
@@ -1235,6 +1317,7 @@ function pushOverlay() {
       ...computeDisplayForOverlay(c, idx),
       state: overlayStateOf(c),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
+      ...(c.valueCheck && chooseState(c) === "choose" ? { valueCheck: true } : {}),
     },
   }));
   chrome.runtime.sendMessage({

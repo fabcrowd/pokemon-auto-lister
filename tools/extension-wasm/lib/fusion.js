@@ -21,7 +21,10 @@ const HIGH_SIM       = 0.85;  // absolute similarity that overrides gap
 const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much sim
 
 // Per-height confirm rule, fitted for model E (clip v3.0, sha256 0dba1302...) on the geometry set; see
-// data/reports/fusion-study-E/README.md in card-scanner-data (section 1). Refit whenever the model, the crop or
+// data/reports/fusion-study-E/README.md in card-scanner-data (section 1), with the thresholds raised to the floor
+// analysis in data/reports/fusion-study-E/floor/README.md (2026-10-23): the first rows confirmed cards that are not
+// in the catalog (QA D-1: Regice ex at 312 px and Regirock ex at 334 px, both cosine 0.73, were confirmed with real
+// prices), and the floors below are the rows where cosine stops confirming them. Refit whenever the model, the crop or
 // the catalog changes. Not tuned here: do not adjust a number without a new study.
 //   a_c = cos_c - TITLE_NAME_PENALTY when the card's title line spells ANOTHER catalog name than c's (silent or
 //         unreadable title = no change, no bonus)
@@ -35,10 +38,21 @@ const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much 
 export const CONFIRM_MIN_HEIGHT = 200;
 export const TITLE_NAME_PENALTY = 0.05;
 export const CONFIRM_ROWS = Object.freeze([
-  Object.freeze({ minHeight: 350, minSim: 0.72, minGap: 0.00 }),
-  Object.freeze({ minHeight: 300, minSim: 0.69, minGap: 0.00 }),
-  Object.freeze({ minHeight: 250, minSim: 0.60, minGap: 0.01 }),
-  Object.freeze({ minHeight: 200, minSim: 0.62, minGap: 0.03 }),
+  Object.freeze({ minHeight: 350, minSim: 0.76, minGap: 0.02 }),
+  Object.freeze({ minHeight: 300, minSim: 0.74, minGap: 0.02 }),
+  Object.freeze({ minHeight: 250, minSim: 0.72, minGap: 0.03 }),
+  Object.freeze({ minHeight: 200, minSim: 0.68, minGap: 0.03 }),
+]);
+
+// Small photos (100-199 px) never confirm. A read that clears one of these rows stays a CHOOSE but is flagged
+// (smallRow, smallRowCos) so the popup may look at the price of its top candidate: cheap cards are then confirmed
+// automatically (lib/stakes.js). Same lead semantics as CONFIRM_ROWS (lead over the best card with ANOTHER name,
+// same-name printings never block), but on raw cosines: the title line is not read below 200 px, so no demotion.
+// The numbers are a product decision, not a fitted row; a read under 100 px is never flagged.
+export const SMALL_MIN_HEIGHT = 100;
+export const SMALL_ROWS = Object.freeze([
+  Object.freeze({ minHeight: 150, minSim: 0.65, minGap: 0.05 }),
+  Object.freeze({ minHeight: 100, minSim: 0.68, minGap: 0.05 }),
 ]);
 export const UNKNOWN_HEIGHT_ROW = CONFIRM_ROWS.find((r) => r.minHeight === 200);
 const CONFIRM_EPSILON = 1e-9;   // float slack so a value exactly at T or G passes
@@ -67,6 +81,27 @@ export function confirmDecision(clipHits, meta, { height = 0, contradicts = null
   const row = known ? CONFIRM_ROWS.find((r) => height >= r.minHeight) : UNKNOWN_HEIGHT_ROW;
   const confirm = aTop + CONFIRM_EPSILON >= row.minSim && margin + CONFIRM_EPSILON >= row.minGap;
   return { confirm, aTop, margin };
+}
+
+/**
+ * Whether a read under 200 px clears its small row (SMALL_ROWS). Only a known height from 100 to 199 px can.
+ * @returns {{pass: boolean, cos: number, lead: number}} cos is the raw top similarity, lead its margin over the best other-name card
+ */
+export function smallRowDecision(clipHits, meta, { height = 0 } = {}) {
+  const top = clipHits?.[0];
+  const none = { pass: false, cos: top?.score ?? 0, lead: 0 };
+  if (!top || !meta?.[top.index]) return none;
+  if (!(Number.isFinite(height) && height >= SMALL_MIN_HEIGHT && height < CONFIRM_MIN_HEIGHT)) return none;
+  const topKey = choiceName(meta[top.index].name);
+  let rival = -Infinity;
+  for (const hit of clipHits.slice(1)) {
+    if (choiceName(meta[hit.index]?.name) === topKey) continue;
+    rival = Math.max(rival, hit.score);
+  }
+  const lead = top.score - rival;
+  const row = SMALL_ROWS.find((r) => height >= r.minHeight);
+  const pass = top.score + CONFIRM_EPSILON >= row.minSim && lead + CONFIRM_EPSILON >= row.minGap;
+  return { pass, cos: top.score, lead };
 }
 
 // What earns the green "high" stripe is a colour/honesty signal, not a gate: a read that is accepted but does
@@ -100,9 +135,11 @@ const rankOf = (hit) => hit.rank ?? hit.score;
 export function fuseResults(clipHits, _ocrText, meta, _idMap, options = {}) {
   if (!confirmDecision(clipHits, meta, options).confirm) {
     const fallback = fuseUntiered(clipHits, meta);
-    if (fallback.abstain) return fallback;
+    const small = smallRowDecision(clipHits, meta, options);
+    const flag = small.pass ? { smallRow: true, smallRowCos: small.cos } : {};
+    if (fallback.abstain) return { ...fallback, ...flag };
     // CHOOSE: the picture has a guess but the rule does not vouch for it. Below "medium" so the picker asks.
-    return { ...fallback, confidence: Math.min(fallback.confidence, SMALL_SOURCE_CONFIDENCE_CAP), reason: "choose", choose: true };
+    return { ...fallback, ...flag, confidence: Math.min(fallback.confidence, SMALL_SOURCE_CONFIDENCE_CAP), reason: "choose", choose: true };
   }
   const topSim = clipHits[0].score;
   const read = { identity: meta[clipHits[0].index], confidence: topSim, abstain: false, reason: "confirmed" };

@@ -22,9 +22,12 @@ REF_MIN, REF_MARGIN = 0.93, 0.02  # exam.score_exam defaults (lib/references.js)
 # 200 row (UNKNOWN_HEIGHT_ROW, as lib/fusion.js does for an unknown height: thumbnails are about 200 px and the
 # native row's G=0 was fitted on large crops); no height is invented. Nightly rows carry no
 # title line either, so TITLE_NAME_PENALTY (the extension's demotion for a contradicting title) is mirrored but never applied.
+# Rows are the floor-analysis values (fusion-study-E/floor/README.md, 2026-10-23). NOT mirrored, on purpose: SMALL_ROWS
+# (100-199 px, flagged smallRow) and the price rules of lib/stakes.js (promote at <= $5, demote at >= $50). Nightly rows
+# carry neither a read height nor a price, so neither rule can be replayed here.
 CONFIRM_MIN_HEIGHT = 200
 TITLE_NAME_PENALTY = 0.05
-CONFIRM_ROWS = ((350, 0.72, 0.00), (300, 0.69, 0.00), (250, 0.60, 0.01), (200, 0.62, 0.03))
+CONFIRM_ROWS = ((350, 0.76, 0.02), (300, 0.74, 0.02), (250, 0.72, 0.03), (200, 0.68, 0.03))
 UNKNOWN_HEIGHT_ROW = next(r for r in CONFIRM_ROWS if r[0] == CONFIRM_MIN_HEIGHT)
 CONFIRM_EPSILON = 1e-9  # float slack so a value exactly at T or G passes
 MAX_ABSTAIN_RISE = 0.02  # abstain rate may not rise by more than 2 points

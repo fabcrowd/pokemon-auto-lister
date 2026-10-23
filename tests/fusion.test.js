@@ -118,13 +118,13 @@ test('high needs a lead of 0.025 and a similarity of 0.82; the same read below e
 });
 
 test('a lower confidence is not raised, and a near-tie is never high', () => {
-  const weak = pair(['Wartortle', 'Squirtle'], [0.74, 0.5]);
-  assert.equal(fuseResults(weak.hits, null, weak.meta, [], NATIVE).confidence, 0.74);
+  const weak = pair(['Wartortle', 'Squirtle'], [0.78, 0.5]);
+  assert.equal(fuseResults(weak.hits, null, weak.meta, [], NATIVE).confidence, 0.78);
   const sameName = pair(['Blastoise', 'Blastoise'], [0.93, 0.925]);
   const named = fuseResults(sameName.hits, null, sameName.meta, [], NATIVE);
   assert.equal(named.reason, 'confirmed');
   assert.notEqual(confTier(named.confidence), 'high');
-  const tie = pair(['Eevee', 'Shellder'], [0.99, 0.985]);
+  const tie = pair(['Eevee', 'Shellder'], [0.99, 0.97]);
   const highSim = fuseResults(tie.hits, null, tie.meta, [], NATIVE);
   assert.equal(highSim.reason, 'confirmed');
   assert.notEqual(confTier(highSim.confidence), 'high');

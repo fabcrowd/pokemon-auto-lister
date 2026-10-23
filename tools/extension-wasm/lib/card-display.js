@@ -264,7 +264,7 @@ export function isSetConfirmed(card) {
 /** The user accepted the guessed printing: it stops being a guess, and the Set? menu stays. */
 export function confirmGuess(card) {
   if (!card?.bestGuess) return card;
-  const next = { ...card, setConfirmed: true };
+  const next = { ...card, setConfirmed: true, userConfirmed: true };
   delete next.bestGuess;
   return next;
 }
@@ -368,7 +368,7 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
 }
 
 // A range that already exists on the row for the condition being shown, or null.
-function rowRange(card, condition) {
+export function rowRange(card, condition) {
   const range = card?.setRange;
   if (!(range?.high > 0)) return null;
   return range.byCondition?.[condition] ?? (condition === 'NM' || !range.byCondition ? range : null);

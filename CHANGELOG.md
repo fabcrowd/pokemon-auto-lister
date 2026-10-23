@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-10-23 (price decides how much picture evidence a card needs)
+
+Product stays at two user-visible states (CONFIRMED / CHOOSE). QA D-1: two wrong cards were auto-confirmed with real prices at cosine 0.73 ('Regice ex' Hidden Legends #97 $303.75 at read height 312; 'Regirock ex' Emerald #99 $179.99 at 334).
+
+### Changed
+- `lib/fusion.js` `CONFIRM_ROWS` raised to the floor analysis (`card-scanner-data/data/reports/fusion-study-E/floor/README.md`): under 200 px never; 200-249 T 0.68 / G 0.03; 250-299 T 0.72 / G 0.03; 300-349 T 0.74 / G 0.02; 350 and up T 0.76 / G 0.02 (was 0.62/0.03, 0.60/0.01, 0.69/0.00, 0.72/0.00). `UNKNOWN_HEIGHT_ROW` is still the 200 row, so it is now 0.68 / 0.03. The two QA cases (0.73 at 312 and 334 px) no longer confirm.
+- `tools/shared-data/pipeline/gate.py` `CONFIRM_ROWS` mirrors the new rows (drift test and gate tests updated). `SMALL_ROWS` and the price rules are not mirrored: nightly rows carry no read height and no price.
+
+### Added
+- `lib/fusion.js` `SMALL_ROWS` (100-149 px T 0.68 / G 0.05; 150-199 px T 0.65 / G 0.05; lead over the best different-name card, no title demotion) and `smallRowDecision`. A read under 200 px that passes its row stays CHOOSE but carries `smallRow: true` and `smallRowCos` (also when the older gate abstained). Under 100 px nothing is flagged.
+- `lib/stakes.js`: `LOW_STAKES_MAX_USD = 5`, `HIGH_STAKES_MIN_USD = 50`, pure `stakesDecision` ('promote' | 'demote' | 'keep'), `priceHighOf`, `promoteCard`, `demoteCard`, `isDemotable`. Promote: a CHOOSE card with `smallRow` whose top candidate costs at most $5. Demote: a picture-confirmed card that is not "high", not title-confirmed, not read from a printed number, priced at $50 or more (single price, or the high end of the open range). A card the user confirmed (`userConfirmed`: pick, search, accepted guess, bulk confirm) is never changed; an unknown price changes nothing.
+- Popup: after a scan, only `smallRow` CHOOSE cards fetch the price of their top candidate through the existing `priceCard` call (at most 6 at a time, cached per candidate id, no new host). A promoted card is built like a pick, marked `autoConfirmed`, saves no correction and sends nothing for learning; "Wrong card?" still works. A demoted card becomes a CHOOSE card (`valueCheck`, its own name preselected) with a "Check: high value" chip; the overlay tag reads "Check: high value". Lot totals follow (promoted = Sure, demoted = To confirm). Evaluated on every scan and rescan.
+- `background.js` carries `smallRow` / `smallRowCos` from the read and attaches `candidates` / `ranked` / `crop` to confirmed cards the stakes rule could demote.
+
+### Tests
+- `confirm-rule.test.js` (new rows, boundaries 199/200/249/250/299/300/349/350, QA D-1 regression, small rows), new `stakes.test.js`, `fusion.test.js` (two expectations moved with the rows), `test_gate.py`, popup e2e (stakes cases).
+
 ## 2026-10-23 (QA fixes: Clear, octet-stream photos, wording, tags, wizard size, version 3.0.0)
 
 ### Fixed
