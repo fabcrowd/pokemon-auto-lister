@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SMALL_SOURCE_CONFIDENCE_CAP, capHeightFor, informationHeight, markChoose } from '../tools/extension-wasm/lib/fusion.js';
+import { SMALL_SOURCE_CONFIDENCE_CAP, capHeightFor, informationHeight, markChoose, naturalPerFedFor } from '../tools/extension-wasm/lib/fusion.js';
 import { confTier } from '../tools/extension-wasm/lib/card-display.js';
 import { isUnsure } from '../tools/extension-wasm/lib/card-picker.js';
 
@@ -35,4 +35,25 @@ test('the size cap is not applied on grid pages, where small tiles are normal', 
   assert.equal(capHeightFor('grid', 120), 0);
   assert.equal(capHeightFor('listing', 120), 120);
   assert.equal(capHeightFor('unknown', 120), 120);
+});
+
+test("a card read from a fetched original is judged at the original's pixels, not the shown photo's", () => {
+  // shown 720 px photo, original 1600 px: a card 150 px tall on the original has 150 px of information.
+  const shownScale = 720 / 1600;
+  const perFed = naturalPerFedFor({ fromSource: true, shownNaturalPerFed: shownScale });
+  assert.equal(perFed, 1);
+  assert.equal(informationHeight(150, perFed), 150);
+  // the old rule scaled it down to the shown size
+  assert.equal(informationHeight(150, shownScale), 67.5);
+});
+
+test('screenshot and tile reads keep the shown-scale rule; unknown natural size stays unlimited', () => {
+  assert.equal(naturalPerFedFor({ fromSource: false, shownNaturalPerFed: 0.5 }), 0.5);
+  assert.equal(naturalPerFedFor({ fromSource: false, shownNaturalPerFed: undefined }), undefined);
+  assert.equal(informationHeight(200, naturalPerFedFor({ fromSource: false, shownNaturalPerFed: undefined })), 200);
+});
+
+test('a srcset upgrade or a plain source read is already at its own pixels', () => {
+  assert.equal(naturalPerFedFor({ fromSource: true, shownNaturalPerFed: undefined }), 1);
+  assert.equal(informationHeight(300, naturalPerFedFor({ fromSource: true, shownNaturalPerFed: 0.25 })), 300);
 });

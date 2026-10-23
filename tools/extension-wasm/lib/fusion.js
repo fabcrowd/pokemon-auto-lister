@@ -325,6 +325,15 @@ export function informationHeight(fedHeight, naturalPerFed) {
   return naturalPerFed > 0 ? fedHeight * Math.min(1, naturalPerFed) : fedHeight;
 }
 
+/**
+ * Natural picture pixels per fed pixel for a read. A picture fetched by the extension (the page's own, a larger
+ * rendition, or a Facebook original) is fed at its own pixels, so 1: the height measured on it is the information.
+ * A screenshot crop carries the shown picture's scale (undefined when the natural size is unknown).
+ */
+export function naturalPerFedFor({ fromSource, shownNaturalPerFed }) {
+  return fromSource ? 1 : shownNaturalPerFed;
+}
+
 /** Height to cap against, or 0 for none: small tiles are normal on grid pages and are judged by the matcher. */
 export function capHeightFor(pageKind, height) {
   return pageKind === "grid" ? 0 : height;

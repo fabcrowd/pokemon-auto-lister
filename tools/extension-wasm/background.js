@@ -21,7 +21,7 @@ import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isDemotable } from "./lib/stakes.js";
-import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, markRepeatedNames } from "./lib/fusion.js";
+import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
@@ -785,13 +785,16 @@ async function handleScanPage(sendResponse, era) {
                   }
                 }
               }
-              const naturalPerFed = fromSource ? upgrade?.naturalPerFed ?? 1
-                : ph.naturalHeight > 0 && sourceTransform === null
+              // A fetched picture (including a Facebook original) is judged on its own pixels; a screenshot crop at the shown scale.
+              const naturalPerFed = naturalPerFedFor({
+                fromSource,
+                shownNaturalPerFed: ph.naturalHeight > 0 && sourceTransform === null
                   ? (() => {
                     const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
                     return shown ? 1 / (shown.scaleY * dpr) : undefined;
                   })()
-                  : undefined;
+                  : undefined,
+              });
               console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
                           imageW + "x" + imageH,
                           fromSource ? upgrade ? "(source image, upgraded " + imageW + "x" + imageH + " from " + ph.naturalWidth + "x" + ph.naturalHeight + ")" : "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
@@ -862,7 +865,7 @@ async function handleScanPage(sendResponse, era) {
                 const read = cards.slice(photoFirst).filter((c) => !c.cardBack);
                 const small = read.filter((c) => c.readHeight > 0 && c.readHeight < FULL_SIZE_SMALL_PX).length;
                 if (read.length && small >= Math.max(2, read.length / 2)) {
-                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px) even in the full-size photo");
+                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px, median fed " + (read.map((c) => c.readHeight).sort((a, b) => a - b)[read.length >> 1] ?? 0) + " px) even in the full-size photo");
                   else {
                     const larger = largerRendition({ src: ph.src, naturalWidth: ph.naturalWidth, naturalHeight: ph.naturalHeight,
                       srcset: ph.sources?.srcset || "", ogImages: domResp?.page?.ogImages, base: targetTab.url });
@@ -2471,9 +2474,6 @@ async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget 
     }).then((found) => {
       if (found && isFacebookCdn(new URL(found.url).hostname)) {
         console.log("[BG] reading the Facebook original:", found.bitmap.width + "x" + found.bitmap.height, "(shown", ph.naturalWidth + "x" + ph.naturalHeight + ")");
-        // The original sharpens the match, but how sure a card is shown stays judged on the photo the seller's
-        // buyers see: at 2048 px, 50-card lots put many crops just past the size cap, and those were the wrong ones.
-        return { ...found, naturalPerFed: ph.naturalWidth / found.bitmap.width };
       }
       return found;
     });

@@ -12,6 +12,18 @@
 - After a version swap the message bar no longer keeps "Price updated for <old name>."; it shows the scan status again.
 - The setup status line no longer keeps "Downloading 5 of 5" after the download finishes.
 
+## 2026-10-23 (an original photo that was read is judged at its own pixels)
+
+### Fixed
+- When the extension reads a Facebook photo's original (site access, `ctp=` dropped), the read height used for the confirm rows, SMALL_ROWS and the small-source flags is now the height measured on the original's pixels. It was kept at the shown photo's scale (`naturalPerFed = shown / original`, a rollback from 2dc8aec made under the old model and rules), so most cards stayed on Choose even though the original had been read, and the log said "cards small ... even in the full-size photo". The log now gives the median fed height. Screenshot reads, page photos that were not upgraded and grid tiles are unchanged; overlay placement is unchanged.
+- `naturalPerFedFor` (`lib/fusion.js`): fetched source 1, screenshot crop the shown scale.
+
+### Measured
+- Facebook-CDN stand-in, 10 pages, automatic path with site access: confirmed 55 -> 113 of 250 (click path was 101); labelled matched cards 0 wrong before and after (45 of 48 right, was 36); 59 newly confirmed cards, 37 unlabelled all name-correct by eye; one correct card (g06 Gym Trainer, 326 px) went back to Choose. Screenshot path unchanged (37 / 37). Owner photos 3-7, grid fixtures: identical. 125 harvest photos (local pages, no original): identical within run-to-run noise.
+
+### Tests
+- `small-source.test.js`: read scale for a fetched original (shown 720 vs original 1600), screenshot, unknown natural size, srcset upgrade.
+
 ## 2026-10-23 (corrections fixes from the real-model QA: exam photos, printing-only corrections)
 
 ### Fixed
