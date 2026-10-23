@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -23,6 +23,8 @@ const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sValue       = document.getElementById("s-value");
 const statValue    = document.getElementById("stat-value");
 const lotTotalsEl  = document.getElementById("lot-totals");
+const lotEditionEl = document.getElementById("lot-edition");
+const lotEditionSelect = document.getElementById("lot-edition-select");
 const fullSizeNotice = document.getElementById("fullsize-notice");
 const fullSizeText = document.getElementById("fullsize-text");
 const fullSizeOpen = document.getElementById("fullsize-open");
@@ -50,6 +52,8 @@ let _scanSeq = 0;
 let _filters   = mergeFilters(DEFAULT_FILTERS);
 let _variantChoice = new Map(); // card index -> printing the user chose, or one settled by the printed number
 let _variantSuggest = new Map(); // card index -> printing the picture suggests: preselected, never priced until confirmed
+let _variantPicked = new Set(); // card indexes whose printing the user set themselves: the lot edition leaves them alone
+let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _searchTimer = null;
@@ -210,6 +214,8 @@ btnClear.addEventListener("click", () => {
   _lastResult = null;
   _variantChoice = new Map();
   _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
   _showUnrecognised = false;
   examStrip.hidden = true;
@@ -260,6 +266,8 @@ function applyScanResult(data) {
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
   _variantChoice = new Map();
   _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
   _userEdits = false;
   _showUnrecognised = false;
@@ -413,7 +421,34 @@ function updateStats(cards) {
   sValue.textContent = lot.value ?? "—";
   setStatDetail(lot.detail);
   renderLotTotals(cards, choiceFor);
+  renderLotEdition(cards);
 }
+
+for (const edition of LOT_EDITIONS) lotEditionSelect.add(new Option(edition.label, edition.id));
+
+// Shown only while some row has its finish settled by the printed number but its edition open.
+function renderLotEdition(cards) {
+  lotEditionEl.hidden = !(cards || []).some(needsEdition);
+  lotEditionSelect.value = _lotEdition;
+}
+
+// One edition for the whole lot: every eligible row the user has not set themselves takes it, or loses it when cleared.
+lotEditionSelect.addEventListener("change", () => {
+  const cards = _lastResult?.cards;
+  if (!cards) return;
+  _lotEdition = lotEditionSelect.value;
+  cards.forEach((card, idx) => {
+    if (_variantPicked.has(idx) || !needsEdition(card)) return;
+    const key = _lotEdition ? editionVariant(card, _lotEdition) : null;
+    if (key) _variantChoice.set(idx, key);
+    else _variantChoice.delete(idx);
+    _variantSuggest.delete(idx);
+  });
+  renderResults();
+  pushOverlay();
+  updateStats(cards);
+  lotEditionSelect.focus();
+});
 
 // The lot in two figures: what the confirmed cards are worth (a range while a printing is open), and how many
 // cards are still to confirm. A guessed card adds nothing until the user confirms it.
@@ -493,6 +528,7 @@ function chosenPrinting(card, idx) {
 function resetResults() {
   sValue.textContent    = "—";
   setStatDetail("");
+  lotEditionEl.hidden   = true;
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
@@ -528,8 +564,8 @@ function renderResults() {
       const idx = Number(e.target.dataset.idx);
       const value = e.target.value;
       _variantSuggest.delete(idx);
-      if (value) _variantChoice.set(idx, value);
-      else _variantChoice.delete(idx);
+      if (value) { _variantChoice.set(idx, value); _variantPicked.add(idx); }
+      else { _variantChoice.delete(idx); _variantPicked.delete(idx); }
       renderResults();
       pushOverlay();
       updateStats(cards);
@@ -809,6 +845,7 @@ resultsEl.addEventListener("click", (e) => {
     const suggested = _variantSuggest.get(idx);
     if (!suggested) return;
     _variantChoice.set(idx, suggested);
+    _variantPicked.add(idx);
     _variantSuggest.delete(idx);
     renderResults();
     pushOverlay();
@@ -912,6 +949,7 @@ function replaceCard(idx, next) {
   _lastResult = { ..._lastResult, cards };
   _variantChoice.delete(idx);
   _variantSuggest.delete(idx);
+  _variantPicked.delete(idx);
   seedVariant(next, idx);
   renderResults();
   if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);

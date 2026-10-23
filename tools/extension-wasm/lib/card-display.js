@@ -56,6 +56,37 @@ export function suggestedVariant(card) {
   return rest.length === 1 ? rest[0] : null;
 }
 
+const EDITION_ROW = /^(1stEdition|shadowless)/i;
+const FINISH_SUFFIX = { holofoil: 'Holofoil', reverse: 'ReverseHolofoil', normal: 'Normal' };
+
+/** The lot-level edition choices, in the order the popup offers them. */
+export const LOT_EDITIONS = [
+  { id: 'unlimited', label: 'Unlimited' },
+  { id: 'shadowless', label: 'Shadowless' },
+  { id: 'first', label: '1st Edition' },
+];
+
+/**
+ * A named, settled card whose finish was read from the printed number or catalog but whose grid also has
+ * 1stEdition / Shadowless rows: the finish is known, the edition is not, so the row stays a range until one is chosen.
+ */
+export function needsEdition(card) {
+  if (!card?.finishSure || !isIdentified(card) || !isSetConfirmed(card)) return false;
+  return listPrintings(card.price_grid).some((name) => EDITION_ROW.test(name));
+}
+
+/** The grid row for a card's number-read finish in the given lot edition, or null when the grid has no such row. */
+export function editionVariant(card, edition) {
+  const suffix = FINISH_SUFFIX[card?.finishSure];
+  if (!suffix) return null;
+  const names = listPrintings(card.price_grid);
+  const prefix = { first: '1stEdition', shadowless: 'shadowless', unlimited: 'unlimited' }[edition];
+  if (!prefix) return null;
+  const want = prefix.toLowerCase() + suffix.toLowerCase();
+  const bare = edition === 'unlimited' && card.finishSure === 'normal' ? prefix : null;
+  return names.find((name) => name.toLowerCase() === want || name === bare) ?? null;
+}
+
 export function marketRange(grid) {
   const values = Object.values(grid?.variants || {})
     .map((variant) => variant?.market)
@@ -221,9 +252,9 @@ export function swapVersion(card, id) {
 
 const hasSetRange = (card) => card?.setRange?.high > 0;
 
-// A best guess that came from the picture alone is not evidence: only the page's own words (a set heading, the
-// sets the page's other cards were read as) let a guessed set be quoted, marked until the user confirms it.
-const isPageGuess = (card) => Boolean(card?.bestGuess) && card.bestGuess.source !== 'image';
+// A best guess from the picture, or borrowed from the page's other cards, is not evidence about this card: only a
+// page heading that names the set lets a guessed set be quoted, marked until the user confirms it.
+const isPageGuess = (card) => card?.bestGuess?.source === 'hint';
 
 // More than one possible set means the user has to pick before we quote, unless the page itself names the set.
 export function isSetConfirmed(card) {

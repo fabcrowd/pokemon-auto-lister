@@ -219,8 +219,8 @@ test('a sure name with its printing open counts as identified, with the printing
   const open = { identity: { id: 'base1-4', name: 'Charizard' }, confidence: 0.79, abstain: false,
     setChoices: [{ id: 'base1-4' }, { id: 'base4-4' }], setRange: { low: 120, high: 950, count: 2 } };
   assert.equal(needsPrinting(open), true);
-  // A guessed printing keeps its own price and the "Set?" menu.
-  assert.equal(needsPrinting({ ...open, bestGuess: { id: 'base1-4', reason: 'page' } }), false);
+  // A printing the page heading names keeps its own price and the "Set?" menu.
+  assert.equal(needsPrinting({ ...open, bestGuess: { source: 'hint', reason: 'Page says Base Set' } }), false);
   assert.equal(classifyCard(open), 'identified');
   // A picture-only guess is no evidence: the printing is still the user's call, with the guess preselected.
   assert.equal(needsPrinting({ ...open, bestGuess: { source: 'image', reason: 'best guess from the picture' } }), true);

@@ -62,7 +62,7 @@ test('the most common confirmed set wins, ties go to the first seen', () => {
 test('withGuess shows the guessed printing with its single price and keeps the menu', () => {
   const read = { ...open(opt('a', 'sv01', 'A', 0.5), opt('b', 'sv02', 'B', 0.8)), confidence: 0.7, setRange: { low: 1, high: 5 }, catalogTop: 0.8 };
   const card = { id: 'b', name: 'Eevee', set: 'B', setCode: 'sv02', number: '001' };
-  const decision = { choice: read.setChoices[1], source: 'page', reason: 'likely B' };
+  const decision = { choice: read.setChoices[1], source: 'hint', reason: 'likely B' };
   const priced = { market_price: 3, price_variant: 'normal', price_grid: { variants: {} } };
   const next = withGuess(read, decision, card, priced);
   assert.equal(next.identity.id, 'b');
@@ -70,7 +70,7 @@ test('withGuess shows the guessed printing with its single price and keeps the m
   assert.equal(next.setRange, undefined);
   assert.equal(next.market_price, 3);
   assert.equal(next.setConfirmed, false);
-  assert.deepEqual(next.bestGuess, { source: 'page', reason: 'likely B' });
+  assert.deepEqual(next.bestGuess, { source: 'hint', reason: 'likely B' });
   assert.ok(next.confidence <= BEST_GUESS_CAP && BEST_GUESS_CAP < 0.8);
 });
 
@@ -80,6 +80,24 @@ test('withGuess keeps the set range for a picture-only guess, which is not price
   const next = withGuess(read, { choice: read.setChoices[1], source: 'image', reason: 'best guess from the picture' }, card, { market_price: 3 });
   assert.deepEqual(next.setRange, { low: 1, high: 5 });
   assert.equal(next.bestGuess.source, 'image');
+});
+
+test('withGuess keeps the set range for a guess borrowed from other cards on the page; only a page heading drops it', () => {
+  const read = { ...open(opt('a', 'sv01', 'A', 0.5), opt('b', 'sv02', 'B', 0.8)), confidence: 0.7, setRange: { low: 1, high: 5 } };
+  const card = { id: 'b', name: 'Eevee', set: 'B', setCode: 'sv02', number: '001' };
+  const page = withGuess(read, { choice: read.setChoices[1], source: 'page', reason: 'likely B' }, card, { market_price: 3 });
+  assert.deepEqual(page.setRange, { low: 1, high: 5 });
+  const hint = withGuess(read, { choice: read.setChoices[1], source: 'hint', reason: 'Page says B' }, card, { market_price: 3 });
+  assert.equal(hint.setRange, undefined);
+});
+
+test('a first-edition stamp suggestion is preferred over the page prior and the picture score, but not over a page heading', () => {
+  const stamped = { ...open(sc('a', 'base1', 'Base Set', 0.2), sc('b', 'sv02', 'X', 0.9)), suggestedSetId: 'a' };
+  const out = decideGuesses([settled('sv02'), stamped]);
+  assert.equal(out[1].choice.id, 'a');
+  assert.equal(out[1].source, 'image');
+  assert.match(out[1].reason, /1st Edition/);
+  assert.equal(decideGuesses([stamped], { hint: 'sv02' })[0].source, 'hint');
 });
 
 const sc = (id, setCode, set, score) => ({ id, setCode, set, number: '1', name: 'Alakazam', score });

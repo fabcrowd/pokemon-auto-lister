@@ -49,11 +49,14 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.logo')).toContainText('Card Scanner');
     await expect(page.locator('#btn-label')).toHaveText('SCAN PAGE');
     await expect(page.locator('.action-bar #era-select')).toBeVisible();
-    // The scan button follows readiness: the setup overlay is shown exactly when it is disabled.
-    const setupShown = await page.locator('#setup-overlay').isVisible();
-    if (setupShown) await expect(page.locator('#btn-scan')).toBeDisabled();
-    else await expect(page.locator('#btn-scan')).toBeEnabled();
-
+    // The scan button follows the background's readiness (models downloaded), which the popup asks for after it
+    // loads. Ask the same question, then wait for the button to settle to that answer instead of sampling it early.
+    const ready = await page.evaluate(async () => Boolean((await chrome.runtime.sendMessage({ action: 'checkReady' }))?.ready));
+    if (ready) await expect(page.locator('#btn-scan')).toBeEnabled();
+    else {
+      await expect(page.locator('#btn-scan')).toBeDisabled();
+      await expect(page.locator('#setup-overlay')).toBeVisible();
+    }
     const paint = await page.evaluate(() => ({
       background: getComputedStyle(document.body).backgroundColor,
       wizard: getComputedStyle(document.getElementById('setup-overlay')).display,
@@ -220,7 +223,7 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
-  test('a best-guess set is priced and marked; confirming it saves the answer and keeps the Set? menu', async () => {
+  test('a set the page heading names is priced and marked; confirming it saves the answer and keeps the Set? menu', async () => {
     const page = await context.newPage();
     await page.setViewportSize({ width: 420, height: 640 });
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
@@ -234,7 +237,7 @@ test.describe('Consumer extension popup', () => {
           { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
         ],
         setConfirmed: false,
-        bestGuess: { source: 'page', reason: 'likely Paldea Evolved: 2 other cards on this page are from it' },
+        bestGuess: { source: 'hint', reason: 'Page says Paldea Evolved' },
         confidence: 0.7, abstain: false, market_price: 3, box: [0, 0, 1, 1],
         price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } },
       }];
@@ -248,7 +251,7 @@ test.describe('Consumer extension popup', () => {
 
     const mark = page.locator('.card-row .guess-mark');
     await expect(mark).toHaveCount(1);
-    await expect(mark).toHaveAttribute('title', 'likely Paldea Evolved: 2 other cards on this page are from it');
+    await expect(mark).toHaveAttribute('title', 'Page says Paldea Evolved');
     await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
     await expect(page.locator('#s-value')).toHaveText('$3.00');
     await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
@@ -259,6 +262,127 @@ test.describe('Consumer extension popup', () => {
     const sent = await page.evaluate(() => window.__sent);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'g', index: 0, pickedId: 'sv02-5', via: 'guess-confirmed' });
+    await page.close();
+  });
+
+  // Opens a fresh popup whose scan returns the cards built by `build` (run inside the page).
+  async function popupWithScan(build) {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 640 });
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.evaluate((src) => {
+      const cards = new Function(`return (${src})()`)();
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanPage'
+        ? { cards, scanId: 'z', srcWidth: 10, srcHeight: 10, pending: 0 }
+        : real(msg));
+    }, build.toString());
+    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    return page;
+  }
+
+  test('a set borrowed from the other cards on the page is a range with the Set? menu preselected until confirmed', async () => {
+    const page = await popupWithScan(() => [{
+      identity: { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
+      setChoices: [
+        { id: 'sv01-5', name: 'Eevee', set: 'Scarlet & Violet', setCode: 'sv01', number: '005' },
+        { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
+      ],
+      setConfirmed: false,
+      setRange: { low: 2, high: 9, count: 2, total: 2 },
+      bestGuess: { source: 'page', reason: 'likely Paldea Evolved: 2 other cards on this page are from it' },
+      confidence: 0.7, abstain: false, market_price: 3, box: [0, 0, 1, 1],
+      price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } },
+    }]);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$9.00');
+    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    await expect(page.locator('.card-row .guess-mark')).toHaveCount(1);
+    await page.locator('.card-row .guess-mark').evaluate((b) => b.click());
+    await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
+    await page.close();
+  });
+
+  test('the ? beside Variant confirms the suggested printing: no price until then, then one price', async () => {
+    const page = await popupWithScan(() => [{
+      identity: { id: 'x-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51' },
+      confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+      variant: { edition: 'standard', finish: 'reverse', stamp: 'none' },
+      price_grid: { source: 'pokemontcg', variants: {
+        normal: { market: 2, conditions: { NM: 2 } },
+        holofoil: { market: 10, conditions: { NM: 10 } },
+        reverseHolofoil: { market: 4, conditions: { NM: 4 } },
+      } },
+    }]);
+    const select = page.locator('.variant-select-row:not(.set-select-row) select');
+    await expect(select).toHaveValue('reverseHolofoil');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$10.00');
+    await expect(page.locator('#s-value')).toHaveText('$2.00–$10.00');
+    const confirm = page.locator('button[data-variant-confirm]');
+    await expect(confirm).toHaveCount(1);
+    await expect(confirm).toHaveAttribute('aria-label', /Suggested printing Reverse Holo/);
+    await confirm.evaluate((b) => b.click());
+    await expect(page.locator('button[data-variant-confirm]')).toHaveCount(0);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$4.00');
+    await expect(page.locator('#s-value')).toHaveText('$4.00');
+    await expect(page.locator('#lot-edition')).toBeHidden();
+    await page.close();
+  });
+
+  test('the lot summary counts the cards still to confirm next to the sure total', async () => {
+    const page = await popupWithScan(() => {
+      const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+      return [
+        { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.3, abstain: true, topGuess: { id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }, box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.2, abstain: true, box: [0, 0, 1, 1] },
+        { cardBack: true, box: [0, 0, 1, 1] },
+      ];
+    });
+    const totals = page.locator('#lot-totals');
+    await expect(totals).toBeVisible();
+    await expect(totals.locator('.lt-item').first()).toContainText('Sure $5.00 (1)');
+    const toConfirm = totals.locator('.lt-guess');
+    await expect(toConfirm).toContainText('To confirm');
+    await expect(toConfirm.locator('b')).toHaveText('2');
+    await expect(toConfirm).toHaveAttribute('title', /Confirm each card to see its price/);
+    await page.close();
+  });
+
+  test('one Base Set edition for the lot applies to every row not picked individually', async () => {
+    const page = await popupWithScan(() => {
+      const row = (n) => ({ market: n, conditions: { NM: n } });
+      const baseHolo = (id, name, number) => ({
+        identity: { id, name, set: 'Base Set', setCode: 'base1', number },
+        confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+        finishSure: 'holofoil', variant: { edition: null, finish: 'holofoil', stamp: 'none' },
+        price_grid: { source: 'pokemontcg', variants: { unlimitedHolofoil: row(40), shadowlessHolofoil: row(300), '1stEditionHolofoil': row(3000) } },
+      });
+      return [
+        baseHolo('base1-4', 'Charizard', '4'),
+        baseHolo('base1-2', 'Blastoise', '2'),
+        { identity: { id: 'x-1', name: 'Pikachu', set: 'Jungle', setCode: 'base2', number: '60' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+          price_grid: { source: 'pokemontcg', variants: { normal: row(5) } } },
+      ];
+    });
+    const prices = page.locator('.card-row .card-price');
+    await expect(prices).toHaveText(['$40.00–$3000.00', '$40.00–$3000.00', '$5.00']);
+    const lot = page.getByLabel('Base Set editions', { exact: true }).locator('select');
+    await expect(lot).toBeVisible();
+    await expect(lot.locator('option')).toHaveText(['Apply to all…', 'Unlimited', 'Shadowless', '1st Edition']);
+
+    // The second row is set on its own first; the lot choice must leave it alone.
+    await page.locator('.card-row[data-idx="1"] .variant-select-row select').selectOption('1stEditionHolofoil');
+    await expect(prices).toHaveText(['$40.00–$3000.00', '$3000.00', '$5.00']);
+
+    // Keyboard reachable: focus the control and change it with the arrow keys.
+    await lot.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(lot).toHaveValue('unlimited');
+    await expect(prices).toHaveText(['$40.00', '$3000.00', '$5.00']);
+    await expect(page.locator('.card-row[data-idx="0"] .variant-select-row select')).toHaveValue('unlimitedHolofoil');
+
+    await lot.selectOption('shadowless');
+    await expect(prices).toHaveText(['$300.00', '$3000.00', '$5.00']);
     await page.close();
   });
 });

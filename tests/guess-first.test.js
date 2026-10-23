@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topGuessOf, lotEstimate, quotedPrice, detectedVariant, suggestedVariant, needsPrinting, isIdentified, isSetConfirmed, confirmGuess, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
+import { topGuessOf, lotEstimate, quotedPrice, detectedVariant, suggestedVariant, needsEdition, editionVariant, needsPrinting, isIdentified, isSetConfirmed, confirmGuess, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
 import { largerRendition } from '../tools/extension-wasm/lib/full-size.js';
 
 const cand = (id, name) => ({ id, name, set: 'Base Set', setCode: 'base1', number: '58' });
@@ -81,11 +81,25 @@ test('a picture-only best-guess printing keeps the range until confirmed, then p
   const confirmed = confirmGuess(guess);
   assert.equal(quotedPrice(confirmed, null).price, 800);
   assert.equal(lotEstimate([confirmed], () => null).high, 800);
-  // A page or hint guess comes from the page's own words and keeps its single price.
-  const page = { ...guess, bestGuess: { source: 'page', reason: 'x' } };
-  assert.equal(isSetConfirmed(page), true);
-  assert.equal(needsPrinting(page), false);
-  assert.equal(quotedPrice(page, null).price, 800);
+  // A hint guess comes from the page's own heading and keeps its single price.
+  const hint = { ...guess, bestGuess: { source: 'hint', reason: 'x' } };
+  assert.equal(isSetConfirmed(hint), true);
+  assert.equal(needsPrinting(hint), false);
+  assert.equal(quotedPrice(hint, null).price, 800);
+});
+
+test('a set borrowed from the other cards on the page is a guess like the picture: range until confirmed', () => {
+  const page = sureRow({
+    setConfirmed: false, bestGuess: { source: 'page', reason: 'likely B: 2 other cards on this page are from it' }, confidence: 0.7,
+    setChoices: [{ id: 'a' }, { id: 'b' }], setRange: { low: 2, high: 9, count: 2, total: 2 },
+    market_price: 800, price_grid: multiGrid({ normal: 800 }),
+  });
+  assert.equal(isSetConfirmed(page), false);
+  assert.equal(needsPrinting(page), true);
+  assert.equal(quotedPrice(page, null), null);
+  const lot = lotEstimate([page], () => null);
+  assert.deepEqual([lot.low, lot.high], [2, 9]);
+  assert.equal(quotedPrice(confirmGuess(page), null).price, 800);
 });
 
 test('a single printing, and a finish read from the printed number, still price directly', () => {
@@ -101,6 +115,39 @@ test('a single printing, and a finish read from the printed number, still price 
   const viaModelOnly = { ...settled, finishSure: undefined };
   assert.equal(detectedVariant(viaModelOnly), null);
   assert.equal(suggestedVariant(viaModelOnly), 'holofoil');
+});
+
+const baseHolo = (extra = {}) => sureRow({
+  finishSure: 'holofoil', variant: { edition: null, finish: 'holofoil', stamp: 'none' },
+  price_grid: multiGrid({ unlimitedHolofoil: 40, shadowlessHolofoil: 300, '1stEditionHolofoil': 3000 }), ...extra,
+});
+
+test('a Base Set card with a number-read finish still shows a range until an edition is chosen', () => {
+  const card = baseHolo();
+  assert.equal(detectedVariant(card), null);
+  assert.equal(needsEdition(card), true);
+  assert.equal(quotedPrice(card, null), null);
+  const lot = lotEstimate([card], () => null);
+  assert.deepEqual([lot.low, lot.high], [40, 3000]);
+});
+
+test('the lot edition maps to each row key by its finish; a row without that printing gets none', () => {
+  const card = baseHolo();
+  assert.equal(editionVariant(card, 'unlimited'), 'unlimitedHolofoil');
+  assert.equal(editionVariant(card, 'shadowless'), 'shadowlessHolofoil');
+  assert.equal(editionVariant(card, 'first'), '1stEditionHolofoil');
+  assert.equal(quotedPrice(card, editionVariant(card, 'first')).price, 3000);
+  const jungle = sureRow({ finishSure: 'normal', price_grid: multiGrid({ unlimited: 3, '1stEditionNormal': 90 }) });
+  assert.equal(editionVariant(jungle, 'unlimited'), 'unlimited');
+  assert.equal(editionVariant(jungle, 'shadowless'), null);
+  assert.equal(editionVariant(jungle, 'first'), '1stEditionNormal');
+});
+
+test('only a settled, identified card with edition rows and a number-read finish is offered the lot edition', () => {
+  assert.equal(needsEdition(baseHolo({ finishSure: undefined })), false);
+  assert.equal(needsEdition(baseHolo({ price_grid: multiGrid({ normal: 2, holofoil: 10 }) })), false);
+  assert.equal(needsEdition(baseHolo({ setChoices: [{ id: 'a' }, { id: 'b' }], setConfirmed: false })), false);
+  assert.equal(needsEdition(baseHolo({ setConfirmed: undefined, confidence: 0.2 })), false);
 });
 
 test('a stale-grid price is to check, not summed, however sure the row is', () => {

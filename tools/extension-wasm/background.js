@@ -1936,9 +1936,9 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   if (!result.firstEdition || !result.setChoices) return result;
   const stamped = result.setChoices.filter((c) => hasFirstEdition(c.setCode));
   if (stamped.length !== 1) return { ...result, setChoices: stamped.length ? stamped : result.setChoices };
-  const identity = catalogCard(stamped[0].id);
-  if (!identity) return { ...result, setChoices: stamped };
-  return { ...result, identity, setChoices: undefined, ...(await priceIdentity(identity)) };
+  // The stamp is a template score on pixels, not text: it points at the one 1st Edition set but only preselects it.
+  // The choices stay open (a range) until the user confirms with the "?" control.
+  return { ...result, suggestedSetId: stamped[0].id };
 }
 
 /** Card boxes from running the detector over overlapping tiles of a photo (2x2 and 3x3), in photo pixels. */
