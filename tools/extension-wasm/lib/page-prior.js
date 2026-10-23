@@ -59,7 +59,7 @@ export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
       const n = counts.get(pageSet);
       return { choice: onPage, source: "page", reason: `likely ${names.get(pageSet)}: ${n} other ${n === 1 ? "card" : "cards"} on this page ${n === 1 ? "is" : "are"} from it` };
     }
-    return { choice: bestByScore(read.setChoices, rank), source: "image", reason: "best guess from the picture" };
+    return { choice: bestByScore(read.setChoices, rank), source: "image", reason: "suggested from the picture" };
   });
 }
 

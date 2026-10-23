@@ -261,8 +261,8 @@ export function renderPickList(cards, idx, guessId = null) {
       ? `<img src="${escHtml(url)}" alt="${label}" loading="lazy" width="63" height="88">`
       : `<span class="pick-blank" aria-hidden="true"></span>`;
     const sub = [card.set || card.setCode, card.number ? `#${card.number}` : ""].filter(Boolean).join(" ");
-    const tag = guess ? `<span class="pick-guess">Best guess</span>` : "";
-    return `<button type="button" class="pick-card${guess ? " pick-card-guess" : ""}" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${guess ? `Best guess: ${label}` : label}" title="${label}">${image}${tag}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
+    const tag = guess ? `<span class="pick-guess">Suggested</span>` : "";
+    return `<button type="button" class="pick-card${guess ? " pick-card-guess" : ""}" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${guess ? `Suggested: ${label}` : label}" title="${label}">${image}${tag}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
   }).join("");
 }
 

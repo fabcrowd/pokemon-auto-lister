@@ -81,6 +81,22 @@ export async function sha256Hex(bytes) {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** The assets not yet in the cache, so the wizard quotes what will really download. */
+export async function missingAssets() {
+  const cache = await caches.open(CACHE_NAME);
+  const missing = [];
+  for (const asset of ASSETS) {
+    if (!(await cache.match(assetUrl(asset.name)))) missing.push(asset);
+  }
+  return missing;
+}
+
+/** "about 89 MB" for the given assets (all of ASSETS when none are given). */
+export function downloadSizeText(assets = ASSETS) {
+  const mb = Math.round(assets.reduce((sum, a) => sum + a.bytes, 0) / 1_000_000);
+  return mb < 1 ? "under 1 MB" : `about ${mb} MB`;
+}
+
 export async function checkModelsReady() {
   const cache = await caches.open(CACHE_NAME);
   for (const asset of ASSETS) {

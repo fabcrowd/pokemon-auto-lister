@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
-import { ASSETS, CACHE_NAME, assetUrl, checkModelsReady, downloadModels } from '../tools/extension-wasm/lib/setup.js';
+import { ASSETS, CACHE_NAME, assetUrl, checkModelsReady, downloadModels, downloadSizeText, missingAssets } from '../tools/extension-wasm/lib/setup.js';
 
 const V20 = 'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/';
 const V30 = 'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v3.0/';
@@ -273,4 +273,13 @@ test('a real existing v2.1p user keeps their cache through startup and only gets
   assert.equal(survivors.has(V20_CLIP), false);
   assert.deepEqual([...survivors.keys()].sort(), [...OTHER_FOUR.map((n) => REQUIRED[n] + n), V30 + 'clip_visual_int8.onnx'].sort());
   assert.equal(await checkModelsReady(), true);
+});
+
+test('the wizard quotes the size of what is actually missing', async () => {
+  assert.deepEqual((await missingAssets()).map((a) => a.name), ASSETS.map((a) => a.name));
+  for (const a of ASSETS) if (a.name !== 'clip_visual_int8.onnx') stored.set(assetUrl(a.name), new Uint8Array([1]));
+  assert.deepEqual((await missingAssets()).map((a) => a.name), ['clip_visual_int8.onnx']);
+  assert.equal(downloadSizeText(await missingAssets()), 'about 89 MB');
+  assert.equal(downloadSizeText(), `about ${Math.round(ASSETS.reduce((n, a) => n + a.bytes, 0) / 1e6)} MB`);
+  assert.equal(downloadSizeText([]), 'under 1 MB');
 });

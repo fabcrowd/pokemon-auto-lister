@@ -113,7 +113,7 @@ That is the low 32 bits of the photoId (its last 8 hex digits) mod 5: about 20% 
 rejects any other combination.
 
 `model.clip` and `catalog` are the first 16 hex digits of the sha256 pinned in the extension's `setup.js` for
-`clip_visual_int8.onnx` and `catalog.bin.gz` (currently `77538aade655907f` and `2f3c50cec84937ff`).
+`clip_visual_int8.onnx` and `catalog.bin.gz`. The pin lives in `tools/shared-data/pins.json` and in `setup.js`; read it there.
 `model.crop` is `EMBEDDING_VERSION` (currently 2). The crop is the rectified card image, the same canvas
 `embedCard` receives; the pipeline takes its own art strip from it.
 

@@ -53,7 +53,7 @@ import { decideGuesses, withGuess } from "./lib/page-prior.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
 import { loadTileSource as loadTileSourceWith } from "./lib/rendition.js";
-import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from "./lib/photo-fetch.js";
+import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, photoTypeVerdict, readCapped, sniffImageType } from "./lib/photo-fetch.js";
 import { FIRST_EDITION_MIN_SCORE, editionAfterEreader, editionAfterPromo, editionForSets, grayFromRgba, hasFirstEdition, pricedEdition, stampAfterFirst, stampBelowText, stampScore } from "./lib/edition-stamp.js";
 import { SHADOW_MIN_DEPTH, borderEdition, shadowDepth } from "./lib/frame-shadow.js";
 import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-model.js";
@@ -2469,14 +2469,22 @@ async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0, allowedHost
     const response = await fetch(start.href, { credentials: "omit", redirect: "follow", cache: "force-cache", signal: controller.signal });
     const landed = finalUrlAllowed(response.url || start.href, allowedHosts);
     if (!landed) return photoRejected("ended on a disallowed host", publicHttpsUrl(response.url) || start);
-    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return photoRejected("not an image", landed);
+    const typeVerdict = photoTypeVerdict(response.headers.get("content-type"));
+    if (!response.ok || typeVerdict === "reject") return photoRejected("not an image", landed);
     if ((Number(response.headers.get("content-length")) || 0) > MAX_PHOTO_BYTES) return photoRejected("too large", landed);
     const read = await readCapped(response, MAX_PHOTO_BYTES);
     if (!read) return photoRejected("too large", landed);
+    let blob = read.blob;
+    if (typeVerdict === "sniff") {
+      // Declared as no type or a generic binary: only bytes that really are a picture get through.
+      const sniffed = sniffImageType(read.head);
+      if (!sniffed) return photoRejected("not an image", landed);
+      blob = read.blob.slice(0, read.blob.size, sniffed);
+    }
     // The header gives the size before any pixels are decoded.
     const plan = decodePlan(imageSize(read.head), maxSide);
     if (plan.reject) return photoRejected("dimensions too large", landed);
-    const bitmap = plan.resize ? await createImageBitmap(read.blob, plan.resize) : await createImageBitmap(read.blob);
+    const bitmap = plan.resize ? await createImageBitmap(blob, plan.resize) : await createImageBitmap(blob);
     if (bitmap.width > 10000 || bitmap.height > 10000) {
       bitmap.close();
       return photoRejected("dimensions too large", landed);

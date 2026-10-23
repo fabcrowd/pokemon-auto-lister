@@ -486,8 +486,41 @@
     const number = card.display?.number || card.identity?.number || '';
     const title = number ? `${name} #${number}` : name;
     const priced = price && price !== '—' ? price : '';
-    if (state === 'printing') return { state, lines: [title, priced ? `${priced} · pick printing` : 'Pick printing'], short: priced || name };
-    return { state, lines: [title, priced || '—'], short: priced || name };
+    if (state === 'printing') return { state, lines: [title, priced ? `${priced} · pick printing` : 'Pick printing'], short: priced || name, name, title, price: priced };
+    return { state, lines: [title, priced || '—'], short: priced || name, name, title, price: priced };
+  }
+
+  // A price is never cut mid-number: the whole of it, or "from" its lower bound, or nothing.
+  function fitPrice(price, maxPx, measure) {
+    if (!price) return '';
+    if (measure(price) <= maxPx) return price;
+    const low = /^(\$[\d,.]+)\s*[–-]/.exec(price);
+    const from = low ? `from ${low[1]}` : '';
+    return from && measure(from) <= maxPx ? from : '';
+  }
+
+  // A name is cut with an ellipsis, but only when at least three letters of it still show.
+  function fitName(name, maxPx, measure) {
+    const text = fitText(name || '', maxPx, measure);
+    return text.replace('…', '').length >= 3 ? text : '';
+  }
+
+  /** The rows a tag prints: the Choose ask collapses to "Choose" when it does not fit; a small tag shows the name, then price. */
+  function tagRows(tag, twoLines, textMax, measure) {
+    const { state, lines, short } = tag;
+    if (state === 'choose') return twoLines && measure(lines[1]) <= textMax ? lines : [fitText(short, textMax, measure)].filter(Boolean);
+    if (state === 'none') return (twoLines ? lines : [short]).map((t) => fitText(t, textMax, measure)).filter(Boolean);
+    const { name, title, price } = tag;
+    if (twoLines) {
+      const first = fitText(title, textMax, measure);
+      const pickNote = state === 'printing' ? (price ? `${price} · pick printing` : 'Pick printing') : '';
+      const second = pickNote && measure(pickNote) <= textMax ? pickNote
+        : fitPrice(price, textMax, measure) || (state === 'printing' && measure('Pick printing') <= textMax ? 'Pick printing' : '');
+      return [first, second].filter(Boolean);
+    }
+    const both = price ? `${name} ${price}` : name;
+    if (measure(both) <= textMax) return [both];
+    return [fitName(name, textMax, measure) || fitPrice(price, textMax, measure)].filter(Boolean);
   }
 
   // Tag size follows the card: 13 px text on a 60 px card up to 16 px; a short card gets one line.
@@ -516,21 +549,23 @@
   function drawTag(box, card, taken) {
     const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
     if (layout.maxWidth < TAG_MIN_W) return null;
-    const { state, lines, short } = tagText(card);
+    const tag = tagText(card);
+    const { state } = tag;
     const PAD_X = 7;
     const PAD_Y = 4;
     const ACCENT_W = 4;
     const GAP = 2;
     const textMax = Math.max(0, layout.maxWidth - ACCENT_W - PAD_X * 2);
-    const rows = (layout.lines === 2 ? lines : [short]).map((text, i) => ({
+    ctx.font = `800 ${layout.px}px ${LABEL_FONT}`;
+    const texts = tagRows(tag, layout.lines === 2, textMax, (t) => ctx.measureText(t).width);
+    const rows = texts.map((text, i) => ({
       text,
-      font: `${layout.lines === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
-      color: layout.lines === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
+      font: `${texts.length === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
+      color: texts.length === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
     }));
     let widest = 0;
     for (const row of rows) {
       ctx.font = row.font;
-      row.text = fitText(row.text, textMax, (t) => ctx.measureText(t).width);
       widest = Math.max(widest, ctx.measureText(row.text).width);
     }
     if (!rows.some((row) => row.text)) return null;
@@ -1228,6 +1263,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagLayout, placeTag, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

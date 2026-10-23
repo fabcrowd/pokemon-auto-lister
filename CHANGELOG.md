@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-23 (QA fixes: Clear, octet-stream photos, wording, tags, wizard size, version 3.0.0)
+
+### Fixed
+- Popup: Clear now hides and empties the lot summary line and the full-size notice (`resetResults`), so the popup returns to its empty state (QA D-2).
+- `background.js` `loadPhotoSource`: a response typed `application/octet-stream` or with no content-type is accepted only when its bytes sniff as an image (JPEG, PNG, WebP, GIF, AVIF; `lib/photo-fetch.js` `photoTypeVerdict` / `sniffImageType`). ShopGoodwill serves pictures that way, so its rendition upgrade and original read were dead. Host, redirect, size and time caps are unchanged; other types are still rejected (QA C-1).
+- Overlay tags (`content.js` `tagRows`, `fitPrice`, `fitName`): a Choose tag collapses to "Choose" when "Tap to choose" does not fit; a small confirmed tag shows the name (cut with an ellipsis only if three letters still show), else the whole price, else "from $low"; a price is never cut mid-number (QA D-3).
+- Setup wizard quotes the size of the assets actually missing (`missingAssets`, `downloadSizeText`), e.g. "about 89 MB" when only the recognizer is needed; the fixed "(1-3 minutes)" is gone.
+
+### Changed
+- Leftover "guess" wording removed from user-visible text: To confirm tooltip, "Best guess" tag and aria-labels now say "Suggested" / "Suggested set"; the picture-based set reason reads "suggested from the picture" (QA D-4).
+- Candidate art boxes get a neutral skeleton background (QA D-5).
+- Extension version 2.1.0 to 3.0.0 (`tools/extension-wasm/manifest.json`); `tests/store-build.test.js` version pins updated deliberately.
+- `tools/shared-data/README.md`: no longer quotes an old clip hash; points at `pins.json` and `setup.js`.
+
 ## 2026-10-23 (unknown read height uses the 200 px confirm row)
 
 ### Changed

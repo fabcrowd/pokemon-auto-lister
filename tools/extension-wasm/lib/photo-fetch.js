@@ -56,6 +56,29 @@ export async function readCapped(response, maxBytes = MAX_PHOTO_BYTES, headBytes
   return { blob: new Blob(chunks, { type }), head };
 }
 
+/**
+ * What a response's content-type says about its body: "image" (trusted as declared), "sniff" (some hosts, e.g.
+ * ShopGoodwill, serve pictures as application/octet-stream or with no type, so the bytes must prove it), or "reject".
+ */
+export function photoTypeVerdict(contentType) {
+  const base = String(contentType || "").split(";")[0].trim().toLowerCase();
+  if (base.startsWith("image/")) return "image";
+  return base === "" || base === "application/octet-stream" ? "sniff" : "reject";
+}
+
+const hasAscii = (b, i, text) => [...text].every((ch, k) => b[i + k] === ch.charCodeAt(0));
+
+/** The image MIME type the first bytes announce by magic number (JPEG, PNG, WebP, GIF, AVIF), or "" for anything else. */
+export function sniffImageType(head) {
+  const b = head || [];
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  if (b.length >= 12 && hasAscii(b, 0, "RIFF") && hasAscii(b, 8, "WEBP")) return "image/webp";
+  if (b.length >= 6 && (hasAscii(b, 0, "GIF87a") || hasAscii(b, 0, "GIF89a"))) return "image/gif";
+  if (b.length >= 12 && hasAscii(b, 4, "ftyp") && (hasAscii(b, 8, "avif") || hasAscii(b, 8, "avis"))) return "image/avif";
+  return "";
+}
+
 const u16be = (b, i) => (b[i] << 8) | b[i + 1];
 const u32be = (b, i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
 const ascii = (b, i, n) => String.fromCharCode(...b.subarray(i, i + n));

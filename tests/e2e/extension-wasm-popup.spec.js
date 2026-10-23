@@ -351,6 +351,26 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  test('Clear returns the popup to its empty state: no lot line, groups, or value', async () => {
+    const page = await popupWithScan(() => [
+      { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5,
+        price_grid: { source: 'pokemontcg', variants: { normal: { market: 5, conditions: { NM: 5 } } } }, box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.3, abstain: true, candidates: [{ id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }], box: [0, 0, 1, 1] },
+    ]);
+    await expect(page.locator('#lot-totals')).toBeVisible();
+    await expect(page.locator('#results .card-row, #results .choose-group').first()).toBeVisible();
+    await page.locator('#btn-clear').evaluate((b) => b.click());
+    await expect(page.locator('#lot-totals')).toBeHidden();
+    await expect(page.locator('#lot-totals')).toHaveText('');
+    await expect(page.locator('#lot-edition')).toBeHidden();
+    await expect(page.locator('#fullsize-notice')).toBeHidden();
+    await expect(page.locator('#results .card-row')).toHaveCount(0);
+    await expect(page.locator('#results .choose-group, #results [data-review-all]')).toHaveCount(0);
+    await expect(page.locator('#s-value')).toHaveText('—');
+    await expect(page.locator('#empty-hint')).toBeVisible();
+    await page.close();
+  });
+
   test('one Base Set edition for the lot applies to every row not picked individually', async () => {
     const page = await popupWithScan(() => {
       const row = (n) => ({ market: n, conditions: { NM: n } });

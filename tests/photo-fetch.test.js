@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from '../tools/extension-wasm/lib/photo-fetch.js';
+import { createBudget, decodePlan, finalUrlAllowed, imageSize, photoTypeVerdict, readCapped, sniffImageType } from '../tools/extension-wasm/lib/photo-fetch.js';
 const { ReadableStream, Headers, Blob } = globalThis;
 
 const pad = (bytes, to = 64) => Uint8Array.from([...bytes, ...new Array(Math.max(0, to - bytes.length)).fill(0)]);
@@ -116,4 +116,38 @@ test('the time budget counts down from its first use and never goes negative', (
   assert.equal(budget.remaining(), 5000);
   t += 9000;
   assert.equal(budget.remaining(), 0);
+});
+
+test('content-type verdict: images pass, generic or missing types need their bytes to prove it, the rest are rejected', () => {
+  assert.equal(photoTypeVerdict('image/jpeg'), 'image');
+  assert.equal(photoTypeVerdict('IMAGE/AVIF; charset=x'), 'image');
+  assert.equal(photoTypeVerdict('application/octet-stream'), 'sniff');
+  assert.equal(photoTypeVerdict('Application/Octet-Stream; x=1'), 'sniff');
+  assert.equal(photoTypeVerdict(''), 'sniff');
+  assert.equal(photoTypeVerdict(null), 'sniff');
+  for (const bad of ['text/html', 'application/json', 'application/pdf', 'binary/octet-stream']) assert.equal(photoTypeVerdict(bad), 'reject', bad);
+});
+
+test('magic-number sniffing names JPEG, PNG, WebP, GIF and AVIF and nothing else', () => {
+  const text = (s) => [...s].map((c) => c.charCodeAt(0));
+  assert.equal(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0])), 'image/jpeg');
+  assert.equal(sniffImageType(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])), 'image/png');
+  assert.equal(sniffImageType(new Uint8Array([...text('RIFF'), 1, 2, 3, 4, ...text('WEBPVP8 ')])), 'image/webp');
+  assert.equal(sniffImageType(new Uint8Array(text('GIF89a....'))), 'image/gif');
+  assert.equal(sniffImageType(new Uint8Array([0, 0, 0, 0x20, ...text('ftypavif'), 0])), 'image/avif');
+  assert.equal(sniffImageType(new Uint8Array([...text('RIFF'), 1, 2, 3, 4, ...text('WAVEfmt ')])), '');
+  assert.equal(sniffImageType(new Uint8Array(text('<!doctype html>'))), '');
+  assert.equal(sniffImageType(new Uint8Array([0xff, 0xd8])), '');
+  assert.equal(sniffImageType(new Uint8Array(0)), '');
+  assert.equal(sniffImageType(null), '');
+});
+
+test('acceptance rule: octet-stream or no type is taken only when the bytes are a picture', () => {
+  const accept = (type, head) => { const v = photoTypeVerdict(type); return v === 'image' || (v === 'sniff' && sniffImageType(head) !== ''); };
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xdb]);
+  const html = new Uint8Array([...'<html>'].map((c) => c.charCodeAt(0)));
+  assert.equal(accept('application/octet-stream', jpeg), true);
+  assert.equal(accept('', jpeg), true);
+  assert.equal(accept('application/octet-stream', html), false);
+  assert.equal(accept('text/html', jpeg), false);
 });

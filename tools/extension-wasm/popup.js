@@ -1,6 +1,7 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
+import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -117,6 +118,10 @@ async function maybeStartWizard(modelsReady) {
   const pptApiKey = await getPptKey();
   if (!modelsReady) {
     showWizStep(1);
+    // After the step shows, so the size lookup never delays the wizard.
+    missingAssets()
+      .then((missing) => { document.getElementById("setup-size").textContent = downloadSizeText(missing); })
+      .catch((err) => console.warn("[popup] could not size the download", err));
     return;
   }
   if (onboarding.step !== "done" && onboarding.step !== 2 && !(await hasAllSites(chrome.permissions))) {
@@ -472,7 +477,7 @@ function renderLotTotals(cards, choiceFor) {
   const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
   lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n">(${t.identified}${t.toCheck ? `, ${t.toCheck} old ${t.toCheck === 1 ? "price" : "prices"} to check` : ""})</span></span>`
-    + `<span class="lt-item lt-guess" title="Cards the scanner only guesses at. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`;
+    + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`;
   lotTotalsEl.hidden = false;
 }
 
@@ -543,6 +548,8 @@ function resetResults() {
   sValue.textContent    = "—";
   setStatDetail("");
   lotEditionEl.hidden   = true;
+  if (lotTotalsEl) { lotTotalsEl.hidden = true; lotTotalsEl.innerHTML = ""; }
+  if (fullSizeNotice) fullSizeNotice.hidden = true;
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
@@ -1048,8 +1055,8 @@ resultsEl.addEventListener("input", (e) => {
 // The only sign that a printing is a guess; why it was chosen is in the tooltip, not in a sentence.
 function guessMark(card, idx) {
   if (!card.bestGuess || card.setConfirmed === true) return "";
-  const why = escHtml(card.bestGuess.reason || "Best guess");
-  return ` <button type="button" class="guess-mark" data-guess-confirm data-idx="${idx}" title="${why}" aria-label="Best guess: ${why}. Press to confirm this set.">?</button>`;
+  const why = escHtml(card.bestGuess.reason || "Suggested set");
+  return ` <button type="button" class="guess-mark" data-guess-confirm data-idx="${idx}" title="${why}" aria-label="Suggested set: ${why}. Press to confirm this set.">?</button>`;
 }
 
 // A set the user picked, or a guess they accepted, is an answer worth keeping like any other pick.

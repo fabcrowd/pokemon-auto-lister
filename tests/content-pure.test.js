@@ -392,3 +392,27 @@ test('tags scale with the card and never sit on another tag', () => {
   const boxed = [first, second, { x: 102, y: 68, w: 90, h: 30 }, { x: 102, y: 242, w: 90, h: 30 }];
   assert.equal(pure.placeTag([100, 100, 200, 240], 90, 30, boxed, view), null);
 });
+
+test('tag rows: Choose never reads "Tap to c...", a price is never cut mid-number', () => {
+  const m = (t) => t.length * 7; // 7 px per character
+  const rows = (card, two, max) => JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(card), two, max, m)));
+  const id = { name: 'Charizard', number: '4' };
+  const choose = { identity: id, display: { state: 'choose' } };
+  assert.deepEqual(rows(choose, true, 100), ['Choose', 'Tap to choose']);
+  assert.deepEqual(rows(choose, true, 60), ['Choose']);
+  const range = { identity: id, display: { state: 'printing', printingNote: 'set not sure · $1.43–$20.00' } };
+  // Small card: name before price; the price shows only when the name cannot, and whole or as "from".
+  assert.deepEqual(rows(range, false, 200), ['Charizard $1.43–$20.00']);
+  assert.deepEqual(rows(range, false, 70), ['Charizard']);
+  assert.deepEqual(rows(range, false, 24), []);
+  assert.equal(pure.fitPrice('$1.43–$20.00', 100, m), '$1.43–$20.00');
+  assert.equal(pure.fitPrice('$1.43–$20.00', 80, m), 'from $1.43');
+  assert.equal(pure.fitPrice('$1.43–$20.00', 50, m), '');
+  assert.equal(pure.fitPrice('$9.99', 20, m), '');
+  const name = rows({ identity: { name: 'Charizard ex' }, display: { state: 'identified', price: 4.5 } }, false, 56);
+  assert.deepEqual(name, ['Chariza…']);
+  assert.ok(!name.some((t) => /\$.*…/.test(t)));
+  // Two lines: a price line that does not fit is dropped, not cut.
+  assert.equal(rows(range, true, 80)[1], 'from $1.43');
+  assert.deepEqual(rows(range, true, 50), ['Chariz…']);
+});

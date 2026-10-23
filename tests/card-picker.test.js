@@ -401,9 +401,9 @@ test('candidatesFor: a low-certainty guess lists the guess, then the picture\'s 
   assert.deepEqual(candidatesFor(guess, META, 5).map((c) => c.id), ['base1-5', 'sv1-004', 'base1-6']);
 });
 
-test('renderPickList: marks the best guess when asked and only then', () => {
+test('renderPickList: marks the suggested card when asked and only then', () => {
   const html = renderPickList([META[0], META[1]], 3, 'base1-5');
   assert.equal((html.match(/pick-card-guess/g) || []).length, 1);
-  assert.ok(html.indexOf('Best guess') > html.indexOf('base1-4'));
-  assert.doesNotMatch(renderPickList([META[0]], 3), /Best guess/);
+  assert.ok(html.indexOf('Suggested') > html.indexOf('base1-4'));
+  assert.doesNotMatch(renderPickList([META[0]], 3), /Suggested/);
 });
