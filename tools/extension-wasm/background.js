@@ -1784,6 +1784,8 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   const readTotal = Number(String(result.numberRead ?? "").split("/")[1]);
   const numberedFinish = finishFromNumber(result.identity?.setCode, result.identity?.number, readTotal) || result.agreedFinish || null;
   if (numberedFinish) {
+    // Read from the printed number, not the picture, so it may price without the user's confirmation.
+    result.finishSure = numberedFinish;
     result.variant = {
       edition: result.variant?.edition ?? null,
       finish: numberedFinish,
@@ -1882,6 +1884,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   if (result.identity?.setCode === "basep" && !numberedFinish) {
     const finish = finishFromVariants((await getTcgdexCard(result.identity.id))?.variants);
     if (finish) {
+      result.finishSure = finish;
       result.variant = {
         edition: result.variant?.edition ?? null,
         finish,

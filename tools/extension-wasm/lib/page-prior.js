@@ -60,7 +60,11 @@ export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
   });
 }
 
-/** The read shown as the guessed printing with its own single price; the choices stay for the Set? menu. */
+/**
+ * The read shown as the guessed printing; the choices stay for the Set? menu. A guess from the page's words is
+ * quoted at its own single price. A picture-only guess keeps the range over the choices instead: nothing but the
+ * picture picked it, so it preselects the menu and prices only once the user confirms it.
+ */
 export function withGuess(read, decision, card, priced) {
   const next = {
     ...read,
@@ -70,6 +74,6 @@ export function withGuess(read, decision, card, priced) {
     bestGuess: { source: decision.source, reason: decision.reason },
     confidence: Math.min(read.confidence ?? 0, BEST_GUESS_CAP),
   };
-  delete next.setRange;
+  if (decision.source !== "image") delete next.setRange;
   return next;
 }

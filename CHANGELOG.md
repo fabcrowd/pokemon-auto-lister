@@ -11,6 +11,15 @@ Pricing guards (branch `feat/pricing-guards`).
 
 ### Changed
 - A stale-grid price is listed "to check" and left out of Sure and the totals, like a guess over $50.
+- Owner rule: a price is never chosen for something the extension does not know. This replaces the guess pricing above.
+  - A card whose identity is not confirmed (top guess, asked name, not recognised) shows its name to confirm and "—" (tooltip "Confirm the card to see a price"); it adds nothing to any total. The page overlay tag says "Guess · tap to confirm".
+  - A name that is sure with its printing open shows a range (set range, or the range over its printings) until the user picks the printing in the menu or confirms the suggestion with its "?" button.
+  - A printing is auto-priced only from non-visual evidence: a single printing, a finish read from the printed collector number or the catalog (`finishSure`), or a set settled by number, code, symbol or stamp text. A printing inferred from the picture (variant model, 1st Edition stamp template, drop shadow) is the menu's preselected suggestion only; the new "?" button next to Variant confirms it. `detectedVariant` is the settled printing, `suggestedVariant` the picture's.
+  - A best-guess set whose source is `image` keeps its set range and the preselected Set? menu, and prices only after "?" confirms it. Page and hint guesses are unchanged (open question in `.tmp/pricing-audit/auto-choice-audit.md`).
+  - Lot summary: Sure (confirmed rows plus ranges) and "To confirm N". No Guesses or Together figures.
+
+### Removed
+- Default-printing "~" pricing (`guessQuote`, `guessPrice`, `defaultPrintingPrice`), top-guess prices (the background `priceCard` fetch in the popup), the Guesses and Together totals (`lotTotals`), and the $50 picture-guess cap (`GUESS_TOTAL_CAP`): their purpose is covered by not pricing unconfirmed cards.
 
 ### Fixed
 - A name from a picture-only best guess (`bestGuess.source === 'image'`) priced over $50 no longer counts in Sure; it is listed "to check". Page and hint best guesses are unchanged.

@@ -74,6 +74,14 @@ test('withGuess shows the guessed printing with its single price and keeps the m
   assert.ok(next.confidence <= BEST_GUESS_CAP && BEST_GUESS_CAP < 0.8);
 });
 
+test('withGuess keeps the set range for a picture-only guess, which is not priced as one printing', () => {
+  const read = { ...open(opt('a', 'sv01', 'A', 0.5), opt('b', 'sv02', 'B', 0.8)), confidence: 0.7, setRange: { low: 1, high: 5 } };
+  const card = { id: 'b', name: 'Eevee', set: 'B', setCode: 'sv02', number: '001' };
+  const next = withGuess(read, { choice: read.setChoices[1], source: 'image', reason: 'best guess from the picture' }, card, { market_price: 3 });
+  assert.deepEqual(next.setRange, { low: 1, high: 5 });
+  assert.equal(next.bestGuess.source, 'image');
+});
+
 const sc = (id, setCode, set, score) => ({ id, setCode, set, number: '1', name: 'Alakazam', score });
 
 test('a page set hint beats the page prior and the picture score', () => {

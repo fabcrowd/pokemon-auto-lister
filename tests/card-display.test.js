@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   ageLabel,
-  detectedVariant,
+  suggestedVariant,
   editionNote,
   isPrintingConfirmed,
   swapVersion,
@@ -69,9 +69,9 @@ test('a chosen printing is the only price that counts', () => {
 });
 
 test('a card with the 1st Edition stamp starts on its 1st Edition price', () => {
-  assert.equal(detectedVariant({ ...charizard, firstEdition: true }), '1stEditionHolofoil');
+  assert.equal(suggestedVariant({ ...charizard, firstEdition: true }), '1stEditionHolofoil');
   const jungle = { firstEdition: true, price_grid: { variants: { unlimited: {}, '1stEditionNormal': {} } } };
-  assert.equal(detectedVariant(jungle), '1stEditionNormal');
+  assert.equal(suggestedVariant(jungle), '1stEditionNormal');
 });
 
 test('the trained model picks the reverse holo price', () => {
@@ -79,7 +79,7 @@ test('the trained model picks the reverse holo price', () => {
     variant: { edition: 'standard', finish: 'reverse', stamp: 'none' },
     price_grid: { variants: { holofoil: {}, reverseHolofoil: {}, normal: {} } },
   };
-  assert.equal(detectedVariant(card), 'reverseHolofoil');
+  assert.equal(suggestedVariant(card), 'reverseHolofoil');
 });
 
 test('a Shadowless border is named even when the price grid has no Shadowless row', () => {
@@ -90,19 +90,19 @@ test('a Shadowless border is named even when the price grid has no Shadowless ro
 
 test('a Base Set card with a drop shadow starts on its non-1st-Edition price', () => {
   const card = { shadow: true, price_grid: { variants: { holofoil: {}, '1stEditionHolofoil': {} } } };
-  assert.equal(detectedVariant(card), 'holofoil');
+  assert.equal(suggestedVariant(card), 'holofoil');
 });
 
 test('a drop shadow does not choose between two non-1st-Edition prices', () => {
   const card = { shadow: true, price_grid: { variants: { holofoil: {}, normal: {} } } };
-  assert.equal(detectedVariant(card), null);
+  assert.equal(suggestedVariant(card), null);
 });
 
 test('no stamp, or no 1st Edition price, leaves the variant to the user', () => {
-  assert.equal(detectedVariant({ ...charizard, firstEdition: false }), null);
-  assert.equal(detectedVariant(charizard), null);
-  assert.equal(detectedVariant({ firstEdition: true, price_grid: { variants: { holofoil: {} } } }), null);
-  assert.equal(detectedVariant({ firstEdition: true, price_grid: null }), null);
+  assert.equal(suggestedVariant({ ...charizard, firstEdition: false }), null);
+  assert.equal(suggestedVariant(charizard), null);
+  assert.equal(suggestedVariant({ firstEdition: true, price_grid: { variants: { holofoil: {} } } }), null);
+  assert.equal(suggestedVariant({ firstEdition: true, price_grid: null }), null);
 });
 
 test('a legacy price with no printing map still counts', () => {
@@ -176,7 +176,7 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
     variant: { edition: 'shadowless', finish: 'holofoil', stamp: 'none' },
     price_grid: { variants: { holofoil: {}, shadowlessHolofoil: {}, '1stEditionHolofoil': {} } },
   };
-  assert.equal(detectedVariant(card), null);
+  assert.equal(suggestedVariant(card), null);
   assert.equal(editionNote(card), 'Shadowless border');
 });
 
@@ -222,6 +222,8 @@ test('a sure name with its printing open counts as identified, with the printing
   // A guessed printing keeps its own price and the "Set?" menu.
   assert.equal(needsPrinting({ ...open, bestGuess: { id: 'base1-4', reason: 'page' } }), false);
   assert.equal(classifyCard(open), 'identified');
+  // A picture-only guess is no evidence: the printing is still the user's call, with the guess preselected.
+  assert.equal(needsPrinting({ ...open, bestGuess: { source: 'image', reason: 'best guess from the picture' } }), true);
   assert.equal(needsPrinting({ ...open, setConfirmed: true }), false);
   assert.equal(needsPrinting({ ...open, setChoices: [{ id: 'base1-4' }] }), false);
   assert.equal(needsPrinting({ ...open, unsure: true }), false);

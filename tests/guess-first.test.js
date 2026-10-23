@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topGuessOf, guessPrice, guessQuote, lotTotals, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
+import { topGuessOf, lotEstimate, quotedPrice, detectedVariant, suggestedVariant, needsPrinting, isIdentified, isSetConfirmed, confirmGuess, readFromSmallCrop } from '../tools/extension-wasm/lib/card-display.js';
 import { largerRendition } from '../tools/extension-wasm/lib/full-size.js';
 
 const cand = (id, name) => ({ id, name, set: 'Base Set', setCode: 'base1', number: '58' });
@@ -19,19 +19,102 @@ test('small crops are flagged under 150 px; unknown height is not small', () => 
   assert.equal(readFromSmallCrop({}), false);
 });
 
-test('lot totals: sure from identified cards, guesses from top guesses and asked names, together the sum', () => {
-  const sure = { identity: { id: 'a', name: 'Charizard' }, confidence: 0.95, market_price: 100 };
-  const guess = { abstain: true, topGuess: { id: 'b', name: 'Pikachu', price: 1.2 } };
+const multiGrid = (prices, extra = {}) => ({
+  variants: Object.fromEntries(Object.entries(prices).map(([k, v]) => [k, { market: v, conditions: { NM: v, LP: null, MP: null, HP: null, DMG: null } }])),
+  ...extra,
+});
+const sureRow = (extra = {}) => ({ identity: { id: 'e-1', name: 'Eevee' }, confidence: 0.95, setConfirmed: true, ...extra });
+
+test('an unknown card shows no price and adds nothing to the lot, however priced its guess or name is', () => {
+  const sure = sureRow({ market_price: 100, price_grid: multiGrid({ normal: 100 }) });
+  const topGuess = { abstain: true, topGuess: { id: 'b', name: 'Pikachu', price: 1.2 } };
   const unpriced = { abstain: true, topGuess: { id: 'c', name: 'Mew', price: null } };
-  const asked = { identity: { id: 'd', name: 'Magcargo' }, unsure: true, confidence: 0.3, market_price: 2 };
+  const asked = { identity: { id: 'd', name: 'Magcargo' }, unsure: true, confidence: 0.3, market_price: 2, price_grid: multiGrid({ normal: 2 }) };
   const back = { cardBack: true };
-  const t = lotTotals([sure, guess, unpriced, asked, back], () => null);
-  assert.equal(t.sure.low, 100);
-  assert.equal(t.sure.identified, 1);
-  assert.equal(Number(t.guess.toFixed(2)), 3.2);
-  assert.equal(t.guessed, 2);
-  assert.equal(Number(t.high.toFixed(2)), 103.2);
-  assert.equal(guessPrice(back, null), null);
+  const lot = lotEstimate([sure, topGuess, unpriced, asked, back], () => null);
+  assert.equal(lot.low, 100);
+  assert.equal(lot.high, 100);
+  assert.equal(lot.identified, 1);
+  assert.equal(lot.toIdentify, 3);
+  assert.equal(lot.total, 4);
+  assert.equal(isIdentified(asked), false);
+});
+
+test('a name that is sure with its printing open is a range, never one auto-picked price', () => {
+  const card = sureRow({ price_grid: multiGrid({ normal: 2, holofoil: 10, reverseHolofoil: 4 }) });
+  assert.equal(quotedPrice(card, null), null);
+  const lot = lotEstimate([card], () => null);
+  assert.deepEqual([lot.low, lot.high, lot.identified], [2, 10, 1]);
+  const open = sureRow({ setChoices: [{ id: 'a' }, { id: 'b' }], setConfirmed: false, setRange: { low: 3, high: 9, count: 2, total: 2 }, price_grid: null });
+  assert.equal(needsPrinting(open), true);
+  const openLot = lotEstimate([open], () => null);
+  assert.deepEqual([openLot.low, openLot.high], [3, 9]);
+});
+
+test('a printing inferred from the picture is only a suggestion until the user confirms it', () => {
+  const card = sureRow({
+    variant: { edition: 'standard', finish: 'reverse', stamp: 'none' },
+    price_grid: multiGrid({ normal: 2, holofoil: 10, reverseHolofoil: 4 }),
+  });
+  assert.equal(suggestedVariant(card), 'reverseHolofoil');
+  assert.equal(detectedVariant(card), null);
+  assert.deepEqual([lotEstimate([card], () => detectedVariant(card)).low, lotEstimate([card], () => detectedVariant(card)).high], [2, 10]);
+  // The user confirms the suggestion: that choice is now a pick, and it prices.
+  assert.equal(quotedPrice(card, suggestedVariant(card)).price, 4);
+  assert.equal(lotEstimate([card], () => suggestedVariant(card)).high, 4);
+  const first = sureRow({ firstEdition: true, price_grid: multiGrid({ unlimited: 5, '1stEditionNormal': 90 }) });
+  assert.equal(suggestedVariant(first), '1stEditionNormal');
+  assert.equal(detectedVariant(first), null);
+});
+
+test('a picture-only best-guess printing keeps the range until confirmed, then prices', () => {
+  const guess = sureRow({
+    setConfirmed: false, bestGuess: { source: 'image', reason: 'best guess from the picture' }, confidence: 0.7,
+    setChoices: [{ id: 'a' }, { id: 'b' }], setRange: { low: 2, high: 9, count: 2, total: 2 },
+    market_price: 800, price_grid: multiGrid({ normal: 800 }),
+  });
+  assert.equal(isSetConfirmed(guess), false);
+  assert.equal(needsPrinting(guess), true);
+  assert.equal(quotedPrice(guess, null), null);
+  const lot = lotEstimate([guess], () => null);
+  assert.deepEqual([lot.low, lot.high], [2, 9]);
+  const confirmed = confirmGuess(guess);
+  assert.equal(quotedPrice(confirmed, null).price, 800);
+  assert.equal(lotEstimate([confirmed], () => null).high, 800);
+  // A page or hint guess comes from the page's own words and keeps its single price.
+  const page = { ...guess, bestGuess: { source: 'page', reason: 'x' } };
+  assert.equal(isSetConfirmed(page), true);
+  assert.equal(needsPrinting(page), false);
+  assert.equal(quotedPrice(page, null).price, 800);
+});
+
+test('a single printing, and a finish read from the printed number, still price directly', () => {
+  const single = sureRow({ market_price: 4, price_grid: multiGrid({ normal: 4 }) });
+  assert.equal(quotedPrice(single, null).price, 4);
+  assert.equal(lotEstimate([single], () => null).high, 4);
+  const settled = sureRow({
+    finishSure: 'holofoil', variant: { edition: null, finish: 'holofoil', stamp: 'none' },
+    price_grid: multiGrid({ normal: 2, holofoil: 10, reverseHolofoil: 4 }),
+  });
+  assert.equal(detectedVariant(settled), 'holofoil');
+  assert.equal(quotedPrice(settled, detectedVariant(settled)).price, 10);
+  const viaModelOnly = { ...settled, finishSure: undefined };
+  assert.equal(detectedVariant(viaModelOnly), null);
+  assert.equal(suggestedVariant(viaModelOnly), 'holofoil');
+});
+
+test('a stale-grid price is to check, not summed, however sure the row is', () => {
+  const stale = sureRow({ market_price: 9, price_grid: multiGrid({ normal: 9 }, { stale: true }) });
+  const fresh = sureRow({ market_price: 4, price_grid: multiGrid({ normal: 4 }) });
+  const lot = lotEstimate([stale, fresh], () => null);
+  assert.equal(lot.high, 4);
+  assert.equal(lot.toCheck, 1);
+  assert.equal(lot.identified, 1);
+});
+
+test('the lot reports how many cards are still to confirm', () => {
+  const cards = [sureRow({ market_price: 3, price_grid: multiGrid({ normal: 3 }) }), { abstain: true, topGuess: { id: 'b', name: 'Pikachu' } }, { abstain: true }, { cardBack: true }];
+  assert.equal(lotEstimate(cards, () => null).toIdentify, 2);
 });
 
 test('a larger rendition is offered only when it is known to be bigger', () => {
@@ -46,77 +129,3 @@ test('a larger rendition is offered only when it is known to be bigger', () => {
   assert.equal(largerRendition({ src: 'https://scontent.xx.fbcdn.net/v/t39/1_n.jpg?stp=dst-jpg', naturalWidth: 600, naturalHeight: 800, base }), null);
 });
 
-test('a guess priced over the cap is listed to check, not added to the guesses total', () => {
-  const rare = { abstain: true, topGuess: { id: 'r', name: 'Rayquaza δ', price: 349.99 } };
-  const cheap = { abstain: true, topGuess: { id: 'p', name: 'Pikachu', price: 1.2 } };
-  const t = lotTotals([rare, cheap], () => null);
-  assert.equal(t.guess, 1.2);
-  assert.equal(t.toCheck, 1);
-  assert.equal(t.guessed, 1);
-});
-
-const multiGrid = (prices, extra = {}) => ({
-  variants: Object.fromEntries(Object.entries(prices).map(([k, v]) => [k, { market: v, conditions: { NM: v, LP: null, MP: null, HP: null, DMG: null } }])),
-  ...extra,
-});
-const unsureNamed = (extra = {}) => ({ identity: { id: 'n-1', name: 'Eevee' }, unsure: true, confidence: 0.3, ...extra });
-
-test('guessQuote: an unconfirmed printing is priced at the default printing (holofoil, then normal, then reverse) and marked approx', () => {
-  const card = unsureNamed({ price_grid: multiGrid({ normal: 2, holofoil: 10, reverseHolofoil: null, unlimited: 6 }) });
-  assert.deepEqual(guessQuote(card, null), { price: 10, approx: true });
-  assert.equal(guessPrice(card, null), 10);
-  const noHolo = unsureNamed({ price_grid: multiGrid({ reverseHolofoil: 4, normal: 2, unlimited: 6 }) });
-  assert.equal(guessPrice(noHolo, null), 2);
-  const onlyReverse = unsureNamed({ price_grid: multiGrid({ holofoil: null, reverseHolofoil: 4, other: 9 }) });
-  assert.equal(guessPrice(onlyReverse, null), 4);
-  const unlisted = unsureNamed({ price_grid: multiGrid({ a: 9, b: 3 }) });
-  assert.equal(guessPrice(unlisted, null), 9);
-});
-
-test('guessQuote: a confirmed printing keeps its exact quote, and an all-null grid gives null', () => {
-  const card = unsureNamed({ price_grid: multiGrid({ normal: 2, holofoil: 10 }) });
-  assert.deepEqual(guessQuote(card, 'holofoil'), { price: 10, approx: false });
-  const empty = unsureNamed({ price_grid: multiGrid({ normal: null, holofoil: null }) });
-  assert.equal(guessQuote(empty, null), null);
-  assert.equal(guessPrice(empty, null), null);
-});
-
-test('lot totals: an approx printing guess counts under Guesses, never Sure', () => {
-  const card = unsureNamed({ price_grid: multiGrid({ normal: 2, holofoil: 10 }) });
-  const t = lotTotals([card], () => null);
-  assert.equal(t.sure.low, 0);
-  assert.equal(t.guess, 10);
-  assert.equal(t.guessed, 1);
-});
-
-const imageGuess = (price, extra = {}) => ({
-  identity: { id: 'e-1', name: 'Eevee' }, confidence: 0.7, setConfirmed: false,
-  bestGuess: { source: 'image', reason: 'best guess from the picture' },
-  setChoices: [{ id: 'a' }, { id: 'b' }], market_price: price, price_grid: multiGrid({ normal: price }),
-  ...extra,
-});
-
-test('lot totals: a picture-only best guess over the cap is to check, not in Sure', () => {
-  const t = lotTotals([imageGuess(800), imageGuess(5)], () => null);
-  assert.equal(t.sure.high, 5);
-  assert.equal(t.toCheck, 1);
-  assert.equal(t.high, 5);
-});
-
-test('lot totals: a page or hint best guess over the cap still counts as Sure', () => {
-  const page = imageGuess(800, { bestGuess: { source: 'page', reason: 'x' } });
-  const hint = imageGuess(700, { bestGuess: { source: 'hint', reason: 'x' } });
-  const t = lotTotals([page, hint], () => null);
-  assert.equal(t.sure.high, 1500);
-  assert.equal(t.toCheck, 0);
-});
-
-test('lot totals: a stale-grid price is to check, not summed, for sure rows and guess rows', () => {
-  const stale = { identity: { id: 's-1', name: 'Mew' }, confidence: 0.95, market_price: 9, price_grid: multiGrid({ normal: 9 }, { stale: true }) };
-  const fresh = { identity: { id: 'f-1', name: 'Mew' }, confidence: 0.95, market_price: 4, price_grid: multiGrid({ normal: 4 }) };
-  const staleGuess = { abstain: true, topGuess: { id: 'g', name: 'Pikachu', price: 3, stale: true } };
-  const t = lotTotals([stale, fresh, staleGuess], () => null);
-  assert.equal(t.sure.high, 4);
-  assert.equal(t.guess, 0);
-  assert.equal(t.toCheck, 2);
-});
