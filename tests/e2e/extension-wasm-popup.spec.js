@@ -255,13 +255,13 @@ test.describe('Consumer extension popup', () => {
     const mark = page.locator('.card-row .guess-mark');
     await expect(mark).toHaveCount(1);
     await expect(mark).toHaveAttribute('title', 'Page says Paldea Evolved');
-    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    await expect(page.locator('.set-select-row [role="radio"][aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'sv02-5');
     await expect(page.locator('#s-value')).toHaveText('$3.00');
     await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
 
     await mark.evaluate((b) => b.click());
     await expect(page.locator('.card-row .guess-mark')).toHaveCount(0);
-    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    await expect(page.locator('.set-select-row [role="radio"][aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'sv02-5');
     const sent = await page.evaluate(() => window.__sent);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'g', index: 0, pickedId: 'sv02-5', via: 'guess-confirmed' });
@@ -298,14 +298,14 @@ test.describe('Consumer extension popup', () => {
       price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } },
     }]);
     await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$9.00');
-    await expect(page.locator('.set-select-row select')).toHaveValue('sv02-5');
+    await expect(page.locator('.set-select-row [role="radio"][aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'sv02-5');
     await expect(page.locator('.card-row .guess-mark')).toHaveCount(1);
     await page.locator('.card-row .guess-mark').evaluate((b) => b.click());
     await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
     await page.close();
   });
 
-  test('the ? beside Variant confirms the suggested printing: no price until then, then one price', async () => {
+  test('the ? beside the finish chips confirms the suggested printing: no price until then, then one price', async () => {
     const page = await popupWithScan(() => [{
       identity: { id: 'x-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51' },
       confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
@@ -316,8 +316,8 @@ test.describe('Consumer extension popup', () => {
         reverseHolofoil: { market: 4, conditions: { NM: 4 } },
       } },
     }]);
-    const select = page.locator('.variant-select-row:not(.set-select-row) select');
-    await expect(select).toHaveValue('reverseHolofoil');
+    const suggestedChip = page.locator('.variant-select-row:not(.set-select-row) .chip-suggested');
+    await expect(suggestedChip).toHaveAttribute('data-strip-pick', 'reverseHolofoil');
     await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$10.00');
     await expect(page.locator('#s-value')).toHaveText('$2.00–$10.00');
     const confirm = page.locator('button[data-variant-confirm]');
@@ -394,7 +394,7 @@ test.describe('Consumer extension popup', () => {
     await expect(lot.locator('option')).toHaveText(['Apply to all…', 'Unlimited', 'Shadowless', '1st Edition']);
 
     // The second row is set on its own first; the lot choice must leave it alone.
-    await page.locator('.card-row[data-idx="1"] .variant-select-row select').selectOption('1stEditionHolofoil');
+    await page.locator('.card-row[data-idx="1"] .chip[data-strip-pick="1stEditionHolofoil"]').evaluate((b) => b.click());
     await expect(prices).toHaveText(['$40.00–$3000.00', '$3000.00', '$5.00']);
 
     // Keyboard reachable: focus the control and change it with the arrow keys.
@@ -402,7 +402,7 @@ test.describe('Consumer extension popup', () => {
     await page.keyboard.press('ArrowDown');
     await expect(lot).toHaveValue('unlimited');
     await expect(prices).toHaveText(['$40.00', '$3000.00', '$5.00']);
-    await expect(page.locator('.card-row[data-idx="0"] .variant-select-row select')).toHaveValue('unlimitedHolofoil');
+    await expect(page.locator('.card-row[data-idx="0"] .chip[aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'unlimitedHolofoil');
 
     await lot.selectOption('shadowless');
     await expect(prices).toHaveText(['$300.00', '$3000.00', '$5.00']);
@@ -777,6 +777,186 @@ test.describe('Consumer extension popup', () => {
     for (let i = 0; i < 8; i += 1) await page.keyboard.press('Tab');
     const inside = await page.evaluate(() => document.getElementById('bulk-panel').contains(document.activeElement));
     expect(inside).toBe(true);
+    await page.close();
+  });
+
+  // ─── Image pickers: printings and versions are thumbnails, finishes are chips with prices ───
+
+  const PICKER_SHOTS = path.resolve(__dirname, '../../.tmp/image-pickers');
+
+  const printingScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const row = (id, set, setCode, number, art) => ({ id, name: 'Eevee', set, setCode, number, imageUrl: art });
+    const sets = [
+      row('sv01-5', 'Scarlet & Violet', 'sv01', '005', arts[0]),
+      row('sv02-5', 'Paldea Evolved', 'sv02', '005', arts[1]),
+      row('pre-74', 'Prismatic Evolutions', 'pre', '74', arts[2]),
+    ];
+    const cards = [{
+      identity: { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
+      setChoices: sets, setConfirmed: false, setRange: { low: 2, high: 9, count: 3, total: 3 },
+      confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+    }];
+    return { cards, priced: { 'pre-74': { identity: sets[2], market_price: 9, price_variant: 'normal', price_grid: grid(9) } } };
+  };
+
+  test('printings are a strip of card thumbnails with set name and number, in a labelled radiogroup', async () => {
+    const page = await popupWithChoose(printingScan);
+    const group = page.getByRole('radiogroup', { name: 'Choose the printing' });
+    await expect(group).toBeVisible();
+    const tiles = group.getByRole('radio');
+    await expect(tiles).toHaveCount(3);
+    await expect(tiles.first().locator('img')).toHaveAttribute('src', /^data:image\/png/);
+    await expect(tiles.nth(2)).toContainText('Prismatic Evolutions');
+    await expect(tiles.nth(2)).toContainText('#74');
+    await expect(group.getByRole('radio', { name: 'Prismatic Evolutions number 74' })).toHaveCount(1);
+    await expect(page.locator('.set-select-row select, .set-select-row option')).toHaveCount(0);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$9.00');
+    fs.mkdirSync(PICKER_SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(PICKER_SHOTS, 'printing-strip.png') });
+    await page.close();
+  });
+
+  test('tapping a printing tile saves the same correction as the old menu and prices that printing', async () => {
+    const page = await popupWithChoose(printingScan);
+    await page.getByRole('radio', { name: 'Prismatic Evolutions number 74' }).click();
+    await expect(page.locator('.card-row .card-price')).toHaveText('$9.00');
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'c', index: 0, pickedId: 'pre-74', via: 'set-menu' });
+    expect(await page.evaluate(() => window.__priceCalls)).toEqual(['pre-74']);
+    await expect(page.locator('.set-select-row [aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'pre-74');
+    expect(await page.evaluate(() => document.activeElement?.closest('.card-row')?.dataset.idx ?? null)).toBe('0');
+    await page.screenshot({ path: path.join(PICKER_SHOTS, 'row-after-pick.png') });
+    await page.close();
+  });
+
+  test('keyboard: arrows move through the printing strip, Enter selects, focus stays in the row', async () => {
+    const page = await popupWithChoose(printingScan);
+    const tiles = page.getByRole('radiogroup', { name: 'Choose the printing' }).getByRole('radio');
+    await tiles.first().focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(tiles.nth(1)).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(tiles.nth(2)).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(tiles.nth(1)).toBeFocused();
+    expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$9.00');
+    expect((await page.evaluate(() => window.__sent))[0]).toMatchObject({ pickedId: 'pre-74', via: 'set-menu' });
+    expect(await page.evaluate(() => document.activeElement?.closest('.card-row')?.dataset.idx ?? null)).toBe('0');
+    await page.close();
+  });
+
+  test('more than 8 printings: the first 8 and a More tile that expands in place', async () => {
+    const page = await popupWithChoose((crop, arts) => {
+      const sets = Array.from({ length: 11 }, (_, i) => ({ id: `s-${i}`, name: 'Pikachu', set: `Set ${i + 1}`, setCode: `s${i}`, number: String(i + 1), imageUrl: arts[i % 5] }));
+      return { cards: [{ identity: sets[0], setChoices: sets, setConfirmed: false, setRange: { low: 1, high: 4, count: 11, total: 11 }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] }], priced: {} };
+    });
+    const group = page.getByRole('radiogroup', { name: 'Choose the printing' });
+    await expect(group.getByRole('radio')).toHaveCount(8);
+    await group.getByRole('button', { name: 'More +3' }).click();
+    await expect(group.getByRole('radio')).toHaveCount(11);
+    await expect(group.getByRole('button', { name: 'Fewer' })).toBeFocused();
+    await group.getByRole('button', { name: 'Fewer' }).click();
+    await expect(group.getByRole('radio')).toHaveCount(8);
+    await page.close();
+  });
+
+  test('art that fails to load becomes a text tile with the name and set, and the choice still works', async () => {
+    const page = await popupWithChoose((crop, arts) => {
+      const grid = { source: 'pokemontcg', variants: { normal: { market: 7, conditions: { NM: 7 } } } };
+      const sets = [
+        { id: 'a-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51', imageUrl: 'data:image/png;base64,AAAA' },
+        { id: 'b-1', name: 'Eevee', set: 'Fossil', setCode: 'base3', number: '51', imageUrl: arts[0] },
+      ];
+      return { cards: [{ identity: sets[0], setChoices: sets, setConfirmed: false, setRange: { low: 1, high: 7, count: 2, total: 2 }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] }],
+        priced: { 'a-1': { identity: sets[0], market_price: 7, price_variant: 'normal', price_grid: grid } } };
+    });
+    const broken = page.getByRole('radio', { name: 'Jungle number 51' });
+    await expect(broken.locator('.strip-art')).toHaveClass(/no-art/);
+    await expect(broken.locator('img')).toHaveCount(0);
+    await expect(broken.locator('.strip-fallback')).toBeVisible();
+    await expect(broken.locator('.strip-fallback')).toContainText('Eevee');
+    await expect(broken.locator('.strip-fallback')).toContainText('Jungle');
+    await broken.click();
+    await expect(page.locator('.card-row .card-price')).toHaveText('$7.00');
+    await page.close();
+  });
+
+  const versionScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const ex = { id: 'p-1', name: 'Pikachu ex', set: 'Surging Sparks', setCode: 'sv08', number: '57', imageUrl: arts[0] };
+    const v = { id: 'p-2', name: 'Pikachu V', set: 'Vivid Voltage', setCode: 'swsh4', number: '43', imageUrl: arts[1], market_price: 2, price_variant: 'normal', price_grid: grid(2), setChoices: [] };
+    return { cards: [{ identity: ex, confidence: 0.9, abstain: false, market_price: 30, price_grid: grid(30), versionChoices: [v], box: [0, 0, 1, 1] }], priced: {} };
+  };
+
+  test('other versions are a thumbnail strip with the version name; one tap swaps the row to it', async () => {
+    const page = await popupWithChoose(versionScan);
+    const group = page.getByRole('radiogroup', { name: 'Choose the version' });
+    await expect(group.getByRole('radio')).toHaveCount(2);
+    await expect(group.getByRole('radio').first()).toHaveAttribute('aria-checked', 'true');
+    await expect(group.getByRole('radio').nth(1)).toContainText('Pikachu V');
+    await expect(group.getByRole('radio').nth(1).locator('img')).toHaveAttribute('src', /^data:image\/png/);
+    await expect(page.locator('.version-select-row select')).toHaveCount(0);
+    await group.getByRole('radio').nth(1).click();
+    await expect(page.locator('.card-row .card-name')).toContainText('Pikachu V');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00');
+    await expect(page.getByRole('radiogroup', { name: 'Choose the version' }).getByRole('radio').first()).toHaveAttribute('aria-checked', 'true');
+    await page.close();
+  });
+
+  const finishScan = () => ({
+    cards: [{
+      identity: { id: 'x-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+      price_grid: { source: 'pokemontcg', variants: {
+        normal: { market: 2, conditions: { NM: 2, LP: 1.5 } },
+        holofoil: { market: 10, conditions: { NM: 10, LP: 8 } },
+        reverseHolofoil: { market: 4, conditions: { NM: 4 } },
+        '1stEditionHolofoil': { market: 0, conditions: {} },
+      } },
+    }],
+    priced: {},
+  });
+
+  test('finishes are large chips with the finish and its price; one tap sets the printing and the price', async () => {
+    const page = await popupWithChoose(finishScan);
+    const group = page.getByRole('radiogroup', { name: /^Choose the finish/ });
+    const chips = group.getByRole('radio');
+    await expect(chips).toHaveCount(4);
+    await expect(chips.nth(0)).toContainText('Normal');
+    await expect(chips.nth(0)).toContainText('$2.00');
+    await expect(chips.nth(1)).toContainText('$10.00');
+    await expect(chips.nth(2)).toContainText('Reverse Holo');
+    await expect(chips.nth(2)).toContainText('$4.00');
+    await expect(chips.nth(3)).toHaveText('1st Ed Holofoil');
+    expect((await chips.nth(0).boundingBox()).height).toBeGreaterThanOrEqual(40);
+    await expect(page.locator('.variant-select-row select')).toHaveCount(0);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$10.00');
+    fs.mkdirSync(PICKER_SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(PICKER_SHOTS, 'finish-chips.png') });
+    await chips.nth(2).click();
+    await expect(page.locator('.card-row .card-price')).toHaveText('$4.00');
+    await expect(group.getByRole('radio', { name: 'Reverse Holo, $4.00 NM' })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#s-value')).toHaveText('$4.00');
+    await expect(page.getByRole('radiogroup', { name: /^Choose the finish/ }).getByRole('radio', { name: 'Reverse Holo, $4.00 NM' })).toBeFocused();
+    // Arrow keys move, Enter picks.
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$10.00');
+    expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+    await page.screenshot({ path: path.join(PICKER_SHOTS, 'finish-chosen.png') });
+    await page.close();
+  });
+
+  test('the status line counts the cards as they are now after a cheap card is promoted', async () => {
+    const page = await popupWithChoose(stakesScan);
+    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
+    await expect(page.locator('#msg-bar')).toHaveText('Found 6 cards: 3 identified, 3 need your pick.');
+    await expect(page.locator('.lt-guess b')).toHaveText('3');
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
     await page.close();
   });
 });

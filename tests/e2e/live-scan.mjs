@@ -212,21 +212,21 @@ const outcome = await scanner.evaluate(() => ({
 }));
 const elapsedMs = Date.now() - scanStarted;
 
-// Pick the second set on the first "set not sure" card and wait for its price.
+// Pick the second printing tile on the first "set not sure" card and wait for its price.
 let setPick = null;
-const setSelect = scanner.locator('.set-select-row select').first();
-if (await setSelect.count()) {
-  const option = await setSelect.locator('option').nth(2).getAttribute('value');
-  const row = setSelect.locator('xpath=ancestor::div[contains(@class,"card-row")]');
+const setTile = scanner.locator('.set-select-row [data-strip-kind="set"]').nth(1);
+if (await setTile.count()) {
+  const option = await setTile.getAttribute('data-strip-pick');
+  const row = setTile.locator('xpath=ancestor::div[contains(@class,"card-row")]');
   const before = { total: await scanner.locator('#s-value').textContent(), row: await row.innerText() };
-  await setSelect.selectOption(option);
-  await scanner.waitForFunction(() => !document.querySelector('.set-select-row select[disabled]'), null, { timeout: 60_000 });
+  await setTile.click();
+  await scanner.waitForFunction(() => !document.querySelector('.set-select-row [aria-disabled="true"]'), null, { timeout: 60_000 });
   setPick = {
     option,
     before,
     after: {
       total: await scanner.locator('#s-value').textContent(),
-      row: await scanner.locator('.card-row', { has: scanner.locator(`option[value="${option}"]:checked`) }).innerText(),
+      row: await scanner.locator('.card-row', { has: scanner.locator(`[data-strip-pick="${option}"][aria-checked="true"]`) }).innerText(),
     },
   };
   console.log('set pick', JSON.stringify(setPick, null, 2));

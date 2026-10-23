@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-23 (image-first pickers: printings, versions and finishes are tapped, not named)
+
+### Changed
+- Popup: the Set? / Pick printing menu is a strip of card thumbnails (catalog art, set name and number under each; same `thumbUrl` as the candidate cards, no new host). One tap runs the same `saveCorrection` (`via: "set-menu"`) and `pickSet` as the old select. The suggested printing is ringed with the existing "Suggested" tag and the "?" confirm.
+- Popup: "Other version?" is the same strip with the version name under each tile (the shown card first, checked); a tap swaps the row exactly as the old select did.
+- Popup: the Variant menu is large chips, each with the finish label and its price at the first enabled condition (label only when it has none), the chosen one highlighted, the suggested one ringed with its "?" confirm. A tap sets the printing like the old select.
+- Strips scroll horizontally with scroll-snap; more than 8 choices show 8 and a "More +N" tile that expands in place ("Fewer" collapses). Art that fails to load becomes a text tile (name and set). Each strip and chip group is a `radiogroup` with an accessible label; tiles are `radio` buttons with `aria-checked`; Arrow keys/Home/End move, Enter/Space select, focus returns to the row after a pick.
+- The top status line ("Found N cards: ...") is recomputed from the current cards whenever a promotion, demotion or pick changes them, while the scan status is what the bar shows (a pick's own "Getting price..." message still replaces it).
+- The lot-level Base Set edition control is unchanged (still a compact select).
+
+### Added
+- `lib/option-strip.js`: pure view models (`setTiles`, `versionTiles`, `finishChips`, `splitMore`) and markup (`renderTileStrip`, `renderChipGroup`); `formatPrinting` moved here from `popup.js`.
+
+### Tests
+- New `tests/option-strip.test.js`. `extension-wasm-popup.spec.js`: new cases for the strips, taps, keyboard, More, image fallback, version swap, finish chips and the status line; updated the three Set? `toHaveValue` checks, the Variant `?` test and the Base Set edition test (they read the removed selects). `tests/e2e/live-scan.mjs` set pick now taps a tile.
+
 ## 2026-10-23 (price decides how much picture evidence a card needs)
 
 Product stays at two user-visible states (CONFIRMED / CHOOSE). QA D-1: two wrong cards were auto-confirmed with real prices at cosine 0.73 ('Regice ex' Hidden Legends #97 $303.75 at read height 312; 'Regirock ex' Emerald #99 $179.99 at 334).

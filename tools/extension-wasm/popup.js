@@ -1,9 +1,10 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
+import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { demoteCard, isDemotable, priceHighOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -64,6 +65,7 @@ let _variantChoice = new Map(); // card index -> printing the user chose, or one
 let _variantSuggest = new Map(); // card index -> printing the picture suggests: preselected, never priced until confirmed
 let _variantPicked = new Set(); // card indexes whose printing the user set themselves: the lot edition leaves them alone
 let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
+let _stripMore = new Set();     // "idx:kind" of the picker strips expanded past their first 8 tiles
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _showChoose = true;         // the "To confirm" group is open
@@ -72,7 +74,11 @@ let _searchTimer = null;
 let _pickSeq = 0;
 const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
 
-function showMessage(text, isError = false) {
+let _statusTail = "";       // what follows the scan status line: truncation and still-loading notes
+let _statusShown = false;   // the message bar currently shows the scan status, so card changes may refresh it
+
+function showMessage(text, isError = false, isStatus = false) {
+  _statusShown = isStatus;
   msgBar.textContent = text;
   msgBar.classList.toggle("error", isError);
   msgBar.setAttribute("role", isError ? "alert" : "status");
@@ -235,6 +241,7 @@ btnClear.addEventListener("click", () => {
   _variantPicked = new Set();
   _lotEdition = "";
   _picker = new Map();
+  _stripMore = new Set();
   _showUnrecognised = false;
   _showChoose = true;
   closeBulk(false);
@@ -286,6 +293,7 @@ function applyScanResult(data) {
   _variantPicked = new Set();
   _lotEdition = "";
   _picker = new Map();
+  _stripMore = new Set();
   _userEdits = false;
   _showUnrecognised = false;
   _showChoose = true;
@@ -305,12 +313,21 @@ function applyScanResult(data) {
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
       : "";
-    showMessage(`${scanStatus(_lastResult.cards)}${truncationNote(data.truncated)}.${stillLoading}`);
+    _statusTail = `${truncationNote(data.truncated)}.${stillLoading}`;
+    refreshStatus(true);
   }
 
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
   promoteCheap(_lastResult);
+}
+
+// The top status line always counts the cards as they are now. A pick's own message ("Getting price...") replaces it
+// until the next scan; while the status is showing, every change to the cards (a promotion, a demotion, a pick) refreshes it.
+function refreshStatus(force = false) {
+  const cards = _lastResult?.cards;
+  if (!cards?.length || !(force || _statusShown)) return;
+  showMessage(`${scanStatus(cards)}${_statusTail}`, false, true);
 }
 
 /* ─── Stakes: price decides how much picture evidence a card needs (lib/stakes.js) ─── */
@@ -643,36 +660,6 @@ function renderResults() {
   resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
     + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
-
-  document.querySelectorAll(".set-select-row select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      saveSetCorrection(idx, e.target.value, "set-menu");
-      pickSet(idx, e.target.value);
-    });
-  });
-
-  document.querySelectorAll(".version-select-row select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      const card = _lastResult?.cards?.[idx];
-      if (card && e.target.value) replaceCard(idx, swapVersion(card, e.target.value));
-    });
-  });
-
-  // Wire variant selectors
-  document.querySelectorAll(".variant-select-row:not(.version-select-row) select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      const value = e.target.value;
-      _variantSuggest.delete(idx);
-      if (value) { _variantChoice.set(idx, value); _variantPicked.add(idx); }
-      else { _variantChoice.delete(idx); _variantPicked.delete(idx); }
-      renderResults();
-      pushOverlay();
-      updateStats(cards);
-    });
-  });
 }
 
 function renderCardRow(card, idx) {
@@ -860,7 +847,8 @@ function openSearch(idx, via) {
 function focusOpener(idx, via = null) {
   const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
   if (!row) return;
-  const target = (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
+  const strip = via === "strip" ? row.querySelector('[role="radio"][aria-checked="true"]') : null;
+  const target = strip || (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
     || row.querySelector("[data-open-search]")
     || row.querySelector("button[data-pick], button, select, input");
   target?.focus();
@@ -985,6 +973,13 @@ resultsEl.addEventListener("click", (e) => {
     if (!card?.bestGuess) return;
     saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
     replaceCard(idx, confirmGuess(card));
+  } else if ("stripMore" in button.dataset) {
+    const key = `${idx}:${button.dataset.stripMore}`;
+    if (_stripMore.has(key)) _stripMore.delete(key); else _stripMore.add(key);
+    renderResults();
+    resultsEl.querySelector(`.strip-more[data-strip-more="${button.dataset.stripMore}"][data-idx="${idx}"]`)?.focus();
+  } else if ("stripPick" in button.dataset) {
+    onStripPick(idx, button);
   } else if (button.dataset.pick) {
     const fromSearch = Boolean(button.closest(".picker-results"));
     const shown = fromSearch ? _picker.get(idx)?.results : candidatesOfCard(_lastResult?.cards?.[idx]);
@@ -1002,6 +997,52 @@ resultsEl.addEventListener("click", (e) => {
     highlightOnPage(idx, true);
   }
 });
+
+// One tap on a thumbnail or chip. Each kind goes through exactly what its menu did: the printing saves the same
+// correction (via "set-menu") and prices the same way, a version swaps the row, a finish sets the printing for the row.
+function onStripPick(idx, button) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card || button.getAttribute("aria-disabled") === "true" || button.getAttribute("aria-checked") === "true") return;
+  const value = button.dataset.stripPick;
+  const kind = button.dataset.stripKind;
+  if (kind === "set") {
+    saveSetCorrection(idx, value, "set-menu");
+    pickSet(idx, value);
+  } else if (kind === "version") {
+    replaceCard(idx, swapVersion(card, value));
+  } else if (kind === "finish") {
+    _variantSuggest.delete(idx);
+    _variantChoice.set(idx, value);
+    _variantPicked.add(idx);
+    renderResults();
+    pushOverlay();
+    updateStats(_lastResult.cards);
+    focusOpener(idx, "strip");
+  }
+}
+
+// Arrow keys move through a strip or chip group; Enter and Space press the focused one like any button.
+function moveInGroup(e) {
+  const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  const radio = e.target.closest?.('[role="radio"]');
+  const group = radio?.closest('[role="radiogroup"]');
+  if (!group || !(e.key in keys || e.key === "Home" || e.key === "End")) return false;
+  const items = [...group.querySelectorAll('[role="radio"]')];
+  const at = items.indexOf(radio);
+  const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : Math.min(items.length - 1, Math.max(0, at + keys[e.key]));
+  e.preventDefault();
+  for (const item of items) item.tabIndex = item === items[next] ? 0 : -1;
+  items[next].focus();
+  return true;
+}
+
+// A thumbnail that fails to load becomes a text tile (name and set), so the choice is never lost.
+resultsEl.addEventListener("error", (e) => {
+  const art = e.target?.tagName === "IMG" ? e.target.closest(".strip-art") : null;
+  if (!art) return;
+  art.classList.add("no-art");
+  e.target.remove();
+}, true);
 
 /* ─── Review all: every card to choose beside its preselected candidate, kept or skipped, one Confirm N ─── */
 
@@ -1123,6 +1164,7 @@ resultsEl.addEventListener("focusin", (e) => highlightOnPage(rowIndex(e.target))
 resultsEl.addEventListener("mouseleave", () => highlightOnPage(null));
 
 resultsEl.addEventListener("keydown", (e) => {
+  if (moveInGroup(e)) return;
   if (e.key === "Escape" && e.target.classList.contains("picker-input")) {
     e.preventDefault();
     closeSearch(Number(e.target.dataset.idx));
@@ -1149,29 +1191,24 @@ function saveSetCorrection(idx, id, via) {
   }).catch((err) => showMessage(explainScanError(err?.message || err), true));
 }
 
+// Printings of the same card: a strip of thumbnails, one tap picks (same saveCorrection and pickSet as the old menu).
 function renderSetRow(card, idx) {
-  const choices = card.setChoices || [];
-  if (choices.length <= 1) return "";
-  const picked = card.setConfirmed || card.bestGuess ? card.identity?.id : "";
-  const blank = `<option value="" ${picked ? "" : "selected"}>Choose set</option>`;
-  const options = choices.map((c) => {
-    const label = `${c.set || c.setCode || "Unknown set"}${c.number ? " #" + c.number : ""}`;
-    return `<option value="${escHtml(c.id)}" ${c.id === picked ? "selected" : ""}>${escHtml(label)}</option>`;
-  }).join("");
-  return `<div class="variant-select-row set-select-row">
-    <span class="lbl${needsPrinting(card) ? " pick-printing" : ""}">${needsPrinting(card) ? "Pick printing" : "Set?"}</span>
-    <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
+  const tiles = setTiles(card);
+  if (!tiles.length) return "";
+  const open = needsPrinting(card);
+  return `<div class="variant-select-row strip-row set-select-row">
+    <span class="lbl${open ? " pick-printing" : ""}">${open ? "Pick printing" : "Set?"}</span>
+    ${renderTileStrip({ kind: "set", idx, label: "Choose the printing", tiles, expanded: _stripMore.has(`${idx}:set`), locked: Boolean(card.pricing) })}
   </div>`;
 }
 
 // The matcher's best card is shown with its own price; a look-alike version (Pikachu ex beside Pikachu V) is one tap away.
 function renderVersionRow(card, idx) {
-  const versions = card.versionChoices || [];
-  if (!versions.length) return "";
-  const options = versions.map((v) => `<option value="${escHtml(v.id)}">${escHtml(versionLabel(v, enabledConditions()))}</option>`).join("");
-  return `<div class="variant-select-row version-select-row">
+  const tiles = versionTiles(card, enabledConditions());
+  if (!tiles.length) return "";
+  return `<div class="variant-select-row strip-row version-select-row">
     <span class="lbl">Other version?</span>
-    <select data-idx="${idx}" aria-label="Other version"><option value="" selected>Keep ${escHtml(card.identity?.name || "this card")}</option>${options}</select>
+    ${renderTileStrip({ kind: "version", idx, label: "Choose the version", tiles, expanded: _stripMore.has(`${idx}:version`) })}
   </div>`;
 }
 
@@ -1179,6 +1216,7 @@ function replaceCard(idx, next) {
   const hadFocus = resultsEl.contains(document.activeElement);
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
+  refreshStatus();
   _variantChoice.delete(idx);
   _variantSuggest.delete(idx);
   _variantPicked.delete(idx);
@@ -1251,13 +1289,11 @@ function seedVariant(card, idx) {
 
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
-  const printings = Object.keys(grid?.variants || {});
-  if (printings.length <= 1) return "";
   const chosen = _variantChoice.get(idx) || "";
   const suggested = chosen ? "" : _variantSuggest.get(idx) || "";
+  const chips = finishChips(grid, { chosen, suggested, conditions: enabledConditions() });
+  if (!chips.length) return "";
   const picked = chosen || suggested;
-  const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
-  const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
   const seen = picked && (picked === suggestedVariant(card));
   const stampNote = {
     prerelease: "Prerelease stamp found",
@@ -1268,10 +1304,10 @@ function renderVariantRow(card, idx) {
   const note = seen
     ? (stampNote || editionNote(card) || (card.firstEdition ? "1st Edition stamp found" : card.shadow ? "Drop shadow seen" : "Variant seen on the card"))
     : (editionNote(card) || printingNote(grid));
-  return `<div class="variant-select-row">
+  const confirmMark = suggested ? `<button type="button" class="guess-mark" data-variant-confirm data-idx="${idx}" title="Suggested from the picture, which glare can fool. Press to confirm this printing." aria-label="Suggested printing ${escHtml(formatPrinting(suggested))}. Press to confirm it.">?</button>` : "";
+  return `<div class="variant-select-row strip-row">
     <span class="lbl">Variant</span>
-    <select data-idx="${idx}" aria-label="Variant${note ? `. ${escHtml(note)}` : ""}"${note ? ` title="${escHtml(note)}"` : ""}>${blank}${options}</select>
-    ${suggested ? `<button type="button" class="guess-mark" data-variant-confirm data-idx="${idx}" title="Suggested from the picture, which glare can fool. Press to confirm this printing." aria-label="Suggested printing ${escHtml(formatPrinting(suggested))}. Press to confirm it.">?</button>` : ""}
+    ${renderChipGroup({ idx, label: "Choose the finish", chips, note: note || "", confirmMark })}
   </div>`;
 }
 
@@ -1289,17 +1325,6 @@ function renderGradedGrid(card, grid) {
   }
   if (cells.length === 0) return "";
   return `<div class="graded-grid">${cells.join("")}</div>`;
-}
-
-function formatPrinting(p) {
-  // Prettify camelCase/compact names: "1stEditionHolofoil" → "1st Ed Holofoil"
-  const s = String(p);
-  if (/^1stEdition/i.test(s)) return "1st Ed " + s.slice(10);
-  if (s === "holofoil") return "Holofoil";
-  if (s === "normal") return "Normal";
-  if (s === "reverseHolofoil") return "Reverse Holo";
-  if (s === "unlimitedHolofoil") return "Unlimited Holo";
-  return s.replace(/([A-Z])/g, " $1").trim().replace(/^./, (c) => c.toUpperCase());
 }
 
 /* ─── Overlay push ─── */

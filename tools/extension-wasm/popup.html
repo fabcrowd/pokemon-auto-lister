@@ -425,6 +425,37 @@
     .pick-name, .pick-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pick-name { font-size: 10px; font-weight: 700; }
     .pick-sub { font-size: 9px; color: #8b92ab; }
+    /* IMAGE PICKERS: printings and versions are strips of card art, finishes are chips that carry their price. */
+    .strip-row { align-items: flex-start; }
+    .strip-row .lbl { flex: 0 0 auto; }
+    .strip { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scroll-snap-type: x proximity; padding: 3px 3px 6px; margin: -3px; scrollbar-width: thin; scrollbar-color: #262c47 transparent; }
+    .strip-tile {
+      flex: 0 0 76px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+      padding: 4px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 6px; color: #c5cadc; font: inherit; text-align: left; cursor: pointer;
+    }
+    .strip-tile:hover { border-color: #6366f1; }
+    .strip-tile[aria-disabled="true"] { cursor: wait; opacity: 0.6; }
+    .strip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
+    .strip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+    .strip-art { position: relative; display: block; width: 62px; height: 87px; margin: 0 auto; border-radius: 3px; background: #1b2036; border: 1px solid #262c47; box-sizing: border-box; overflow: hidden; }
+    .strip-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .strip-fallback { display: none; position: absolute; inset: 0; padding: 4px; font-size: 9px; font-weight: 700; line-height: 1.25; color: #c5cadc; overflow: hidden; word-break: break-word; }
+    .strip-art.no-art .strip-fallback { display: block; }
+    .strip-tag { display: block; }
+    .strip-more { flex: 0 0 56px; scroll-snap-align: start; align-self: stretch; background: #0b0c12; border: 1px dashed #3b4160; border-radius: 6px; color: #c5cadc; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+    .strip-more:hover { border-color: #6366f1; }
+    .chip-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 100%; min-width: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 84px; min-height: 44px;
+      padding: 6px 12px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 10px; color: #c5cadc; font: inherit; cursor: pointer;
+    }
+    .chip:hover { border-color: #6366f1; }
+    .chip-label { font-size: 11px; font-weight: 700; }
+    .chip-price { font-size: 14px; font-weight: 800; color: #10b981; }
+    .chip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
+    .chip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+    .strip-tile:focus-visible, .strip-more:focus-visible, .chip:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
     .picker-bar { display: flex; align-items: center; gap: 8px; }
     .picker-input {
       flex: 1;
