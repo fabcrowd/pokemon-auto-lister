@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-23 (copy or download the confirmed lot; Near Mint label)
+
+### Added
+- Popup lot strip: "Copy N confirmed" and "Download CSV (N)" buttons for the confirmed cards only (the same cards the Sure total counts: named and settled, not demoted to Choose, not priced from an old grid). Hidden when N is 0; the tooltip says how many more cards still need confirming and are not included. No new permission or host: the click writes the clipboard (`navigator.clipboard.writeText`, falling back to a hidden textarea and `execCommand("copy")`) or saves a Blob through a temporary link, as the options page already does.
+- `lib/lot-export.js` (pure): one row per card + printing + condition with Qty; columns Name, Set, Number, Printing (or "open"), Finish, Condition, Qty, Price, Low, High, Price source, Price date, Price age days, Basis ("raw, English, <condition>"). An open printing leaves Price blank and gives the range as Low/High. CSV is RFC 4180, UTF-8 with BOM, CRLF, `card-lot-YYYY-MM-DD.csv` (local date); a cell starting with `=`, `+`, `-`, `@`, tab or CR gets a leading apostrophe (CSV and the tab-separated copy). No page address, image or seller data.
+- The est. value header and the lot strip show the active condition (NM by default) as a small label, with a tooltip that prices are Near Mint market prices unless the user's price-service key provides other conditions.
+
+### Changed
+- `isStale` in `lib/card-display.js` is exported so the export and the lot total share one predicate.
+- Store privacy policy and listing: one sentence each about the click-to-copy/download.
+
+### Tests
+- New `tests/lot-export.test.js`; popup e2e cases for the buttons, tooltip, hidden at 0, Copy, clipboard fallback, Download (name, BOM, CRLF) and the Near Mint label. No existing test changed.
+
 ## 2026-10-23 (picker fixes: art for every printing, a version tap stays confirmed, focus stays in the strip)
 
 ### Fixed

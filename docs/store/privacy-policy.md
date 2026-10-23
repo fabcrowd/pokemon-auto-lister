@@ -20,6 +20,7 @@ This extension finds Pokémon TCG cards in photos on web pages and shows their p
 - **Card memory.** If you turn on "Recognize cards I corrected before", it also stores a numeric fingerprint (an embedding) of each corrected crop.
 - **Settings.** Your settings and a cache of price lookups are kept in the browser's extension storage. Price lookups are cached for up to 24 hours.
 - **Your API key.** If you enter a PokemonPriceTracker API key, it is stored in the browser's extension storage. It is used only to ask that service for prices.
+- **Copy and download of your lot.** The popup can copy the confirmed cards (card names and prices) to your clipboard, or save them as a CSV file in your downloads folder, but only when you click Copy or Download CSV. Nothing is sent anywhere.
 - **Model files.** The recognition models are downloaded once and kept in the browser's cache.
 
 Developer builds of the extension include an optional test-photo collection feature. It is not part of the version in the Chrome Web Store.

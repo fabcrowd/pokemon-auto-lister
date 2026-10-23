@@ -378,7 +378,7 @@ export function rowRange(card, condition) {
 }
 
 // A price that stays out of the totals: it came from an old fallback grid.
-const isStale = (card) => card?.price_grid?.stale === true;
+export const isStale = (card) => card?.price_grid?.stale === true;
 
 /**
  * What the whole lot could be worth, for one condition: a confirmed price counts at both ends, a name whose

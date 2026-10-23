@@ -26,6 +26,7 @@ What you get
 - Prices from public sources. You can add your own price-service API key for condition-based prices.
 - A short list of likely matches when a card is unclear, with pictures.
 - Export or clear your saved corrections at any time.
+- Copy or download the confirmed cards in your lot (names and prices) to your clipboard or downloads folder when you click; nothing is sent anywhere.
 
 Privacy
 - Card recognition runs on your device. Your full photos are never uploaded.

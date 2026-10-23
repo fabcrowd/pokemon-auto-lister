@@ -7,6 +7,7 @@ import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, 
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
+import { CONDITION_TIP, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
@@ -27,6 +28,7 @@ const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sValue       = document.getElementById("s-value");
 const statValue    = document.getElementById("stat-value");
 const lotTotalsEl  = document.getElementById("lot-totals");
+const sCond        = document.getElementById("s-cond");
 const lotEditionEl = document.getElementById("lot-edition");
 const lotEditionSelect = document.getElementById("lot-edition-select");
 const fullSizeNotice = document.getElementById("fullsize-notice");
@@ -534,6 +536,8 @@ function updateStats(cards) {
   const lot = lotValue(cards, choiceFor, enabledConditions());
   sValue.textContent = lot.value ?? "—";
   setStatDetail(lot.detail);
+  sCond.textContent = enabledConditions()[0] || "NM";
+  sCond.hidden = false;
   renderLotTotals(cards, choiceFor);
   renderLotEdition(cards);
 }
@@ -572,10 +576,75 @@ function renderLotTotals(cards, choiceFor) {
   if (!list.length) { lotTotalsEl.hidden = true; return; }
   const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
-  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n">(${t.identified}${t.toCheck ? `, ${t.toCheck} old ${t.toCheck === 1 ? "price" : "prices"} to check` : ""})</span></span>`
-    + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`;
+  const cond = enabledConditions()[0] || "NM";
+  const labels = lotExportLabels(...currentLotCounts(cards, choiceFor));
+  const actions = labels
+    ? `<span class="lt-actions" title="${escHtml(labels.tip)}">`
+      + `<button type="button" class="lt-btn" data-lot-copy aria-label="${escHtml(labels.copy)}" title="${escHtml(labels.tip)}">${escHtml(labels.copy)}</button>`
+      + `<button type="button" class="lt-btn" data-lot-csv aria-label="${escHtml(labels.csv)}" title="${escHtml(labels.tip)}">${escHtml(labels.csv)}</button></span>`
+    : "";
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n">(${t.identified}${t.toCheck ? `, ${t.toCheck} old ${t.toCheck === 1 ? "price" : "prices"} to check` : ""})</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(cond)}</span></span>`
+    + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
+    + actions;
   lotTotalsEl.hidden = false;
 }
+
+// Copy and Download write only the confirmed cards, on the user's click; nothing leaves the browser otherwise.
+function currentLot() {
+  const cards = _lastResult?.cards || [];
+  const choiceFor = (card) => _variantChoice.get(cards.indexOf(card)) || null;
+  return lotExportRows(cards, choiceFor, enabledConditions());
+}
+function currentLotCounts(cards, choiceFor) {
+  const { count, notIncluded } = lotExportRows(cards, choiceFor, enabledConditions());
+  return [count, notIncluded];
+}
+
+// The clipboard API needs no extra permission from a click; the textarea route is for when it refuses.
+function copyWithTextarea(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+  document.body.appendChild(area);
+  area.select();
+  try { return document.execCommand("copy"); } catch { return false; } finally { area.remove(); }
+}
+
+async function copyLot() {
+  const lot = currentLot();
+  const labels = lotExportLabels(lot.count, lot.notIncluded);
+  if (!labels) return;
+  const text = lotToTsv(lot.rows);
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch {
+    copied = copyWithTextarea(text);
+  }
+  showMessage(copied ? labels.copied : "Copy failed: use Download CSV", !copied);
+}
+
+function downloadLot() {
+  const lot = currentLot();
+  const labels = lotExportLabels(lot.count, lot.notIncluded);
+  if (!labels) return;
+  const name = lotFileName(new Date());
+  // The byte order mark makes Excel read the file as UTF-8.
+  const url = URL.createObjectURL(new Blob(["﻿", lotToCsv(lot.rows)], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showMessage(`Saved ${lot.count} ${lot.count === 1 ? "card" : "cards"} as ${name}`);
+}
+
+lotTotalsEl?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-lot-copy]")) copyLot();
+  else if (event.target.closest("[data-lot-csv]")) downloadLot();
+});
 
 /* ─── Full-size photo offer ─── */
 
@@ -643,6 +712,7 @@ function chosenPrinting(card, idx) {
 function resetResults() {
   sValue.textContent    = "—";
   setStatDetail("");
+  sCond.hidden          = true;
   lotEditionEl.hidden   = true;
   if (lotTotalsEl) { lotTotalsEl.hidden = true; lotTotalsEl.innerHTML = ""; }
   if (fullSizeNotice) fullSizeNotice.hidden = true;
