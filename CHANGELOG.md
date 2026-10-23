@@ -8,6 +8,7 @@
 - Popup: the Variant menu is large chips, each with the finish label and its price at the first enabled condition (label only when it has none), the chosen one highlighted, the suggested one ringed with its "?" confirm. A tap sets the printing like the old select.
 - Strips scroll horizontally with scroll-snap; more than 8 choices show 8 and a "More +N" tile that expands in place ("Fewer" collapses). Art that fails to load becomes a text tile (name and set). Each strip and chip group is a `radiogroup` with an accessible label; tiles are `radio` buttons with `aria-checked`; Arrow keys/Home/End move, Enter/Space select, focus returns to the row after a pick.
 - The top status line ("Found N cards: ...") is recomputed from the current cards whenever a promotion, demotion or pick changes them, while the scan status is what the bar shows (a pick's own "Getting price..." message still replaces it).
+- Tapping the picture of a suggested printing confirms it through the same path as the "?" (saveCorrection `via: "guess-confirmed"`, same price update); the suggested finish chip already did. Tapping an already confirmed tile or chip does nothing and sends nothing; a different tile picks that one.
 - The lot-level Base Set edition control is unchanged (still a compact select).
 
 ### Added

@@ -959,4 +959,72 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
     await page.close();
   });
+
+  // ─── Tapping the image of a suggestion confirms it, like the ? button ───
+
+  const guessedScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const sets = [
+      { id: 'sv01-5', name: 'Eevee', set: 'Scarlet & Violet', setCode: 'sv01', number: '005', imageUrl: arts[0] },
+      { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005', imageUrl: arts[1] },
+    ];
+    return { cards: [{
+      identity: sets[1], setChoices: sets, setConfirmed: false, setRange: { low: 2, high: 9, count: 2, total: 2 },
+      bestGuess: { source: 'page', reason: 'likely Paldea Evolved' }, confidence: 0.7, abstain: false, market_price: 3, box: [0, 0, 1, 1],
+      price_grid: grid(3),
+    }], priced: { 'sv01-5': { identity: sets[0], market_price: 2, price_variant: 'normal', price_grid: grid(2) } } };
+  };
+
+  test('tapping the suggested printing tile confirms it exactly like the ? button', async () => {
+    const page = await popupWithChoose(guessedScan);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00–$9.00');
+    const tile = page.getByRole('radio', { name: 'Suggested: Paldea Evolved number 005' });
+    await expect(tile).toHaveAttribute('aria-checked', 'true');
+    await tile.click();
+    await expect(page.locator('.card-row .guess-mark')).toHaveCount(0);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
+    await expect(page.locator('.strip-suggested')).toHaveCount(0);
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveCorrection', scanId: 'c', index: 0, pickedId: 'sv02-5', via: 'guess-confirmed' });
+    expect(await page.evaluate(() => window.__priceCalls)).toEqual([]);
+    // Already confirmed: another tap does nothing and sends nothing.
+    await page.getByRole('radio', { name: 'Paldea Evolved number 005' }).click();
+    expect(await page.evaluate(() => window.__sent.length)).toBe(1);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$3.00');
+    await page.close();
+  });
+
+  test('tapping a different printing tile than the suggested one picks that one', async () => {
+    const page = await popupWithChoose(guessedScan);
+    await page.getByRole('radio', { name: 'Scarlet & Violet number 005' }).click();
+    await expect(page.locator('.card-row .card-price')).toHaveText('$2.00');
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ pickedId: 'sv01-5', via: 'set-menu' });
+    await page.close();
+  });
+
+  test('tapping the suggested finish chip confirms it like the ? button; a confirmed chip does nothing', async () => {
+    const page = await popupWithChoose(() => ({
+      cards: [{
+        identity: { id: 'x-1', name: 'Eevee', set: 'Jungle', setCode: 'base2', number: '51' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+        variant: { edition: 'standard', finish: 'reverse', stamp: 'none' },
+        price_grid: { source: 'pokemontcg', variants: {
+          normal: { market: 2, conditions: { NM: 2 } }, holofoil: { market: 10, conditions: { NM: 10 } }, reverseHolofoil: { market: 4, conditions: { NM: 4 } },
+        } },
+      }],
+      priced: {},
+    }));
+    const chip = page.locator('.chip-suggested');
+    await expect(chip).toHaveAttribute('data-strip-pick', 'reverseHolofoil');
+    await chip.click();
+    await expect(page.locator('button[data-variant-confirm]')).toHaveCount(0);
+    await expect(page.locator('.card-row .card-price')).toHaveText('$4.00');
+    await expect(page.locator('.chip[aria-checked="true"]')).toHaveAttribute('data-strip-pick', 'reverseHolofoil');
+    await page.locator('.chip[aria-checked="true"]').click();
+    await expect(page.locator('.card-row .card-price')).toHaveText('$4.00');
+    expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+    await page.close();
+  });
 });

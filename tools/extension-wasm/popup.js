@@ -969,10 +969,7 @@ resultsEl.addEventListener("click", (e) => {
     pushOverlay();
     updateStats(_lastResult.cards);
   } else if ("guessConfirm" in button.dataset) {
-    const card = _lastResult?.cards?.[idx];
-    if (!card?.bestGuess) return;
-    saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
-    replaceCard(idx, confirmGuess(card));
+    confirmSuggestedSet(idx);
   } else if ("stripMore" in button.dataset) {
     const key = `${idx}:${button.dataset.stripMore}`;
     if (_stripMore.has(key)) _stripMore.delete(key); else _stripMore.add(key);
@@ -998,11 +995,24 @@ resultsEl.addEventListener("click", (e) => {
   }
 });
 
+// The "?" beside the name and a tap on the suggested printing's picture do the same thing.
+function confirmSuggestedSet(idx) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card?.bestGuess) return;
+  saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
+  replaceCard(idx, confirmGuess(card));
+}
+
 // One tap on a thumbnail or chip. Each kind goes through exactly what its menu did: the printing saves the same
 // correction (via "set-menu") and prices the same way, a version swaps the row, a finish sets the printing for the row.
 function onStripPick(idx, button) {
   const card = _lastResult?.cards?.[idx];
-  if (!card || button.getAttribute("aria-disabled") === "true" || button.getAttribute("aria-checked") === "true") return;
+  if (!card || button.getAttribute("aria-disabled") === "true") return;
+  // The checked tile is the current answer: a no-op, unless it is the suggested printing, which a tap confirms.
+  if (button.getAttribute("aria-checked") === "true") {
+    if (button.dataset.stripKind === "set" && button.classList.contains("strip-suggested")) confirmSuggestedSet(idx);
+    return;
+  }
   const value = button.dataset.stripPick;
   const kind = button.dataset.stripKind;
   if (kind === "set") {
