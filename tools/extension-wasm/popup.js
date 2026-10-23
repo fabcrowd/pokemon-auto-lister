@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd, GUESS_TOTAL_CAP } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -23,6 +23,8 @@ const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sValue       = document.getElementById("s-value");
 const statValue    = document.getElementById("stat-value");
 const lotTotalsEl  = document.getElementById("lot-totals");
+const lotEditionEl = document.getElementById("lot-edition");
+const lotEditionSelect = document.getElementById("lot-edition-select");
 const fullSizeNotice = document.getElementById("fullsize-notice");
 const fullSizeText = document.getElementById("fullsize-text");
 const fullSizeOpen = document.getElementById("fullsize-open");
@@ -48,7 +50,10 @@ let isScanning = false;
 let _lastResult = null;
 let _scanSeq = 0;
 let _filters   = mergeFilters(DEFAULT_FILTERS);
-let _variantChoice = new Map(); // card index -> printing chosen this scan
+let _variantChoice = new Map(); // card index -> printing the user chose, or one settled by the printed number
+let _variantSuggest = new Map(); // card index -> printing the picture suggests: preselected, never priced until confirmed
+let _variantPicked = new Set(); // card indexes whose printing the user set themselves: the lot edition leaves them alone
+let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _searchTimer = null;
@@ -210,6 +215,9 @@ btnClear.addEventListener("click", () => {
   chrome.runtime.sendMessage({ action: "clearPageOverlay" }).catch(() => {});
   _lastResult = null;
   _variantChoice = new Map();
+  _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
   _showUnrecognised = false;
   examStrip.hidden = true;
@@ -259,6 +267,9 @@ function applyScanResult(data) {
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
   _variantChoice = new Map();
+  _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
   _userEdits = false;
   _showUnrecognised = false;
@@ -269,7 +280,6 @@ function applyScanResult(data) {
   renderResults();
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
   showFullSizeOffer(_lastResult.fullSize);
-  priceGuesses(_lastResult).catch((err) => console.warn("guess prices failed", err?.message || err));
 
   if (cards.length === 0) {
     showMessage("No Pokémon cards detected on this page.");
@@ -413,55 +423,46 @@ function updateStats(cards) {
   sValue.textContent = lot.value ?? "—";
   setStatDetail(lot.detail);
   renderLotTotals(cards, choiceFor);
+  renderLotEdition(cards);
 }
 
-// The lot in three figures, so a whole lot can be priced before every card is checked: the identified cards, the
-// guesses (marked with ~, counted only if they are right), and the two together.
+for (const edition of LOT_EDITIONS) lotEditionSelect.add(new Option(edition.label, edition.id));
+
+// Shown only while some row has its finish settled by the printed number but its edition open.
+function renderLotEdition(cards) {
+  lotEditionEl.hidden = !(cards || []).some(needsEdition);
+  lotEditionSelect.value = _lotEdition;
+}
+
+// One edition for the whole lot: every eligible row the user has not set themselves takes it, or loses it when cleared.
+lotEditionSelect.addEventListener("change", () => {
+  const cards = _lastResult?.cards;
+  if (!cards) return;
+  _lotEdition = lotEditionSelect.value;
+  cards.forEach((card, idx) => {
+    if (_variantPicked.has(idx) || !needsEdition(card)) return;
+    const key = _lotEdition ? editionVariant(card, _lotEdition) : null;
+    if (key) _variantChoice.set(idx, key);
+    else _variantChoice.delete(idx);
+    _variantSuggest.delete(idx);
+  });
+  renderResults();
+  pushOverlay();
+  updateStats(cards);
+  lotEditionSelect.focus();
+});
+
+// The lot in two figures: what the confirmed cards are worth (a range while a printing is open), and how many
+// cards are still to confirm. A guessed card adds nothing until the user confirms it.
 function renderLotTotals(cards, choiceFor) {
   if (!lotTotalsEl) return;
   const list = (cards || []).filter((card) => !card.cardBack);
   if (!list.length) { lotTotalsEl.hidden = true; return; }
-  const t = lotTotals(cards, choiceFor, enabledConditions());
+  const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
-  const pending = list.some((card) => card.topGuess && card.topGuess.price === undefined);
-  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.sure.low, t.sure.high))}</b> <span class="lt-n">(${t.sure.identified})</span></span>`
-    + `<span class="lt-item lt-guess"><span class="lt-lbl">Guesses</span> <b>~${escHtml(formatUsd(t.guess))}</b> <span class="lt-n">(${t.guessed}${t.toCheck ? `, ${t.toCheck} over $${GUESS_TOTAL_CAP} to check` : ""}${pending ? ", pricing…" : ""})</span></span>`
-    + `<span class="lt-item"><span class="lt-lbl">Together</span> <b>~${escHtml(span(t.low, t.high))}</b></span>`;
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n">(${t.identified}${t.toCheck ? `, ${t.toCheck} old ${t.toCheck === 1 ? "price" : "prices"} to check` : ""})</span></span>`
+    + `<span class="lt-item lt-guess" title="Cards the scanner only guesses at. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`;
   lotTotalsEl.hidden = false;
-}
-
-// Top guesses are priced in the background, a few at a time, so the lot totals and tags fill in without blocking.
-const GUESS_PRICE_CONCURRENCY = 3;
-async function priceGuesses(scan) {
-  const todo = scan.cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.topGuess && card.topGuess.price === undefined);
-  if (!todo.length) return;
-  const stale = () => _lastResult?.scanId !== scan.scanId;
-  let next = 0;
-  let done = 0;
-  const refresh = () => {
-    updateStats(_lastResult.cards);
-    pushOverlay();
-    // The rows are drawn again only when that cannot take away a search box the user is typing in.
-    if (!resultsEl.contains(document.activeElement)) renderResults();
-  };
-  const worker = async () => {
-    while (next < todo.length) {
-      const { idx } = todo[next++];
-      let resp = null;
-      try {
-        resp = await chrome.runtime.sendMessage({ action: "priceCard", id: _lastResult.cards[idx].topGuess.id });
-      } catch { resp = null; }
-      if (stale()) return;
-      const current = _lastResult.cards[idx];
-      if (!current?.topGuess) continue;
-      const quote = resp && !resp.error ? quotedPrice({ ...resp, setChoices: [] }, null, enabledConditions()) : null;
-      const price = quote?.price ?? (typeof resp?.market_price === "number" ? resp.market_price : null);
-      _lastResult.cards[idx] = { ...current, topGuess: { ...current.topGuess, price: price > 0 ? price : null } };
-      if (++done % 6 === 0) refresh();
-    }
-  };
-  await Promise.all(Array.from({ length: GUESS_PRICE_CONCURRENCY }, worker));
-  if (!stale()) refresh();
 }
 
 /* ─── Full-size photo offer ─── */
@@ -529,6 +530,7 @@ function chosenPrinting(card, idx) {
 function resetResults() {
   sValue.textContent    = "—";
   setStatDetail("");
+  lotEditionEl.hidden   = true;
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
@@ -563,8 +565,9 @@ function renderResults() {
     sel.addEventListener("change", (e) => {
       const idx = Number(e.target.dataset.idx);
       const value = e.target.value;
-      if (value) _variantChoice.set(idx, value);
-      else _variantChoice.delete(idx);
+      _variantSuggest.delete(idx);
+      if (value) { _variantChoice.set(idx, value); _variantPicked.add(idx); }
+      else { _variantChoice.delete(idx); _variantPicked.delete(idx); }
       renderResults();
       pushOverlay();
       updateStats(cards);
@@ -638,12 +641,8 @@ function renderPrice(card, idx) {
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
-  if (card.topGuess && !card.identity?.name && !card.identity?.id) {
-    const p = card.topGuess.price;
-    const text = p === undefined ? "…" : p > 0 ? `~${formatUsd(p)}` : "—";
-    const title = p > 0 ? `Price of the top guess, ${card.topGuess.name}. Pick the card to confirm it.` : p === undefined ? "Getting the guess's price…" : "No price for the top guess";
-    return `<div class="card-price guess-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
-  }
+  // A card the scanner only guesses at is a name to confirm: no price is chosen for it.
+  if (!isIdentified(card)) return cell("—", "Confirm the card to see a price");
   const conditions = enabledConditions();
   // Name sure, printing open: the range across the printings it could be, until the user picks one.
   const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
@@ -654,10 +653,15 @@ function renderPrice(card, idx) {
     const others = Object.entries(card.price_grid?.variants?.[quote.printing]?.conditions || {})
       .filter(([cond, price]) => cond !== quote.condition && price != null)
       .map(([cond, price]) => `${cond} $${Number(price).toFixed(2)}`);
-    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), ...others]
+    const oldDays = staleDays(card.price_grid);
+    const oldTag = card.price_grid?.stale ? (oldDays != null ? `Old price: ${oldDays} days old` : "Old price") : null;
+    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), oldTag, ...others]
       .filter(Boolean).join(" · ");
     return cell("$" + Number(quote.price).toFixed(2), title);
   }
+  // Set settled, printing open: the range over its printings, the same one the lot total uses.
+  const printings = isSetConfirmed(card) ? setRangeOf([card], conditions) : null;
+  if (printings) return cell(setRangeSpan(printings), "Printing not picked — pick it for one price");
   const span = isSetConfirmed(card) ? null : setRangeSpan(card.setRange, conditions);
   if (span) return cell(span, "Set not sure — pick the set for one price");
   return cell("—", "No price data");
@@ -839,7 +843,16 @@ resultsEl.addEventListener("click", (e) => {
     return;
   }
   const idx = Number(button.dataset.idx);
-  if ("guessConfirm" in button.dataset) {
+  if ("variantConfirm" in button.dataset) {
+    const suggested = _variantSuggest.get(idx);
+    if (!suggested) return;
+    _variantChoice.set(idx, suggested);
+    _variantPicked.add(idx);
+    _variantSuggest.delete(idx);
+    renderResults();
+    pushOverlay();
+    updateStats(_lastResult.cards);
+  } else if ("guessConfirm" in button.dataset) {
     const card = _lastResult?.cards?.[idx];
     if (!card?.bestGuess) return;
     saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
@@ -937,6 +950,8 @@ function replaceCard(idx, next) {
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   _variantChoice.delete(idx);
+  _variantSuggest.delete(idx);
+  _variantPicked.delete(idx);
   seedVariant(next, idx);
   renderResults();
   if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);
@@ -995,19 +1010,24 @@ async function pickSet(idx, id, picked = null) {
   if (picked) showMessage(`Price updated for ${resp.identity?.name || label}.`);
 }
 
+// A printing settled by the printed number prices at once; one the picture suggests only preselects the menu.
 function seedVariant(card, idx) {
-  const seen = detectedVariant(card);
-  if (seen) _variantChoice.set(idx, seen);
+  const settled = detectedVariant(card);
+  if (settled) { _variantChoice.set(idx, settled); return; }
+  const suggested = suggestedVariant(card);
+  if (suggested) _variantSuggest.set(idx, suggested);
 }
 
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
   const printings = Object.keys(grid?.variants || {});
   if (printings.length <= 1) return "";
-  const picked = _variantChoice.get(idx) || "";
+  const chosen = _variantChoice.get(idx) || "";
+  const suggested = chosen ? "" : _variantSuggest.get(idx) || "";
+  const picked = chosen || suggested;
   const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
   const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
-  const seen = picked && picked === detectedVariant(card);
+  const seen = picked && (picked === suggestedVariant(card));
   const stampNote = {
     prerelease: "Prerelease stamp found",
     staff: "Staff stamp found",
@@ -1020,6 +1040,7 @@ function renderVariantRow(card, idx) {
   return `<div class="variant-select-row">
     <span class="lbl">Variant</span>
     <select data-idx="${idx}" aria-label="Variant${note ? `. ${escHtml(note)}` : ""}"${note ? ` title="${escHtml(note)}"` : ""}>${blank}${options}</select>
+    ${suggested ? `<button type="button" class="guess-mark" data-variant-confirm data-idx="${idx}" title="Suggested from the picture, which glare can fool. Press to confirm this printing." aria-label="Suggested printing ${escHtml(formatPrinting(suggested))}. Press to confirm it.">?</button>` : ""}
   </div>`;
 }
 
@@ -1064,7 +1085,7 @@ function pushOverlay() {
     display: {
       ...computeDisplayForOverlay(c, idx),
       state: overlayState(c),
-      ...(c.topGuess ? { guess: { name: c.topGuess.name, price: c.topGuess.price ?? null } } : {}),
+      ...(c.topGuess ? { guess: { name: c.topGuess.name } } : {}),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
     },
   }));

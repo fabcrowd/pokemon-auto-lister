@@ -202,6 +202,11 @@
     .lot-totals .lt-guess b { color: #e9d6a8; font-style: italic; }
     .lot-totals .lt-lbl { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
     .lot-totals .lt-n { color: #5d6480; }
+    .lot-edition { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 16px; border-top: 1px solid #1a1d2a; font-size: 11px; color: #8b92ab; }
+    .lot-edition[hidden] { display: none; }
+    .lot-edition label { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
+    .lot-edition select { font-family: inherit; font-size: 11px; font-weight: 700; height: 26px; padding: 0 6px; border-radius: 8px; border: 1px solid #1e2130; background: #0e1018; color: #c5cadc; cursor: pointer; }
+    .lot-edition select:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
 
     /* GUESS ROWS — a card the reader could not name, shown as its top guess */
     .card-name.guess-name { color: #e9d6a8; font-style: italic; font-weight: 600; }
@@ -581,6 +586,11 @@
   <div class="msg-bar hidden" id="msg-bar" role="status"></div>
 
   <div class="lot-totals" id="lot-totals" role="group" aria-label="Lot value" hidden></div>
+
+  <div class="lot-edition" id="lot-edition" role="group" aria-label="Base Set editions" hidden>
+    <label for="lot-edition-select">Base Set editions</label>
+    <select id="lot-edition-select" title="Applies this edition to every Base Set card you have not set yourself. A card's own Variant menu wins."><option value="">Apply to all…</option></select>
+  </div>
 
   <div class="exam-strip" id="exam-strip" role="group" aria-label="Help check the results" hidden>
     <span class="exam-text">Help check: is every card here right?</span>

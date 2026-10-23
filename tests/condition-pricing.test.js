@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fromTcgdexPayload, normalizePpt, pptCardUrl, tcgPlayerIdFromTcgdex } from '../tools/extension-wasm/lib/condition-pricing.js';
+import { fromPokemontcgPayload, fromTcgdexPayload, normalizePpt, pptCardUrl, tcgPlayerIdFromTcgdex } from '../tools/extension-wasm/lib/condition-pricing.js';
 
 // api.tcgdex.net/v2/en/cards/ex16-64 on 2026-10-11, trimmed.
 const snorunt = {
@@ -115,4 +115,12 @@ test('a printing priced only by marketPrice uses the condition it names', () => 
 test('a Price Tracker card with no prices gives no grid', () => {
   assert.equal(normalizePpt({ prices: {}, variants: {} }), null);
   assert.equal(normalizePpt({ prices: { variants: { Holofoil: {} } } }), null);
+});
+
+test('a pokemontcg.io grid older than 30 days is stale; a recent or undated one is not', () => {
+  const now = Date.parse('2026-10-22T00:00:00Z');
+  const prices = { holofoil: { market: 800 } };
+  assert.equal(fromPokemontcgPayload(prices, '2026/08/01', now).stale, true);
+  assert.equal(fromPokemontcgPayload(prices, '2026/10/10', now).stale, undefined);
+  assert.equal(fromPokemontcgPayload(prices, null, now).stale, undefined);
 });

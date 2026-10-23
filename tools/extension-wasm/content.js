@@ -485,8 +485,7 @@
     if (state === 'none') return { state, lines: ['Not recognised', 'Pick in scanner'], short: '?' };
     if (state === 'guess') {
       const guess = card.display.guess;
-      const priced = guess.price > 0 ? `~${money(guess.price)}` : '';
-      return { state, lines: [`${guess.name}?`, priced ? `${priced} · guess` : 'Guess · tap to fix'], short: priced ? `${guess.name}? ${priced}` : `${guess.name}?` };
+      return { state, lines: [`${guess.name}?`, 'Guess · tap to confirm'], short: `${guess.name}?` };
     }
     const { name, price } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
@@ -585,7 +584,7 @@
     const guess = card.display?.state === 'guess' ? card.display.guess : null;
     if (guess?.name) {
       const note = card.display.small ? ' · small picture' : '';
-      return { name: `${guess.name}? (guess)`, price: (guess.price > 0 ? `~${money(guess.price)}` : 'No price yet') + note + ' · click to fix', muted: true };
+      return { name: `${guess.name}? (guess)`, price: 'Confirm to see a price' + note + ' · click to fix', muted: true };
     }
     if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Pick it in the scanner', muted: true };
     const disp = card.display || null;

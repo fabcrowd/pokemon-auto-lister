@@ -51,6 +51,9 @@ export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
     if (!isOpen(read)) return null;
     const named = hint ? read.setChoices.find((choice) => choice.setCode === hint) : null;
     if (named) return { choice: named, source: "hint", reason: `Page says ${named.set || hint}` };
+    // A 1st Edition stamp rules out sets that never had one; it is picture evidence, so it only preselects.
+    const stamped = read.suggestedSetId ? read.setChoices.find((choice) => choice.id === read.suggestedSetId) : null;
+    if (stamped) return { choice: stamped, source: "image", reason: "1st Edition stamp seen on the card" };
     const onPage = pageSet ? read.setChoices.find((choice) => choice.setCode === pageSet) : null;
     if (onPage) {
       const n = counts.get(pageSet);
@@ -60,7 +63,11 @@ export function decideGuesses(reads, { hint = null, rank = () => 0 } = {}) {
   });
 }
 
-/** The read shown as the guessed printing with its own single price; the choices stay for the Set? menu. */
+/**
+ * The read shown as the guessed printing; the choices stay for the Set? menu. A guess from a page heading
+ * that names the set is quoted at its own single price. Any other guess (the picture, a stamp, a set borrowed from
+ * the page's other cards) keeps the range over the choices: it preselects the menu and prices once the user confirms it.
+ */
 export function withGuess(read, decision, card, priced) {
   const next = {
     ...read,
@@ -70,6 +77,6 @@ export function withGuess(read, decision, card, priced) {
     bestGuess: { source: decision.source, reason: decision.reason },
     confidence: Math.min(read.confidence ?? 0, BEST_GUESS_CAP),
   };
-  delete next.setRange;
+  if (decision.source === "hint") delete next.setRange;
   return next;
 }

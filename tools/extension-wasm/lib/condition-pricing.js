@@ -219,7 +219,9 @@ export function normalizePpt(card) {
  * — minus per-condition data. Each printing gets {conditions: {NM: <market>, LP: null, ...}}.
  * This exists so the overlay always has SOMETHING to show even when neither backend nor PPT answer.
  */
-export function fromPokemontcgPayload(prices, updatedAt = null) {
+export const STALE_PRICE_DAYS = 30;
+
+export function fromPokemontcgPayload(prices, updatedAt = null, now = Date.now()) {
   const variants = {};
   if (!prices || typeof prices !== "object") return null;
   for (const [printing, p] of Object.entries(prices)) {
@@ -231,6 +233,8 @@ export function fromPokemontcgPayload(prices, updatedAt = null) {
     };
   }
   if (Object.keys(variants).length === 0) return null;
+  const stamp = Date.parse(typeof updatedAt === "string" ? updatedAt : "");
+  const stale = Number.isFinite(stamp) && now - stamp > STALE_PRICE_DAYS * 24 * 60 * 60 * 1000;
   return {
     source: "pokemontcg",
     variants,
@@ -238,6 +242,7 @@ export function fromPokemontcgPayload(prices, updatedAt = null) {
     defaultVariant: pickDefaultPrinting(variants),
     spreadRatio: computeSpread(variants),
     updatedAt: typeof updatedAt === "string" ? updatedAt : null,
+    ...(stale ? { stale: true } : {}),
   };
 }
 

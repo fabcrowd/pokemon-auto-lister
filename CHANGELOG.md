@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-22
+
+Pricing guards (branch `feat/pricing-guards`).
+
+### Added
+- Lot-level Base Set edition control in the popup (Unlimited / Shadowless / 1st Edition, "Apply to all"), shown only when a settled row has its finish read from the number or catalog but its grid has 1stEdition / Shadowless rows. It sets that edition on every such row the user has not set on its own Variant menu; an individual pick wins. The star-only promo path is unchanged.
+- Popup e2e tests for the Variant "?" confirm, the "To confirm N" lot cell, the lot edition control and a page-borrowed set; the startup test now waits for the background's readiness instead of sampling the scan button early.
+- A named row whose printing is still open is priced at its default printing's NM price (holofoil, then normal, then reverse; chosen over median, 25th percentile, cheapest and geometric mean on lot-level error), shown as "~$x" and counted under Guesses, never Sure. A confirmed printing keeps its exact quote.
+- Top guesses on a multi-printing grid get the same default-printing "~" price instead of "no price".
+- A pokemontcg.io fallback grid whose own date is over 30 days old carries `stale: true`; the price still shows with an "Old price: N days old" tooltip.
+
+### Changed
+- A 1st Edition stamp match (template score on pixels) that narrows a card to the one 1st Edition set no longer prices it: the set choices stay open as a range, the stamp's set is the preselected Set? suggestion (`suggestedSetId`, "1st Edition stamp seen on the card"), and "?" confirms it. A page heading still wins over it.
+- A stale-grid price is listed "to check" and left out of Sure and the totals, like a guess over $50.
+- Owner rule: a price is never chosen for something the extension does not know. This replaces the guess pricing above.
+  - A card whose identity is not confirmed (top guess, asked name, not recognised) shows its name to confirm and "—" (tooltip "Confirm the card to see a price"); it adds nothing to any total. The page overlay tag says "Guess · tap to confirm".
+  - A name that is sure with its printing open shows a range (set range, or the range over its printings) until the user picks the printing in the menu or confirms the suggestion with its "?" button.
+  - A printing is auto-priced only from non-visual evidence: a single printing, a finish read from the printed collector number or the catalog (`finishSure`), or a set settled by number, code, symbol or stamp text. A printing inferred from the picture (variant model, 1st Edition stamp template, drop shadow) is the menu's preselected suggestion only; the new "?" button next to Variant confirms it. `detectedVariant` is the settled printing, `suggestedVariant` the picture's.
+  - A best-guess set whose source is `image` keeps its set range and the preselected Set? menu, and prices only after "?" confirms it. A set borrowed from the page's other cards (`page` source) now behaves the same way. Only a page heading that names the set (`hint`) still prices directly.
+  - Lot summary: Sure (confirmed rows plus ranges) and "To confirm N". No Guesses or Together figures.
+
+### Removed
+- Default-printing "~" pricing (`guessQuote`, `guessPrice`, `defaultPrintingPrice`), top-guess prices (the background `priceCard` fetch in the popup), the Guesses and Together totals (`lotTotals`), and the $50 picture-guess cap (`GUESS_TOTAL_CAP`): their purpose is covered by not pricing unconfirmed cards.
+
+### Fixed
+- A name from a picture-only best guess (`bestGuess.source === 'image'`) priced over $50 no longer counts in Sure; it is listed "to check". Page and hint best guesses are unchanged.
+
 ## 2026-10-21
 
 Facebook Marketplace accuracy and UI pass (branch `feat/fb-accuracy-ui`, 899ba40 … 4c4aae5). The numbers, the rationale and the rejected experiments are in `HANDOFF.md` under "Facebook accuracy and UI pass".

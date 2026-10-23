@@ -8,7 +8,7 @@ const guessedRow = {
   identity: { id: 'sv02-5', name: 'Eevee', set: 'Paldea Evolved', setCode: 'sv02', number: '005' },
   setChoices: [{ id: 'sv01-5' }, { id: 'sv02-5' }],
   setConfirmed: false,
-  bestGuess: { source: 'page', reason: 'likely Paldea Evolved' },
+  bestGuess: { source: 'hint', reason: 'Page says Paldea Evolved' },
   confidence: 0.7,
   market_price: 3,
   price_grid: { variants: { normal: { conditions: { NM: 3 } } } },
