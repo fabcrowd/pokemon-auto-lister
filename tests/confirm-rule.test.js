@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CONFIRM_ROWS, confirmDecision, fuseResults, markChoose } from '../tools/extension-wasm/lib/fusion.js';
+import { CONFIRM_ROWS, UNKNOWN_HEIGHT_ROW, confirmDecision, fuseResults, markChoose } from '../tools/extension-wasm/lib/fusion.js';
 
 // Per-height confirm rule for model E (data/reports/fusion-study-E/README.md): the numbers are pinned here so a change is deliberate.
 const META = [{ name: 'Pikachu', id: 'a' }, { name: 'Raichu', id: 'b' }, { name: 'Pikachu', id: 'c' }];
@@ -73,10 +73,25 @@ test('no title evidence is neutral', () => {
   assert.deepEqual(none, silent);
 });
 
-test('an unknown height uses the native row (grid tiles are judged by the matcher)', () => {
-  assert.equal(confirmDecision(hits(0.72, 0.5), META, { height: 0 }).confirm, true);
-  assert.equal(confirmDecision(hits(0.71, 0.5), META, {}).confirm, false);
-  assert.equal(confirmDecision(hits(0.9, 0.5), META, { height: undefined }).confirm, true);
+test('an unknown height uses the 200-249 px row (thumbnails are about 200 px)', () => {
+  assert.equal(UNKNOWN_HEIGHT_ROW, CONFIRM_ROWS.find((r) => r.minHeight === 200));
+  for (const opts of [{ height: 0 }, {}, { height: undefined }, { height: NaN }, { height: -5 }]) {
+    const at = (top, rival) => confirmDecision(hits(top, rival), META, opts).confirm;
+    assert.equal(at(0.65, 0.64), false, 'cos 0.65 vs rival 0.64: lead 0.01 < G 0.03');
+    assert.equal(at(0.65, 0.60), true, 'cos 0.65 vs rival 0.60: lead 0.05 clears G');
+    assert.equal(at(0.62, 0.50), true, 'exactly at T');
+    assert.equal(at(0.61, 0.10), false, 'under T never confirms');
+    assert.equal(at(0.71, 0.70), false, 'the native row would have confirmed this');
+  }
+});
+
+test('two different-name candidates within 0.03 at an unknown height are a CHOOSE (grid tile regression)', () => {
+  const tile = fuseResults(hits(0.80, 0.78), null, META, [], {});
+  assert.equal(tile.choose, true);
+  assert.equal(tile.reason, 'choose');
+  assert.equal(tile.abstain, false);
+  const clear = fuseResults(hits(0.80, 0.70), null, META, [], {});
+  assert.equal(clear.reason, 'confirmed');
 });
 
 test('no rival of another name means the gap condition holds', () => {

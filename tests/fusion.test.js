@@ -7,6 +7,8 @@ import { confTier } from '../tools/extension-wasm/lib/card-display.js';
 // The confirm rule (confirm-rule.test.js) decides first; these tests exercise the fallback gate that names a CHOOSE,
 // at 200 px where the different-name gap G is 0.03, so a near-tie is not confirmed.
 const AT_200 = { height: 200 };
+// These tests pin the tier and gate rules, not the height row: a tall crop keeps them on the native row (T 0.72, G 0).
+const NATIVE = { height: 400 };
 
 test('a name that leads a near-tie beats one lookalike', () => {
   const meta = [
@@ -64,7 +66,7 @@ test('rank decides who leads and how far ahead in the fallback gate; the confirm
   const clear = fuseResults([
     { index: 1, score: 0.78, rank: 0.8 },
     { index: 0, score: 0.79, rank: 0.7 },
-  ], null, meta, []);
+  ], null, meta, [], NATIVE);
   // Onix's cosine is higher, so the rule does not confirm Seel; the gate still names it (on rank) as a CHOOSE.
   assert.equal(clear.identity.name, 'Seel');
   assert.equal(clear.reason, 'choose');
@@ -73,20 +75,20 @@ test('rank decides who leads and how far ahead in the fallback gate; the confirm
   const ranked = fuseResults([
     { index: 1, score: 0.85, rank: 0.85 },
     { index: 0, score: 0.7, rank: 0.7 },
-  ], null, meta, []);
+  ], null, meta, [], NATIVE);
   assert.equal(ranked.reason, 'confirmed');
   assert.equal(ranked.confidence, 0.85);
 
   const tooClose = fuseResults([
     { index: 1, score: 0.78, rank: 0.8 },
     { index: 0, score: 0.79, rank: 0.79 },
-  ], null, meta, []);
+  ], null, meta, [], NATIVE);
   assert.equal(tooClose.abstain, true);
 
   const low = fuseResults([
     { index: 1, score: 0.7, rank: 0.9 },
     { index: 0, score: 0.5, rank: 0.5 },
-  ], null, meta, []);
+  ], null, meta, [], NATIVE);
   assert.equal(low.reason, 'low_sim');
 });
 
@@ -97,7 +99,7 @@ const pair = (names, scores) => ({
 
 test('a confirmed read with a lead of 0.022 is accepted; only the high tier needs more', () => {
   const { meta, hits } = pair(['Lugia', 'Gyarados'], [0.84, 0.818]);
-  const result = fuseResults(hits, null, meta, []);
+  const result = fuseResults(hits, null, meta, [], NATIVE);
   assert.equal(result.abstain, false);
   assert.equal(result.reason, 'confirmed');
   assert.equal(confTier(result.confidence), 'medium');
@@ -105,11 +107,11 @@ test('a confirmed read with a lead of 0.022 is accepted; only the high tier need
 
 test('high needs a lead of 0.025 and a similarity of 0.82; the same read below either is medium', () => {
   const sure = pair(['Charizard', 'Charmeleon'], [0.84, 0.81]);
-  assert.equal(confTier(fuseResults(sure.hits, null, sure.meta, []).confidence), 'high');
+  assert.equal(confTier(fuseResults(sure.hits, null, sure.meta, [], NATIVE).confidence), 'high');
   const smallLead = pair(['Charizard', 'Charmeleon'], [0.84, 0.82]);
-  assert.equal(confTier(fuseResults(smallLead.hits, null, smallLead.meta, []).confidence), 'medium');
+  assert.equal(confTier(fuseResults(smallLead.hits, null, smallLead.meta, [], NATIVE).confidence), 'medium');
   const lowSim = pair(['Charizard', 'Charmeleon'], [0.81, 0.77]);
-  const low = fuseResults(lowSim.hits, null, lowSim.meta, []);
+  const low = fuseResults(lowSim.hits, null, lowSim.meta, [], NATIVE);
   assert.equal(low.abstain, false);
   assert.equal(confTier(low.confidence), 'medium');
   assert.equal(low.confidence, 0.79);
@@ -117,13 +119,13 @@ test('high needs a lead of 0.025 and a similarity of 0.82; the same read below e
 
 test('a lower confidence is not raised, and a near-tie is never high', () => {
   const weak = pair(['Wartortle', 'Squirtle'], [0.74, 0.5]);
-  assert.equal(fuseResults(weak.hits, null, weak.meta, []).confidence, 0.74);
+  assert.equal(fuseResults(weak.hits, null, weak.meta, [], NATIVE).confidence, 0.74);
   const sameName = pair(['Blastoise', 'Blastoise'], [0.93, 0.925]);
-  const named = fuseResults(sameName.hits, null, sameName.meta, []);
+  const named = fuseResults(sameName.hits, null, sameName.meta, [], NATIVE);
   assert.equal(named.reason, 'confirmed');
   assert.notEqual(confTier(named.confidence), 'high');
   const tie = pair(['Eevee', 'Shellder'], [0.99, 0.985]);
-  const highSim = fuseResults(tie.hits, null, tie.meta, []);
+  const highSim = fuseResults(tie.hits, null, tie.meta, [], NATIVE);
   assert.equal(highSim.reason, 'confirmed');
   assert.notEqual(confTier(highSim.confidence), 'high');
 });

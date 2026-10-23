@@ -27,8 +27,11 @@ const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much 
 //         unreadable title = no change, no bonus)
 //   CONFIRM iff height >= CONFIRM_MIN_HEIGHT and a_top >= T(height) and
 //         a_top - max{a_c : choiceName(c) != choiceName(top)} >= G(height); else CHOOSE.
-// Between fitted heights the pair of the next lower fitted height applies. An unknown height (0 or missing: grid
-// tiles, where no size judgement is made) uses the native row.
+// Between fitted heights the pair of the next lower fitted height applies. An unknown height (0, missing or not
+// finite: grid-page tiles and the legacy scan path) uses the 200-249 px row (UNKNOWN_HEIGHT_ROW). Thumbnails are about
+// 200 px, so the lowest fitted row is the conservative analog; the native row's G=0 was fitted on large crops and
+// confirmed a Double Colorless Energy tile as Lightning Energy with no lead, while its T=0.72 was too strict for
+// 140 px thumbnails and dropped correctly-read tiles to CHOOSE.
 export const CONFIRM_MIN_HEIGHT = 200;
 export const TITLE_NAME_PENALTY = 0.05;
 export const CONFIRM_ROWS = Object.freeze([
@@ -37,6 +40,7 @@ export const CONFIRM_ROWS = Object.freeze([
   Object.freeze({ minHeight: 250, minSim: 0.60, minGap: 0.01 }),
   Object.freeze({ minHeight: 200, minSim: 0.62, minGap: 0.03 }),
 ]);
+export const UNKNOWN_HEIGHT_ROW = CONFIRM_ROWS.find((r) => r.minHeight === 200);
 const CONFIRM_EPSILON = 1e-9;   // float slack so a value exactly at T or G passes
 
 /**
@@ -58,9 +62,9 @@ export function confirmDecision(clipHits, meta, { height = 0, contradicts = null
     rival = Math.max(rival, adjusted(hit));
   }
   const margin = aTop - rival;
-  const known = height > 0;
+  const known = Number.isFinite(height) && height > 0;
   if (known && height < CONFIRM_MIN_HEIGHT) return { confirm: false, aTop, margin };
-  const row = known ? CONFIRM_ROWS.find((r) => height >= r.minHeight) : CONFIRM_ROWS[0];
+  const row = known ? CONFIRM_ROWS.find((r) => height >= r.minHeight) : UNKNOWN_HEIGHT_ROW;
   const confirm = aTop + CONFIRM_EPSILON >= row.minSim && margin + CONFIRM_EPSILON >= row.minGap;
   return { confirm, aTop, margin };
 }

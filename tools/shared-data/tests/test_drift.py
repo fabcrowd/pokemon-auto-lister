@@ -75,6 +75,16 @@ class Drift(unittest.TestCase):
         self.assertEqual(js_const(text, "TITLE_NAME_PENALTY"), gate.TITLE_NAME_PENALTY)
         self.assertEqual(js_confirm_rows(text), gate.CONFIRM_ROWS)
 
+    def test_unknown_height_row_matches_fusion_js(self):
+        from pipeline import gate
+
+        text = source("fusion.js")
+        rows = js_confirm_rows(text)
+        m = re.search(r"const\s+UNKNOWN_HEIGHT_ROW\s*=\s*CONFIRM_ROWS\.find\(\(r\)\s*=>\s*r\.minHeight\s*===\s*(\d+)\)", text)
+        assert m, "UNKNOWN_HEIGHT_ROW not found in source"
+        js_row = next(r for r in rows if r[0] == int(m.group(1)))
+        self.assertEqual(js_row, gate.UNKNOWN_HEIGHT_ROW)
+
     def test_const_parser_tolerates_format_and_fails_on_missing(self):
         self.assertEqual(js_const("export const CLEAR_GAP   =0.5 ;", "CLEAR_GAP"), 0.5)
         self.assertEqual(js_const("const CLEAR_GAP = 0.02;  // x", "CLEAR_GAP"), 0.02)

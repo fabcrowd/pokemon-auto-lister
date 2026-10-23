@@ -34,14 +34,15 @@ def sets(n, a, b, wa, truth):
 
 
 def near_duplicates():
-    """c-1 is a close look-alike of c-0 (cosine 0.8), so a query between them scores high against both."""
-    rows = [h.unit(0), (0.8 * h.unit(0) + 0.6 * h.unit(1)).astype(np.float32), h.unit(2), h.unit(3)]
+    """c-1 is a look-alike of c-0 (cosine 0.3), close enough that a query between them scores well against both."""
+    rows = [h.unit(0), (0.3 * h.unit(0) + 0.9539 * h.unit(1)).astype(np.float32), h.unit(2), h.unit(3)]
     return Catalog(np.stack(rows), IDS)
 
 
 def between_01():
-    """Raw cosine 0.944 with c-0 and 0.953 with c-1: the catalog answers c-1 (high enough to accept), boost_c0 answers c-0."""
-    v = 0.944 * h.unit(0) + 0.329 * h.unit(1)
+    """Raw cosine 0.74 with c-0 and 0.86 with c-1 (near_duplicates): the catalog answers c-1 with a lead over the 0.03
+    the confirm rule needs, boost_c0 answers c-0 with that lead too."""
+    v = 0.74 * h.unit(0) + 0.6726 * h.unit(1)
     return (v / np.linalg.norm(v)).astype(np.float32)
 
 
@@ -117,10 +118,13 @@ class ConfirmRule(unittest.TestCase):
         self.assertFalse(gate.confirms(0.69, 0.0, 350))  # T is 0.72 from 350
         self.assertFalse(gate.confirms(0.99, 0.0, 200))  # G is 0.03 in the 200 band
 
-    def test_unknown_height_uses_the_native_row(self):
-        self.assertTrue(gate.confirms(0.72, 0.0))
-        self.assertFalse(gate.confirms(0.719, 0.0))
-        self.assertTrue(gate.confirms(0.72, 0.0, 0))
+    def test_unknown_height_uses_the_200_row(self):
+        self.assertEqual(gate.UNKNOWN_HEIGHT_ROW, (200, 0.62, 0.03))
+        self.assertFalse(gate.confirms(0.72, 0.0))  # the native row would confirm; the 200 row needs a 0.03 lead
+        self.assertTrue(gate.confirms(0.65, 0.05))
+        self.assertFalse(gate.confirms(0.65, 0.01))
+        self.assertFalse(gate.confirms(0.61, 0.5))
+        self.assertTrue(gate.confirms(0.62, 0.03, 0))
 
     def test_same_name_rival_is_ignored_different_name_counts(self):
         ids = ["a", "b", "c", "d"]
@@ -136,8 +140,8 @@ class ConfirmRule(unittest.TestCase):
         with self.assertRaises(ValueError):
             Catalog(np.stack([h.unit(k) for k in range(4)]), IDS, names=["a"])
 
-    def test_replay_rows_carry_no_height_so_the_native_row_applies(self):
-        # native row: T 0.72, G 0.00. Raw cosine 0.55 abstains, a clear 0.994 read is accepted.
+    def test_replay_rows_carry_no_height_so_the_200_row_applies(self):
+        # 200 row: T 0.62, G 0.03. Raw cosine 0.55 abstains, a clear 0.994 read is accepted.
         res = gate.evaluate({}, {}, EMPTY, (np.stack([h.unit(0)] * 2), ["c-0", "c-1"]), catalog=catalog())
         self.assertEqual(res["outcomes"]["regression"]["after"], {"acceptedRight": 1, "acceptedWrong": 1, "abstained": 0, "n": 2})
 

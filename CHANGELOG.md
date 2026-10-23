@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-23 (unknown read height uses the 200 px confirm row)
+
+### Changed
+- `lib/fusion.js` `confirmDecision`: an unknown read height (0, missing or not finite: grid-page tiles, legacy scan path) now uses the 200-249 px row (T 0.62, G 0.03, exported as `UNKNOWN_HEIGHT_ROW`) instead of the native row (T 0.72, G 0.00). The native G=0 was fitted on large crops and confirmed a Double Colorless Energy tile as Lightning Energy with no lead, while T=0.72 was too strict for ~140 px thumbnails and sent correctly-read Mixed tiles to CHOOSE. Known heights are unchanged.
+- `tools/shared-data/pipeline/gate.py` mirrors it (`UNKNOWN_HEIGHT_ROW`): regression and exam rows, which carry no height, are replayed on the 200 row. `test_drift.py` compares the unknown-height row choice between both files.
+
 ## 2026-10-23 (model E and the per-height confirm rule)
 
 ### Changed

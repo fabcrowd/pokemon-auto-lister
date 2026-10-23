@@ -19,11 +19,13 @@ REF_MIN, REF_MARGIN = 0.93, 0.02  # exam.score_exam defaults (lib/references.js)
 # height >= CONFIRM_MIN_HEIGHT and top >= T(height) and top - best different-name card >= G(height). Rows are
 # (min_height, T, G), tallest first; the first row whose min_height the height reaches applies.
 # Regression and exam rows carry no read height (only embeddings and card ids), so every replayed row takes the
-# native row (the tallest, as lib/fusion.js does for an unknown height); no height is invented. Nightly rows carry no
+# 200 row (UNKNOWN_HEIGHT_ROW, as lib/fusion.js does for an unknown height: thumbnails are about 200 px and the
+# native row's G=0 was fitted on large crops); no height is invented. Nightly rows carry no
 # title line either, so TITLE_NAME_PENALTY (the extension's demotion for a contradicting title) is mirrored but never applied.
 CONFIRM_MIN_HEIGHT = 200
 TITLE_NAME_PENALTY = 0.05
 CONFIRM_ROWS = ((350, 0.72, 0.00), (300, 0.69, 0.00), (250, 0.60, 0.01), (200, 0.62, 0.03))
+UNKNOWN_HEIGHT_ROW = next(r for r in CONFIRM_ROWS if r[0] == CONFIRM_MIN_HEIGHT)
 CONFIRM_EPSILON = 1e-9  # float slack so a value exactly at T or G passes
 MAX_ABSTAIN_RISE = 0.02  # abstain rate may not rise by more than 2 points
 
@@ -36,11 +38,11 @@ def _memory(part):
 
 
 def confirms(top, margin, height=0):
-    """lib/fusion.js confirmDecision without a title: height 0 (unknown) uses the native row, a known height under
+    """lib/fusion.js confirmDecision without a title: height 0 (unknown) uses the 200 row, a known height under
     CONFIRM_MIN_HEIGHT never confirms."""
     if height > 0 and height < CONFIRM_MIN_HEIGHT:
         return False
-    _, min_sim, min_gap = CONFIRM_ROWS[0] if height <= 0 else next(r for r in CONFIRM_ROWS if height >= r[0])
+    _, min_sim, min_gap = UNKNOWN_HEIGHT_ROW if height <= 0 else next(r for r in CONFIRM_ROWS if height >= r[0])
     return top + CONFIRM_EPSILON >= min_sim and margin + CONFIRM_EPSILON >= min_gap
 
 
