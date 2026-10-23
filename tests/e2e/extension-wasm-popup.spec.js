@@ -351,6 +351,119 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  const exportLot = () => {
+    const grid = (nm) => ({ source: 'pokemontcg', updatedAt: '2026-10-20T00:00:00.000Z', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const pika = { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] };
+    return [
+      pika,
+      { ...pika, box: [0, 0, 1, 1] },
+      { identity: { id: 'x-2', name: 'Farfetch\'d, "Ash"', set: 'Jungle', setCode: 'base2', number: '27' }, confidence: 0.9, abstain: false, market_price: 3, price_grid: grid(3), box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.3, abstain: true, candidates: [{ id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }], box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.2, abstain: true, box: [0, 0, 1, 1] },
+    ];
+  };
+
+  test('the lot strip offers Copy and CSV for the confirmed cards, with a tooltip for the rest', async () => {
+    const page = await popupWithScan(exportLot);
+    const copy = page.locator('#lot-totals [data-lot-copy]');
+    const csv = page.locator('#lot-totals [data-lot-csv]');
+    await expect(copy).toHaveText('Copy 3 confirmed');
+    await expect(csv).toHaveText('Download CSV (3)');
+    await expect(copy).toHaveAttribute('aria-label', 'Copy 3 confirmed');
+    await expect(csv).toHaveAttribute('aria-label', 'Download CSV (3)');
+    await expect(copy).toHaveAttribute('title', '2 more cards still need confirming and are not included');
+    await expect(csv).toHaveAttribute('title', '2 more cards still need confirming and are not included');
+    await copy.focus();
+    await expect(copy).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(csv).toBeFocused();
+    await page.close();
+  });
+
+  test('with no confirmed card the lot strip has no export buttons', async () => {
+    const page = await popupWithScan(() => [
+      { identity: null, confidence: 0.3, abstain: true, candidates: [{ id: 'a', name: 'Mew', set: 'Fossil', setCode: 'base3', number: '8' }], box: [0, 0, 1, 1] },
+    ]);
+    await expect(page.locator('#lot-totals')).toBeVisible();
+    await expect(page.locator('#lot-totals [data-lot-copy], #lot-totals [data-lot-csv]')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('Copy puts a tab-separated block on the clipboard and says how many cards', async () => {
+    const page = await popupWithScan(exportLot);
+    await page.evaluate(() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+    });
+    await page.locator('[data-lot-copy]').evaluate((b) => b.click());
+    await expect(page.locator('#msg-bar')).toHaveText('Copied 3 cards');
+    const text = await page.evaluate(() => window.__copied);
+    const lines = text.split('\n').filter(Boolean);
+    expect(lines[0]).toBe('Name\tSet\tNumber\tPrinting\tFinish\tCondition\tQty\tPrice\tLow\tHigh\tPrice source\tPrice date\tPrice age days\tBasis');
+    expect(lines).toHaveLength(3);
+    const pika = lines[1].split('\t');
+    expect(pika.slice(0, 3)).toEqual(['Pikachu', 'Base', '58']);
+    expect(pika[5]).toBe('NM');
+    expect(pika[6]).toBe('2');
+    expect(pika[7]).toBe('5.00');
+    expect(pika[13]).toBe('raw, English, Near Mint');
+    expect(text).not.toMatch(/Mew|http/);
+    await page.close();
+  });
+
+  test('a refused clipboard write falls back to the textarea copy and still reports; both failing says use CSV', async () => {
+    const page = await popupWithScan(exportLot);
+    await page.evaluate(() => {
+      window.__fallback = null;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('denied'); } } });
+      document.execCommand = (cmd) => { window.__fallback = document.activeElement?.tagName === 'TEXTAREA' ? document.activeElement.value : 'no textarea'; return cmd === 'copy'; };
+    });
+    await page.locator('[data-lot-copy]').evaluate((b) => b.click());
+    await expect(page.locator('#msg-bar')).toHaveText('Copied 3 cards');
+    expect(await page.evaluate(() => window.__fallback)).toMatch(/^Name\tSet\tNumber/);
+    await expect(page.locator('textarea')).toHaveCount(0);
+    await page.evaluate(() => { document.execCommand = () => false; });
+    await page.locator('[data-lot-copy]').evaluate((b) => b.click());
+    await expect(page.locator('#msg-bar')).toHaveText('Copy failed: use Download CSV');
+    await page.close();
+  });
+
+  test('Download CSV saves card-lot-DATE.csv as UTF-8 with a BOM and CRLF line endings', async () => {
+    const page = await popupWithScan(exportLot);
+    await page.evaluate(() => {
+      window.__download = null;
+      window.HTMLAnchorElement.prototype.click = function click() {
+        window.__download = { name: this.download, href: this.href };
+        fetch(this.href).then((r) => r.arrayBuffer()).then((b) => { window.__download.bytes = Array.from(new Uint8Array(b)); });
+      };
+    });
+    await page.locator('[data-lot-csv]').evaluate((b) => b.click());
+    await page.waitForFunction(() => window.__download?.bytes);
+    const file = await page.evaluate(() => window.__download);
+    expect(file.name).toMatch(/^card-lot-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(file.href).toMatch(/^blob:/);
+    expect(file.bytes.slice(0, 3)).toEqual([0xEF, 0xBB, 0xBF]);
+    const text = Buffer.from(file.bytes.slice(3)).toString('utf8');
+    expect(text.startsWith('Name,Set,Number,Printing')).toBe(true);
+    expect(text.split('\r\n')).toHaveLength(4);
+    expect(text).not.toMatch(/(^|[^\r])\n/);
+    expect(text).toContain('"Farfetch\'d, ""Ash"""');
+    await expect(page.locator('#msg-bar')).toContainText('Saved 3 cards as card-lot-');
+    await page.close();
+  });
+
+  test('the est. value header and the lot strip say the prices are Near Mint', async () => {
+    const page = await popupWithScan(exportLot);
+    const tip = 'Prices are Near Mint market prices unless your price-service key provides other conditions';
+    await expect(page.locator('#s-cond')).toHaveText('NM');
+    await expect(page.locator('#s-cond')).toHaveAttribute('title', tip);
+    await expect(page.locator('#lot-totals .lt-cond')).toHaveText('NM');
+    await expect(page.locator('#lot-totals .lt-cond')).toHaveAttribute('title', tip);
+    await page.locator('#btn-clear').evaluate((b) => b.click());
+    await expect(page.locator('#s-cond')).toBeHidden();
+    await page.close();
+  });
+
   test('Clear returns the popup to its empty state: no lot line, groups, or value', async () => {
     const page = await popupWithScan(() => [
       { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5,
