@@ -12,8 +12,13 @@ const MAX_CHOICES = 4;
 // "Vibrava δ" and "Vibrava" are the same name for choosing a set.
 // "Mew ex" and "Alakazam ☆" stay different from "Mew" and "Alakazam": they are other cards, and folding a
 // Gold Star into the plain card made its set compete in the plain card's menu and flip between scans.
+// "Basic Water Energy" and "Water Energy" are one card. Only Energy loses "Basic": the catalog has no other card
+// named "Basic ..." (checked 2026-10-22), and "Basic Charizard" would be a different card from "Charizard".
+const BASIC_ENERGY = /^basic\s+(?=\S.*\senergy$)/i;
+const withoutBasic = (name) => String(name || "").trim().replace(BASIC_ENERGY, "");
+
 export function choiceName(name) {
-  return String(name || "").replace(/\s*δ$/u, "").trim().toLowerCase();
+  return withoutBasic(String(name || "").replace(/\s*δ$/u, "").trim()).toLowerCase();
 }
 
 // Mechanic words that go on a card of the same Pokémon without redrawing the picture. Regional forms
@@ -68,7 +73,7 @@ function nameInText(name, blob, extraLetters = 0) {
 export function nameAgrees(name, text) {
   const blob = String(text || "").toLowerCase();
   if (!blob) return false;
-  if (nameInText(name, blob)) return true;
+  if (nameInText(name, blob) || nameInText(withoutBasic(name), blob)) return true;
   const base = String(name || "").replace(/\s*\[[^\]]+\]\s*$/, "").trim();
   return base.toLowerCase() !== String(name || "").trim().toLowerCase() && nameInText(base, blob);
 }
@@ -85,7 +90,7 @@ export function titleConfirmsName(name, text, knownNames = []) {
   const title = compact(text);
   return !knownNames.some((other) => {
     const longer = compact(other);
-    return longer.length > own.length && longer.includes(own) && title.includes(longer);
+    return choiceName(other) !== choiceName(name) && longer.length > own.length && longer.includes(own) && title.includes(longer);
   });
 }
 

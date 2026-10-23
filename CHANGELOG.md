@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-22 (choose flow refinements)
+
+### Changed
+- Popup, To confirm: a candidate whose name agrees with the photo's name-box read (`titleConfirmed`, `titleReranked`, `titleContradicts`) is preselected: it comes first and carries the "Best match" tag and its name check. A candidate the title contradicts is never preselected while another exists. No title evidence changes nothing.
+- Review all: a pair is ticked by default only when its preselected candidate agrees with the photo's name or leads the best candidate with another card name by at least `CLEAR_GAP` (now exported from `lib/fusion.js`, value unchanged; scores come from the card's `ranked`). Every other pair starts unticked with a "Check" label; a card with no scores is not decisive. "Confirm N" counts ticked pairs; with none ticked it is disabled and says "Tick the ones that look right". New line under the title: "Ticked pairs look like clear matches; check the others yourself."
+- Review all thumbnails (photo crop and candidate art) are 63 x 88 px so they can be compared.
+- `lib/set-choice.js`: a leading "Basic" is ignored on Energy names only (`choiceName`, `nameAgrees`, `titleConfirmsName`), so "Basic Water Energy" and "Water Energy" are the same card. Every "Basic ..." name in the catalog is a basic Energy; "Basic Charizard" stays distinct.
+
 ## 2026-10-22 (choose flow)
 
 Two identification states (branch `feat/choose-flow`): Confirmed and Choose.

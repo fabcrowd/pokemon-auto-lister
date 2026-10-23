@@ -9,7 +9,7 @@
 //   4. Among the top 3 near-tied hits, one name appears more often than the others
 
 const MIN_ACCEPT_SIM = 0.72;  // below this → always abstain
-const CLEAR_GAP      = 0.02;  // gap over #2 that definitively accepts
+export const CLEAR_GAP = 0.02;  // gap over #2 that definitively accepts
 const HIGH_SIM       = 0.85;  // absolute similarity that overrides gap
 const NAME_MATCH_SIM = 0.75;  // if top-1/top-2 share a name, require this much sim
 

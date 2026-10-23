@@ -49,6 +49,7 @@ const bulkList      = document.getElementById("bulk-list");
 const bulkConfirm   = document.getElementById("bulk-confirm");
 const bulkClose     = document.getElementById("bulk-close");
 const bulkCancel    = document.getElementById("bulk-cancel");
+const bulkHint      = document.getElementById("bulk-hint");
 
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 
@@ -920,14 +921,15 @@ function bulkPairHtml(pair) {
   const view = candidateView(card, pair.candidate, { best: true });
   const crop = cropThumb(card);
   const kept = !_bulk.skipped.has(pair.idx);
+  const check = pair.decisive ? "" : ` <span class="bulk-check">Check</span>`;
   const sub = [view.set, view.number ? `#${view.number}` : "", view.printing].filter(Boolean).join(" · ");
   return `<li class="bulk-pair${kept ? "" : " skipped"}" data-idx="${pair.idx}">
     <label class="bulk-label">
       <input type="checkbox" class="bulk-keep" data-bulk-keep data-idx="${pair.idx}"${kept ? " checked" : ""} aria-label="${escHtml(`Keep card ${pair.idx + 1}: ${view.label}`)}">
-      ${crop ? `<img class="bulk-img" src="${escHtml(crop)}" alt="" width="46" height="64">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      ${crop ? `<img class="bulk-img" src="${escHtml(crop)}" alt="" width="63" height="88">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
       <span class="bulk-arrow" aria-hidden="true">&rarr;</span>
-      ${view.art ? `<img class="bulk-img" src="${escHtml(view.art)}" alt="" loading="lazy" width="46" height="64">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
-      <span class="bulk-text"><b>${escHtml(view.name)}</b>${view.agrees ? ` <span class="pick-agree" title="The name on the card matches">&#10003; name</span>` : ""}<br><span class="bulk-sub">${escHtml(sub)}</span></span>
+      ${view.art ? `<img class="bulk-img" src="${escHtml(view.art)}" alt="" loading="lazy" width="63" height="88">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      <span class="bulk-text"><b>${escHtml(view.name)}</b>${view.agrees ? ` <span class="pick-agree" title="The name on the card matches">&#10003; name</span>` : ""}${check}<br><span class="bulk-sub">${escHtml(sub)}</span></span>
     </label>
   </li>`;
 }
@@ -936,6 +938,7 @@ function updateBulkCount() {
   const kept = _bulk.pairs.filter((pair) => !_bulk.skipped.has(pair.idx)).length;
   bulkConfirm.textContent = confirmLabel(kept);
   bulkConfirm.disabled = kept === 0;
+  bulkHint.hidden = kept !== 0;
   return kept;
 }
 
@@ -943,7 +946,7 @@ function openBulk(opener) {
   const scan = _lastResult;
   const pairs = bulkPairs(scan?.cards);
   if (!pairs.length) return;
-  _bulk = { pairs, skipped: new Set(), opener: opener || document.activeElement, scan };
+  _bulk = { pairs, skipped: new Set(pairs.filter((pair) => !pair.decisive).map((pair) => pair.idx)), opener: opener || document.activeElement, scan };
   bulkList.innerHTML = pairs.map(bulkPairHtml).join("");
   updateBulkCount();
   bulkPanel.hidden = false;

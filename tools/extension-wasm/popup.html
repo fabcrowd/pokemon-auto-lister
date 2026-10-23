@@ -477,14 +477,17 @@
     .bulk-note { padding: 6px 16px; font-size: 11px; color: #8b92ab; }
     .bulk-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
     .bulk-pair { border-bottom: 1px solid #0e1018; }
-    .bulk-pair.skipped { opacity: 0.55; }
+    .bulk-pair.skipped { opacity: 0.8; }
     .bulk-label { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; }
     .bulk-keep { width: 18px; height: 18px; flex-shrink: 0; accent-color: #6366f1; }
-    .bulk-img { display: block; width: 46px; height: 64px; flex-shrink: 0; border-radius: 3px; background: #14172a; object-fit: cover; }
+    .bulk-img { display: block; width: 63px; height: 88px; flex-shrink: 0; border-radius: 3px; background: #14172a; object-fit: cover; }
     .bulk-arrow { color: #5d6480; }
     .bulk-text { min-width: 0; font-size: 11px; color: #c5cadc; }
     .bulk-text b { font-weight: 700; }
     .bulk-text .pick-agree { display: inline; }
+    .bulk-check { display: inline-block; padding: 0 5px; font-size: 10px; font-weight: 700; color: #f5c26b; border: 1px solid #5a4620; border-radius: 3px; }
+    .bulk-hint { flex: 1; align-self: center; font-size: 11px; color: #f5c26b; }
+    .bulk-hint[hidden] { display: none; }
     .bulk-sub { font-size: 10px; color: #8b92ab; }
     .bulk-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid #1a1d2a; }
     .bulk-btn { min-height: 32px; padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 700; color: #c5cadc; background: #0e1018; border: 1px solid #2a2e40; border-radius: 6px; cursor: pointer; }
@@ -700,11 +703,12 @@
       <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
       <button type="button" class="bulk-btn" id="bulk-close" aria-label="Close review">&#10005;</button>
     </div>
-    <div class="bulk-note">Each photo beside its best match. Untick any that look wrong; they stay to confirm.</div>
+    <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself.</div>
     <ul class="bulk-list" id="bulk-list"></ul>
     <div class="bulk-foot">
+      <span class="bulk-hint" id="bulk-hint" hidden>Tick the ones that look right</span>
       <button type="button" class="bulk-btn" id="bulk-cancel">Cancel</button>
-      <button type="button" class="bulk-btn primary" id="bulk-confirm">Confirm 0</button>
+      <button type="button" class="bulk-btn primary" id="bulk-confirm" aria-describedby="bulk-hint">Confirm 0</button>
     </div>
   </div>
 

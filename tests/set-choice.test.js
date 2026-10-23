@@ -329,3 +329,19 @@ test('a longer catalog name the title cannot tell apart', () => {
   assert.equal(extendsTitle('Ditto ◇', 'Ditto'), false);
   assert.equal(extendsTitle('Pikachu', 'Raichu'), false);
 });
+
+test('a leading "Basic" on an Energy name is not part of the name; other names keep it', () => {
+  assert.equal(choiceName('Basic Water Energy'), choiceName('Water Energy'));
+  assert.equal(choiceName('BASIC metal energy'), 'metal energy');
+  assert.equal(choiceName('Basic Charizard'), 'basic charizard');
+  assert.equal(choiceName('Basic Energy Retrieval'), 'basic energy retrieval');
+  assert.equal(nameAgrees('Basic Metal Energy', 'Metal Energy | Basic'), true);
+  assert.equal(nameAgrees('Metal Energy', 'Basic Metal Energy'), true);
+  assert.equal(nameAgrees('Basic Water Energy', 'Fire Energy'), false);
+  assert.equal(nameAgrees('Basic Charizard', 'Charizard | 120HP'), false);
+  // The title line spells the Basic form while the matcher's name is the plain one: confirmed, not outbid by the longer name.
+  const known = ['Basic Water Energy', 'Water Energy', 'Fire Energy'];
+  assert.equal(titleConfirmsName('Water Energy', 'Basic Water Energy', known), true);
+  assert.equal(titleVerdict('Water Energy', 'Basic Water Energy', known).kind, 'agree');
+  assert.equal(titleVerdict('Fire Energy', 'Basic Water Energy', known).kind, 'contradict');
+});

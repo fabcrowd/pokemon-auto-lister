@@ -5,6 +5,7 @@
 import { isIdentified, needsPrinting } from "./card-display.js";
 import { escHtml, thumbUrl } from "./card-picker.js";
 import { choiceName } from "./set-choice.js";
+import { CLEAR_GAP } from "./fusion.js";
 
 /** 'confirmed' | 'choose' | 'back'. A card the user just picked and is still pricing is already confirmed. */
 export function chooseState(card) {
@@ -46,10 +47,39 @@ export function candidateView(card, candidate, { best = false } = {}) {
   return { id: candidate?.id, name: candidate?.name || "", set, number, printing, art: thumbUrl(candidate), agrees, best, label };
 }
 
-/** The cards offered for a card to choose: the closest candidates, else the sets its name is printed in. */
+/** The picture's own name was spelled differently by the title line: this candidate is the name the title rules out. */
+function titleContradicted(card, candidate) {
+  return Boolean(card?.titleContradicts) && Boolean(card.identity?.name)
+    && choiceName(candidate?.name) === choiceName(card.identity.name)
+    && choiceName(candidate?.name) !== choiceName(card.titleContradicts);
+}
+
+/**
+ * The cards offered for a card to choose, the preselected one first: a candidate whose name agrees with the photo,
+ * else the closest; one the title contradicts is passed over while another exists. No title evidence changes nothing.
+ */
 export function candidatesOfCard(card) {
-  if (card?.candidates?.length) return card.candidates;
-  return card?.setChoices?.length ? card.setChoices : [];
+  const list = card?.candidates?.length ? card.candidates : card?.setChoices?.length ? card.setChoices : [];
+  if (list.length < 2) return list;
+  let at = list.findIndex((candidate) => nameAgreesWithPhoto(card, candidate));
+  if (at < 0) at = list.findIndex((candidate) => !titleContradicted(card, candidate));
+  return at <= 0 ? list : [list[at], ...list.slice(0, at), ...list.slice(at + 1)];
+}
+
+/**
+ * The preselected candidate is a clear match: it agrees with the photo's name, or it leads the best candidate with
+ * another card name by at least CLEAR_GAP (the card's `ranked` scores). Without scores the lead is unknown: not decisive.
+ */
+export function bulkDecisive(card) {
+  const [first, ...rest] = candidatesOfCard(card);
+  if (!first) return false;
+  if (nameAgreesWithPhoto(card, first)) return true;
+  const rivals = rest.filter((candidate) => choiceName(candidate.name) !== choiceName(first.name));
+  if (!rivals.length) return true;
+  const rank = new Map((card.ranked || []).map((row) => [row.id, row.rank]));
+  const own = rank.get(first.id);
+  if (!Number.isFinite(own) || rivals.some((candidate) => !Number.isFinite(rank.get(candidate.id)))) return false;
+  return own - Math.max(...rivals.map((candidate) => rank.get(candidate.id))) >= CLEAR_GAP;
 }
 
 /** Indexes of the cards waiting for the user's choice. */
@@ -59,10 +89,10 @@ export function chooseIndexes(cards) {
   return out;
 }
 
-/** Each card to choose that has a candidate, paired with its preselected (best) one. */
+/** Each card to choose that has a candidate, paired with its preselected (best) one and whether that one is decisive. */
 export function bulkPairs(cards) {
   return chooseIndexes(cards)
-    .map((idx) => ({ idx, candidate: candidatesOfCard(cards[idx])[0] }))
+    .map((idx) => ({ idx, candidate: candidatesOfCard(cards[idx])[0], decisive: bulkDecisive(cards[idx]) }))
     .filter((pair) => pair.candidate?.id);
 }
 

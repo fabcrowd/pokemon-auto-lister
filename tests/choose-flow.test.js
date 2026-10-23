@@ -96,9 +96,11 @@ test('renderCandidateCards: art next to name, set, number, printing; best presel
   assert.equal((html.match(/data-pick=/g) || []).length, 2);
   assert.match(html, /data-pick="a-1" data-idx="7"/);
   assert.equal((html.match(/class="pick-best"/g) || []).length, 1);
-  assert.ok(html.indexOf('Best match') < html.indexOf('data-pick="b-2"'));
+  // Rattata agrees with the photo's name line, so it is the preselected one and carries both marks.
+  assert.ok(html.indexOf('data-pick="b-2"') < html.indexOf('data-pick="a-1"'));
+  assert.ok(html.indexOf('Best match') < html.indexOf('data-pick="a-1"'));
   assert.equal((html.match(/pick-agree/g) || []).length, 1);
-  assert.ok(html.indexOf('pick-agree') > html.indexOf('data-pick="b-2"'));
+  assert.ok(html.indexOf('pick-agree') < html.indexOf('data-pick="a-1"'));
   assert.match(html, /<img src="https:\/\/x\.test\/a\.png"/);
   assert.match(html, /Pid&lt;gey&gt;/);
   assert.doesNotMatch(html, /Pid<gey>/);
@@ -126,4 +128,63 @@ test('candidatesOfCard: the closest candidates, else the sets the name is printe
   const open = { identity: { name: 'Eevee' }, confidence: 0.9, setChoices: sets, setConfirmed: false, bestGuess: { source: 'image' } };
   assert.equal(chooseState(open), 'choose');
   assert.deepEqual(bulkPairs([open]).map((p) => p.candidate.id), ['s-1']);
+});
+
+// ── Preselection and bulk defaults ──
+import { CLEAR_GAP } from '../tools/extension-wasm/lib/fusion.js';
+import * as flow from '../tools/extension-wasm/lib/choose-flow.js';
+
+const ordered = flow.candidatesOfCard;
+const bulkDecisive = (card) => flow.bulkDecisive?.(card);
+
+const ranked = (...pairs) => pairs.map(([id, rank]) => ({ id, rank }));
+
+test('preselection: a candidate whose name agrees with the photo comes first and carries the best tag', () => {
+  const card = choose({ titleContradicts: 'Rattata', candidates: [cand('a-1', 'Pidgey'), cand('b-2', 'Rattata'), cand('c-3', 'Zubat')] });
+  assert.deepEqual(ordered(card).map((c) => c.id), ['b-2', 'a-1', 'c-3']);
+  const html = renderCandidateCards(card, 0);
+  assert.ok(html.indexOf('Best match') < html.indexOf('data-pick="a-1"'));
+  assert.ok(html.indexOf('data-pick="b-2"') < html.indexOf('data-pick="a-1"'));
+  assert.equal((html.match(/class="pick-best"/g) || []).length, 1);
+  assert.equal((html.match(/pick-agree/g) || []).length, 1);
+  assert.deepEqual(bulkPairs([card]).map((p) => p.candidate.id), ['b-2']);
+});
+
+test('preselection: no name agreement or no title evidence keeps the closest-first order', () => {
+  assert.deepEqual(ordered(choose()).map((c) => c.id), ['a-1', 'b-2']);
+  // Titled confirmed but the confirmed name is not among the candidates: unchanged.
+  const none = choose({ identity: cand('z-9', 'Mew'), titleConfirmed: true });
+  assert.deepEqual(ordered(none).map((c) => c.id), ['a-1', 'b-2']);
+});
+
+test('preselection: a candidate the title contradicts is never first while another exists', () => {
+  // The picture said Pidgey, the title spelled Rattata, and Rattata is not offered: Pidgey is contradicted.
+  const card = choose({ identity: cand('a-1', 'Pidgey'), titleContradicts: 'Rattata', candidates: [cand('a-1', 'Pidgey'), cand('c-3', 'Zubat')] });
+  assert.deepEqual(ordered(card).map((c) => c.id), ['c-3', 'a-1']);
+  const lone = choose({ identity: cand('a-1', 'Pidgey'), titleContradicts: 'Rattata', candidates: [cand('a-1', 'Pidgey')] });
+  assert.deepEqual(ordered(lone).map((c) => c.id), ['a-1']);
+});
+
+test('bulkDecisive: name agreement, or a lead over the next different-name candidate of at least CLEAR_GAP', () => {
+  const two = (rows, extra = {}) => choose({ candidates: [cand('a-1', 'Pidgey'), cand('b-2', 'Rattata')], ranked: rows, ...extra });
+  assert.equal(bulkDecisive(two(ranked(['a-1', 0.9], ['b-2', 0.9 - CLEAR_GAP]))), true);
+  assert.equal(bulkDecisive(two(ranked(['a-1', 0.9], ['b-2', 0.9 - CLEAR_GAP + 0.005]))), false);
+  // Another printing of the same name is not a rival.
+  const printings = choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey'), cand('b-2', 'Rattata')], ranked: ranked(['a-1', 0.9], ['a-2', 0.89], ['b-2', 0.8]) });
+  assert.equal(bulkDecisive(printings), true);
+  // Name agreement decides even with no scores.
+  assert.equal(bulkDecisive(choose({ titleContradicts: 'Rattata' })), true);
+  // No scores to measure a lead: not decisive.
+  assert.equal(bulkDecisive(choose()), false);
+  assert.equal(bulkDecisive(two(ranked(['a-1', 0.9]))), false);
+  // No rival with another name: nothing to be outbid by.
+  assert.equal(bulkDecisive(choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey')] })), true);
+});
+
+test('bulkPairs carries the decisive flag for the default tick', () => {
+  const pairs = bulkPairs([
+    choose({ candidates: [cand('a-1', 'Pidgey'), cand('b-2', 'Rattata')], ranked: ranked(['a-1', 0.9], ['b-2', 0.8]) }),
+    choose(),
+  ]);
+  assert.deepEqual(pairs.map((p) => p.decisive), [true, false]);
 });
