@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-22
+
+Pricing guards (branch `feat/pricing-guards`).
+
+### Added
+- A named row whose printing is still open is priced at its default printing's NM price (holofoil, then normal, then reverse; chosen over median, 25th percentile, cheapest and geometric mean on lot-level error), shown as "~$x" and counted under Guesses, never Sure. A confirmed printing keeps its exact quote.
+- Top guesses on a multi-printing grid get the same default-printing "~" price instead of "no price".
+- A pokemontcg.io fallback grid whose own date is over 30 days old carries `stale: true`; the price still shows with an "Old price: N days old" tooltip.
+
+### Changed
+- A stale-grid price is listed "to check" and left out of Sure and the totals, like a guess over $50.
+
+### Fixed
+- A name from a picture-only best guess (`bestGuess.source === 'image'`) priced over $50 no longer counts in Sure; it is listed "to check". Page and hint best guesses are unchanged.
+
 ## 2026-10-21
 
 Facebook Marketplace accuracy and UI pass (branch `feat/fb-accuracy-ui`, 899ba40 … 4c4aae5). The numbers, the rationale and the rejected experiments are in `HANDOFF.md` under "Facebook accuracy and UI pass".

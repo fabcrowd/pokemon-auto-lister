@@ -441,7 +441,7 @@ const priceAt = (nm, extra = {}) => ({ ...named(extra), market_price: nm, price_
 
 test('lotEstimate: confirmed prices count at both ends, nothing else is invented', () => {
   const lot = lotEstimate([priceAt(5), priceAt(7.5), priceAt(2)], () => null);
-  assert.deepEqual(lot, { low: 14.5, high: 14.5, identified: 3, total: 3, toIdentify: 0 });
+  assert.deepEqual(lot, { low: 14.5, high: 14.5, identified: 3, total: 3, toIdentify: 0, toCheck: 0 });
 });
 
 test('lotEstimate: a mixed lot spans set ranges and counts guesses, unrecognised and unpriced rows as $0', () => {

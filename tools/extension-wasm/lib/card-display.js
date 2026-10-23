@@ -333,6 +333,15 @@ function rowRange(card, condition) {
   return range.byCondition?.[condition] ?? (condition === 'NM' || !range.byCondition ? range : null);
 }
 
+// A price that stays out of the totals: it came from an old fallback grid, or from a name the picture alone
+// guessed and it is above the cap, where a rare look-alike is likelier than the card.
+function isUntrusted(card, quote, condition) {
+  if (card?.price_grid?.stale === true) return true;
+  if (card?.bestGuess?.source !== 'image') return false;
+  const price = quote?.price ?? (!isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]))?.high;
+  return price > GUESS_TOTAL_CAP;
+}
+
 /**
  * What the whole lot could be worth, for one condition: a confirmed price counts at both ends, a name whose
  * set or printing is still open counts as its price range, and everything else (a guess, an unrecognised
@@ -340,7 +349,7 @@ function rowRange(card, condition) {
  */
 export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
   const condition = enabledConditions?.[0] || 'NM';
-  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0 };
+  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0 };
   for (const card of cards || []) {
     if (card?.cardBack) continue;
     out.total += 1;
@@ -349,9 +358,13 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
       out.toIdentify += 1;
       continue;
     }
-    out.identified += 1;
     const choice = choiceFor(card);
     const quote = quotedPrice(card, choice, enabledConditions);
+    if (isUntrusted(card, quote, condition)) {
+      out.toCheck += 1;
+      continue;
+    }
+    out.identified += 1;
     if (quote) {
       out.low += quote.price;
       out.high += quote.price;
@@ -419,17 +432,47 @@ export function readFromSmallCrop(card) {
   return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
 }
 
-/** The price a guess counts at: a named card's own quote, else its top guess's price; null when there is none. */
-export function guessPrice(card, choice, enabledConditions = ['NM']) {
+const DEFAULT_PRINTING_ORDER = ['holofoil', '1stEditionHolofoil', 'normal', 'reverseHolofoil'];
+
+function defaultPrintingPrice(grid, condition) {
+  const priceOf = (name) => grid?.variants?.[name]?.conditions?.[condition];
+  const ok = (v) => typeof v === 'number' && v > 0;
+  const name = [...DEFAULT_PRINTING_ORDER, ...listPrintings(grid)].find((n) => ok(priceOf(n)));
+  return name ? priceOf(name) : null;
+}
+
+/**
+ * The price a guess counts at: a named card's own quote, else (printing still open on a multi-printing grid) the
+ * default printing's price (holofoil, normal, reverse, then any) marked approx, else its top guess's price; null when
+ * there is none. The default beat the median, 25th percentile, cheapest and geometric mean on lot-level error in
+ * .tmp/pricing-audit/estimator-choice.md.
+ */
+export function guessQuote(card, choice, enabledConditions = ['NM']) {
   if (!card || card.cardBack) return null;
   if (card.identity?.name || card.identity?.id) {
     const quote = quotedPrice(card, choice, enabledConditions);
-    if (quote) return quote.price;
-    if (typeof card.market_price === 'number' && card.market_price > 0) return card.market_price;
-    return card.setRange?.low > 0 ? card.setRange.low : null;
+    if (quote) return { price: quote.price, approx: false };
+    const grid = card.price_grid;
+    if (listPrintings(grid).length > 1 && !isPrintingConfirmed(grid, choice)) {
+      const price = defaultPrintingPrice(grid, enabledConditions?.[0] || 'NM');
+      return price == null ? null : { price, approx: true };
+    }
+    if (typeof card.market_price === 'number' && card.market_price > 0) return { price: card.market_price, approx: false };
+    return card.setRange?.low > 0 ? { price: card.setRange.low, approx: false } : null;
   }
   const price = card.topGuess?.price;
-  return typeof price === 'number' && price > 0 ? price : null;
+  return typeof price === 'number' && price > 0 ? { price, approx: true } : null;
+}
+
+export function guessPrice(card, choice, enabledConditions = ['NM']) {
+  return guessQuote(card, choice, enabledConditions)?.price ?? null;
+}
+
+/** Whole days since the grid's own date when it is a stale fallback grid, else null. */
+export function staleDays(grid, now = Date.now()) {
+  if (grid?.stale !== true) return null;
+  const stamp = Date.parse(grid.updatedAt || '');
+  return Number.isFinite(stamp) ? Math.floor((now - stamp) / DAY_MS) : null;
 }
 
 /**
@@ -443,12 +486,13 @@ export function lotTotals(cards, choiceFor, enabledConditions = ['NM']) {
   const sure = lotEstimate(cards, choiceFor, enabledConditions);
   let guess = 0;
   let guessed = 0;
-  let toCheck = 0;
+  let toCheck = sure.toCheck;
   for (const card of cards || []) {
     if (!card || card.cardBack || isIdentified(card)) continue;
     const price = guessPrice(card, choiceFor(card), enabledConditions);
     if (price == null) continue;
-    if (price > GUESS_TOTAL_CAP) {
+    const stale = card.price_grid?.stale === true || card.topGuess?.stale === true;
+    if (price > GUESS_TOTAL_CAP || stale) {
       toCheck += 1;
       continue;
     }

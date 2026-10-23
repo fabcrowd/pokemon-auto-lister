@@ -1,5 +1,5 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd, GUESS_TOTAL_CAP } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd, GUESS_TOTAL_CAP, guessQuote, isIdentified, staleDays } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
@@ -453,8 +453,8 @@ async function priceGuesses(scan) {
       const current = _lastResult.cards[idx];
       if (!current?.topGuess) continue;
       const quote = resp && !resp.error ? quotedPrice({ ...resp, setChoices: [] }, null, enabledConditions()) : null;
-      const price = quote?.price ?? (typeof resp?.market_price === "number" ? resp.market_price : null);
-      _lastResult.cards[idx] = { ...current, topGuess: { ...current.topGuess, price: price > 0 ? price : null } };
+      const price = quote?.price ?? (resp && !resp.error ? guessQuote({ identity: { id: current.topGuess.id }, price_grid: resp.price_grid, setChoices: [] }, null, enabledConditions())?.price : null) ?? (typeof resp?.market_price === "number" ? resp.market_price : null);
+      _lastResult.cards[idx] = { ...current, topGuess: { ...current.topGuess, price: price > 0 ? price : null, ...(resp?.price_grid?.stale ? { stale: true, updatedAt: resp.price_grid.updatedAt } : {}) } };
       if (++done % 6 === 0) refresh();
     }
   };
@@ -639,7 +639,9 @@ function renderPrice(card, idx) {
   if (card.topGuess && !card.identity?.name && !card.identity?.id) {
     const p = card.topGuess.price;
     const text = p === undefined ? "…" : p > 0 ? `~${formatUsd(p)}` : "—";
-    const title = p > 0 ? `Price of the top guess, ${card.topGuess.name}. Pick the card to confirm it.` : p === undefined ? "Getting the guess's price…" : "No price for the top guess";
+    const oldDays = card.topGuess.stale ? staleDays({ stale: true, updatedAt: card.topGuess.updatedAt }) : null;
+    const old = oldDays != null ? ` Old price: ${oldDays} days old.` : card.topGuess.stale ? " Old price." : "";
+    const title = p > 0 ? `Price of the top guess, ${card.topGuess.name}. Pick the card to confirm it.${old}` : p === undefined ? "Getting the guess's price…" : "No price for the top guess";
     return `<div class="card-price guess-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
   }
   const conditions = enabledConditions();
@@ -652,10 +654,14 @@ function renderPrice(card, idx) {
     const others = Object.entries(card.price_grid?.variants?.[quote.printing]?.conditions || {})
       .filter(([cond, price]) => cond !== quote.condition && price != null)
       .map(([cond, price]) => `${cond} $${Number(price).toFixed(2)}`);
-    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), ...others]
+    const oldDays = staleDays(card.price_grid);
+    const oldTag = card.price_grid?.stale ? (oldDays != null ? `Old price: ${oldDays} days old` : "Old price") : null;
+    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), oldTag, ...others]
       .filter(Boolean).join(" · ");
     return cell("$" + Number(quote.price).toFixed(2), title);
   }
+  const approx = !isIdentified(card) ? guessQuote(card, printing, conditions) : null;
+  if (approx?.approx) return cell(`~${formatUsd(approx.price)}`, "Printing not picked: the price of its usual printing. Pick the printing for one price");
   const span = isSetConfirmed(card) ? null : setRangeSpan(card.setRange, conditions);
   if (span) return cell(span, "Set not sure — pick the set for one price");
   return cell("—", "No price data");
