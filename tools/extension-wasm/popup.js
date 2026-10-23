@@ -2,7 +2,7 @@ import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, readFromSmallCrop, lotEstimate, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { cropThumb, escHtml, guessOf, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
-import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup } from "./lib/choose-flow.js";
+import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
@@ -50,6 +50,7 @@ const bulkConfirm   = document.getElementById("bulk-confirm");
 const bulkClose     = document.getElementById("bulk-close");
 const bulkCancel    = document.getElementById("bulk-cancel");
 const bulkHint      = document.getElementById("bulk-hint");
+const bulkTickAll   = document.getElementById("bulk-tick-all");
 
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 
@@ -939,6 +940,7 @@ function updateBulkCount() {
   bulkConfirm.textContent = confirmLabel(kept);
   bulkConfirm.disabled = kept === 0;
   bulkHint.hidden = kept !== 0;
+  bulkTickAll.textContent = tickAllLabel(kept === _bulk.pairs.length);
   return kept;
 }
 
@@ -983,6 +985,17 @@ bulkList.addEventListener("change", (e) => {
   if (e.target.checked) _bulk.skipped.delete(idx);
   else _bulk.skipped.add(idx);
   e.target.closest(".bulk-pair").classList.toggle("skipped", !e.target.checked);
+  updateBulkCount();
+});
+// Only the checkboxes change; nothing is confirmed until "Confirm N".
+bulkTickAll.addEventListener("click", () => {
+  if (!_bulk) return;
+  const tick = _bulk.skipped.size > 0;
+  _bulk.skipped = tick ? new Set() : new Set(_bulk.pairs.map((pair) => pair.idx));
+  for (const box of bulkList.querySelectorAll("[data-bulk-keep]")) {
+    box.checked = tick;
+    box.closest(".bulk-pair").classList.toggle("skipped", !tick);
+  }
   updateBulkCount();
 });
 bulkConfirm.addEventListener("click", confirmBulk);

@@ -1027,8 +1027,9 @@ async function handleScanPage(sendResponse, era) {
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     // An asked card carries the picture it was read from, so the user can see which card the question is about.
-    const withCandidates = cards.map((card, i) => (isUnsure(card)
-      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), crop: encoded[i] ?? null }
+    // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
+    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (isUnsure(card)
+      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
       : card));
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
@@ -1696,12 +1697,12 @@ async function guessFromTitle(card, hits, before) {
   return { ...base, identity: card, ...(await priceIdentity(card)) };
 }
 
-// The closest cards with the score they were ranked by, for the page's set prior to re-order (lib/set-prior.js).
+// The closest cards with the rank they were ordered by and their cosine score, for the page's set prior to re-order (lib/set-prior.js).
 function rankedIds(hits, limit = 10) {
   const out = [];
   for (const hit of hits || []) {
     const id = _meta[hit?.index]?.id;
-    if (id && !out.some((o) => o.id === id)) out.push({ id, rank: Math.round((hit.rank ?? hit.score) * 10000) / 10000 });
+    if (id && !out.some((o) => o.id === id)) out.push({ id, rank: Math.round((hit.rank ?? hit.score) * 10000) / 10000, score: Math.round(hit.score * 10000) / 10000 });
     if (out.length >= limit) break;
   }
   return out;
@@ -2003,7 +2004,7 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
   const seen = {};
   const result = await recognizeWith(cardCanvas, era, sourceHeight, seen);
   // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
-  return { ...result, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}) };
+  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}) };
 }
 
 async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
@@ -2018,6 +2019,7 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
   const { hits, referencedId } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0);
   seen.referencedId = referencedId;
+  seen.ranked = rankedIds(hits);
   const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, inEraHits ? hits : rawHits, _meta);
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;

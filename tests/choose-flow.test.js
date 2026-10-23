@@ -177,8 +177,26 @@ test('bulkDecisive: name agreement, or a lead over the next different-name candi
   // No scores to measure a lead: not decisive.
   assert.equal(bulkDecisive(choose()), false);
   assert.equal(bulkDecisive(two(ranked(['a-1', 0.9]))), false);
-  // No rival with another name: nothing to be outbid by.
-  assert.equal(bulkDecisive(choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey')] })), true);
+  // Every candidate shares one name: only the printing is open, and that is the user's pick.
+  assert.equal(bulkDecisive(choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey')] })), false);
+  assert.equal(bulkDecisive(choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey')], titleConfirmed: true, identity: cand('a-1', 'Pidgey'), ranked: scored(['a-1', 0.9], ['a-2', 0.1]) })), false);
+});
+
+const scored = (...pairs) => pairs.map(([id, score]) => ({ id, rank: score - 0.05, score }));
+
+test('bulkDecisive from scores: the lead is measured on the similarity score, exactly CLEAR_GAP is enough', () => {
+  const two = (rows) => choose({ candidates: [cand('a-1', 'Pidgey'), cand('b-2', 'Rattata')], ranked: rows });
+  assert.equal(bulkDecisive(two(scored(['a-1', 0.9], ['b-2', 0.9 - CLEAR_GAP]))), true);
+  assert.equal(bulkDecisive(two(scored(['a-1', 0.9], ['b-2', 0.9 - CLEAR_GAP / 2]))), false);
+  assert.equal(bulkDecisive(two(scored(['a-1', 0.9], ['b-2', 0.5]))), true);
+  // A same-name rival is ignored even when it scores higher than the different-name one.
+  const mixed = choose({ candidates: [cand('a-1', 'Pidgey'), cand('a-2', 'Pidgey'), cand('b-2', 'Rattata')], ranked: scored(['a-1', 0.9], ['a-2', 0.899], ['b-2', 0.7]) });
+  assert.equal(bulkDecisive(mixed), true);
+  // The score wins over a rank that says otherwise.
+  assert.equal(bulkDecisive(two([{ id: 'a-1', rank: 0.9, score: 0.9 }, { id: 'b-2', rank: 0.89, score: 0.5 }])), true);
+  // No scores: not decisive unless the name agrees.
+  assert.equal(bulkDecisive(two(undefined)), false);
+  assert.equal(bulkDecisive(two(scored(['a-1', 0.9]))), false);
 });
 
 test('bulkPairs carries the decisive flag for the default tick', () => {

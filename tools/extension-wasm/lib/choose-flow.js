@@ -68,18 +68,19 @@ export function candidatesOfCard(card) {
 
 /**
  * The preselected candidate is a clear match: it agrees with the photo's name, or it leads the best candidate with
- * another card name by at least CLEAR_GAP (the card's `ranked` scores). Without scores the lead is unknown: not decisive.
+ * another card name by at least CLEAR_GAP (similarity `score` of the card's `ranked`, `rank` for older rows). Without scores
+ * the lead is unknown: not decisive. When every candidate is the same card, only the printing is open: the user's pick.
  */
 export function bulkDecisive(card) {
   const [first, ...rest] = candidatesOfCard(card);
   if (!first) return false;
-  if (nameAgreesWithPhoto(card, first)) return true;
   const rivals = rest.filter((candidate) => choiceName(candidate.name) !== choiceName(first.name));
-  if (!rivals.length) return true;
-  const rank = new Map((card.ranked || []).map((row) => [row.id, row.rank]));
-  const own = rank.get(first.id);
-  if (!Number.isFinite(own) || rivals.some((candidate) => !Number.isFinite(rank.get(candidate.id)))) return false;
-  return own - Math.max(...rivals.map((candidate) => rank.get(candidate.id))) >= CLEAR_GAP;
+  if (!rivals.length) return false;
+  if (nameAgreesWithPhoto(card, first)) return true;
+  const scores = new Map((card.ranked || []).map((row) => [row.id, row.score ?? row.rank]));
+  const own = scores.get(first.id);
+  if (!Number.isFinite(own) || rivals.some((candidate) => !Number.isFinite(scores.get(candidate.id)))) return false;
+  return own - Math.max(...rivals.map((candidate) => scores.get(candidate.id))) >= CLEAR_GAP;
 }
 
 /** Indexes of the cards waiting for the user's choice. */
@@ -98,6 +99,8 @@ export function bulkPairs(cards) {
 
 export const chooseHeading = (count) => `To confirm (${count})`;
 export const confirmLabel = (count) => `Confirm ${count}`;
+/** The bulk panel's all-or-none toggle: it offers to tick everything until everything is ticked. */
+export const tickAllLabel = (allTicked) => (allTicked ? "Untick all" : "Tick all");
 
 /** The candidate buttons for one card to choose (already-escaped HTML): the first is preselected as the best match. */
 export function renderCandidateCards(card, idx) {

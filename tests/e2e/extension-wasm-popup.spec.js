@@ -595,6 +595,61 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  // No title evidence anywhere: #1 leads on similarity score alone, #2 only differs by printing, #3 is a tight call.
+  const scoreScan = (crop, arts) => {
+    const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+    const a1 = row('a-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+    const a2 = row('a-2', 'Pidgey', 'Base Set', 'base1', '57', arts[1]);
+    const b2 = row('b-2', 'Rattata', 'Base Set', 'base1', '61', arts[2]);
+    const c3 = row('c-3', 'Spearow', 'Jungle', 'base2', '62', arts[3]);
+    const sc = (...p) => p.map(([id, score]) => ({ id, rank: score, score }));
+    const cards = [
+      { identity: null, confidence: 0.2, abstain: true, candidates: [a1, b2], ranked: sc(['a-1', 0.9], ['b-2', 0.8]), crop, box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.2, abstain: true, candidates: [a1, a2], ranked: sc(['a-1', 0.9], ['a-2', 0.7]), crop, box: [0, 0, 1, 1] },
+      { identity: null, confidence: 0.2, abstain: true, candidates: [c3, b2], ranked: sc(['c-3', 0.9], ['b-2', 0.89]), crop, box: [0, 0, 1, 1] },
+    ];
+    return { cards, priced: {} };
+  };
+
+  test('review all: a lead on similarity score is ticked without title evidence; a printing-only pair is not', async () => {
+    const page = await popupWithChoose(scoreScan);
+    await page.locator('.choose-review').click();
+    const panel = page.locator('#bulk-panel');
+    await expect(panel.locator('.bulk-keep:checked')).toHaveCount(1);
+    await expect(panel.locator('.bulk-keep[data-idx="0"]')).toBeChecked();
+    await expect(panel.locator('.bulk-pair[data-idx="0"] .bulk-check')).toHaveCount(0);
+    await expect(panel.locator('.bulk-keep[data-idx="1"]')).not.toBeChecked();
+    await expect(panel.locator('.bulk-pair[data-idx="1"] .bulk-check')).toHaveText('Check');
+    await expect(panel.locator('.bulk-keep[data-idx="2"]')).not.toBeChecked();
+    await page.close();
+  });
+
+  test('review all: Tick all / Untick all only changes the ticks; Confirm N still needs its own press', async () => {
+    const page = await popupWithChoose(scoreScan);
+    await page.locator('.choose-review').click();
+    const panel = page.locator('#bulk-panel');
+    const toggle = panel.getByRole('button', { name: 'Tick all' });
+    await expect(toggle).toBeVisible();
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 1');
+    await toggle.click();
+    await expect(panel.locator('.bulk-keep:checked')).toHaveCount(3);
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 3');
+    await expect(panel.locator('.bulk-pair.skipped')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+    await expect(panel.getByRole('button', { name: 'Untick all' })).toBeVisible();
+    await panel.getByRole('button', { name: 'Untick all' }).click();
+    await expect(panel.locator('.bulk-keep:checked')).toHaveCount(0);
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 0');
+    await expect(page.locator('#bulk-confirm')).toBeDisabled();
+    // Unticking one pair by hand after Tick all flips the label back.
+    await panel.getByRole('button', { name: 'Tick all' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#bulk-confirm')).toHaveText('Confirm 3');
+    await panel.locator('.bulk-keep[data-idx="2"]').uncheck();
+    await expect(panel.getByRole('button', { name: 'Tick all' })).toBeVisible();
+    await page.close();
+  });
+
   test('review all can be driven from the keyboard: Space toggles a pair, Tab stays inside the panel', async () => {
     const page = await popupWithChoose(chooseScan);
     await page.locator('.choose-review').focus();

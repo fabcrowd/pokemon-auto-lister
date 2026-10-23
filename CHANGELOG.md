@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-23 (review all: scores, printing-only pairs, Tick all)
+
+### Changed
+- Every card that gets candidates now carries `ranked` as `[{ id, rank, score }]` (`score` is the cosine similarity; `rank` as before), attached where the candidate list is built (`recognizeCard` records the hits, the scan's candidate step attaches them). Existing `{ id, rank }` consumers are unaffected; the page set prior still only sees the cards it saw before.
+- Review all: the lead is measured on `score` (rank for older rows) between the preselected candidate and the best candidate with a different card name, `>= CLEAR_GAP` (value unchanged), so clear pairs exist beyond the abstain and re-rank paths. No scores: not decisive unless the name agrees.
+- Review all: when every candidate is the same card (only the printing is open) the pair starts unticked with "Check"; the printing is the user's pick.
+
+### Added
+- Review all: a "Tick all" / "Untick all" button beside the note. It only changes the ticks; "Confirm N" still needs its own press.
+
 ## 2026-10-22 (choose flow refinements)
 
 ### Changed

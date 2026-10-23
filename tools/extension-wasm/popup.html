@@ -474,7 +474,8 @@
     .bulk-panel[hidden] { display: none; }
     .bulk-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #1a1d2a; }
     .bulk-title { flex: 1; margin: 0; font-size: 13px; font-weight: 700; color: #e4e6f0; }
-    .bulk-note { padding: 6px 16px; font-size: 11px; color: #8b92ab; }
+    .bulk-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; font-size: 11px; color: #8b92ab; }
+    .bulk-tick-all { min-height: 28px; padding: 3px 10px; font-size: 11px; flex-shrink: 0; }
     .bulk-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
     .bulk-pair { border-bottom: 1px solid #0e1018; }
     .bulk-pair.skipped { opacity: 0.8; }
@@ -703,7 +704,7 @@
       <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
       <button type="button" class="bulk-btn" id="bulk-close" aria-label="Close review">&#10005;</button>
     </div>
-    <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself.</div>
+    <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself. <button type="button" class="bulk-btn bulk-tick-all" id="bulk-tick-all">Tick all</button></div>
     <ul class="bulk-list" id="bulk-list"></ul>
     <div class="bulk-foot">
       <span class="bulk-hint" id="bulk-hint" hidden>Tick the ones that look right</span>
