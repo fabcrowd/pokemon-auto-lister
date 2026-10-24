@@ -466,8 +466,8 @@
   // What a card's frame and tag say: identified (green), identified with its printing to pick (blue), choose (amber:
   // the user picks the card, no name or price shown), card back (grey, dashed). The popup sends its own verdict
   // (display.state) so the page and the list agree; a relay straight from the background falls back to the card's own fields.
-  const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', choose: '#f59e0b', none: '#9ca3af' };
-  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', choose: '#fcd34d', none: '#d1d5db' };
+  const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', choose: '#f59e0b', none: '#9ca3af', skipped: '#9ca3af' };
+  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', choose: '#fcd34d', none: '#d1d5db', skipped: '#d1d5db' };
 
   function cardState(card) {
     const state = card?.display?.state;
@@ -481,6 +481,7 @@
   function tagText(card) {
     const state = cardState(card);
     if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
+    if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
     if (state === 'choose') return { state, lines: ['Choose', card.display?.valueCheck ? 'Check: high value' : 'Tap to choose'], short: 'Choose' };
     const { name, price } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
@@ -509,6 +510,7 @@
   function tagRows(tag, twoLines, textMax, measure) {
     const { state, lines, short } = tag;
     if (state === 'choose') return twoLines && measure(lines[1]) <= textMax ? lines : [fitText(short, textMax, measure)].filter(Boolean);
+    if (state === 'skipped') return [fitText(short, textMax, measure)].filter(Boolean);
     if (state === 'none') return (twoLines ? lines : [short]).map((t) => fitText(t, textMax, measure)).filter(Boolean);
     const { name, title, price } = tag;
     if (twoLines) {
@@ -647,6 +649,7 @@
 
   /** The two lines a card's label shows: its name and one price (or a price range while the set is open). */
   function labelText(card) {
+    if (cardState(card) === 'skipped') return { name: 'Skipped', price: 'Not priced. Put it back in the scanner to price it', muted: true };
     if (cardState(card) === 'choose') return { name: 'Choose a card', price: card.display?.valueCheck ? 'Check: high value. Tap to pick it in the scanner' : 'Tap to pick it in the scanner', muted: true };
     if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Turn it over to identify it', muted: true };
     const disp = card.display || null;

@@ -32,7 +32,8 @@ import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
 import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
-import { memoryVerdict } from "./lib/memory-confirm.js";
+import { skipDraft, unskipDraft } from "./lib/skip.js";
+import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
 import { whyOf, withVerdicts } from "./lib/why.js";
 import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
@@ -1228,6 +1229,31 @@ const _ownPageActions = {
     contributeTeachPick(scan, msg);
     return { ok: true, count: record.count, remembered: await referencesInUse() };
   },
+  // "Can't price this": a local correction row of type skip. Never shared: nothing here reaches _sharing.
+  saveSkip: async (msg) => {
+    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    const draft = skipDraft({
+      ts: Date.now(),
+      scanId: msg.scanId,
+      index: msg.index,
+      pageUrl: scan?.pageUrl,
+      guess: msg.guess,
+      crop: scan?.crops?.[msg.index],
+      extVersion: chrome.runtime.getManifest().version,
+      why: msg.guess?.why,
+    });
+    const record = await storeCorrection(_corrections, draft);
+    referencesChanged();
+    if (_ready) embedPendingReferences();
+    return { ok: true, count: record.count, remembered: await referencesInUse() };
+  },
+  // Put back: the skip is superseded on the same crop (it stays in the row's history) and its reference goes.
+  unskip: async (msg) => {
+    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    await storeCorrection(_corrections, unskipDraft({ ts: Date.now(), scanId: msg.scanId, index: msg.index, pageUrl: scan?.pageUrl, extVersion: chrome.runtime.getManifest().version }));
+    referencesChanged();
+    return { ok: true };
+  },
   confirmExam: (msg) => confirmExam(msg),
   shareStatus: async () => ({ available: _sharing.available(), enabled: await _sharing.enabled(), installId: await _sharing.installId() }),
   setSharing: async (msg) => {
@@ -2019,7 +2045,7 @@ async function recognizeCard(cardCanvas, era = null, sourceHeight = 0, capHeight
   const seen = {};
   const result = await recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight);
   // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
-  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.memory ? { memory: seen.memory } : {}),
+  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.memory ? { memory: seen.memory } : {}), ...(seen.skippedBefore ? { skippedBefore: true } : {}),
     ...(seen.confirmedBy ? { confirmedBy: seen.confirmedBy } : {}), ...(seen.why && !result.abstain ? { why: seen.why } : {}), ...(seen.choose && !result.numberRead ? { choose: true } : {}),
     ...(seen.smallRowCos != null && !result.numberRead ? { smallRow: true, smallRowCos: seen.smallRowCos } : {}) };
 }
@@ -2050,14 +2076,16 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
-  const { hits, referencedId, memory } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
+  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
   seen.referencedId = referencedId;
+  seen.skippedBefore = Boolean(skip);
   seen.memory = memory;
   seen.ranked = rankedIds(hits);
   const confirm = await confirmContext(cardCanvas, capHeight);
   const pictureRead = capAdapterChange(fuseResults(hits, null, _meta, _idMap, confirm), hits, inEraHits ? hits : rawHits, _meta, confirm);
   // The user's own earlier correction may confirm the card (source "your correction"), or stop a card they called wrong.
-  const verdict = memoryVerdict(pictureRead, memory, { hits, meta: _meta });
+  // A crop like one the user skipped is never confirmed on its own, whatever read it (picture or correction).
+  const verdict = skip ? skipVerdict(memoryVerdict(pictureRead, memory, { hits, meta: _meta })) : memoryVerdict(pictureRead, memory, { hits, meta: _meta });
   const fused = verdict.fused;
   seen.confirmedBy = verdict.confirmedBy;
   const whyFor = (src) => whyOf({

@@ -556,14 +556,15 @@ test.describe('Consumer extension popup', () => {
     await page.setViewportSize({ width: 420, height: 720 });
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.evaluate(({ src, crop, arts, saveResp }) => {
-      const { cards, priced, found } = new Function(`return (${src})`)()(crop, arts);
+      const { cards, priced, found, rescan } = new Function(`return (${src})`)()(crop, arts);
       const real = chrome.runtime.sendMessage.bind(chrome.runtime);
       window.__sent = [];
       window.__overlay = [];
       window.__priceCalls = [];
+      let scans = 0;
       chrome.runtime.sendMessage = async (msg) => {
-        if (msg?.action === 'scanPage') return { cards, scanId: 'c', srcWidth: 10, srcHeight: 10, pending: 0 };
-        if (msg?.action === 'saveCorrection') { window.__sent.push(msg); return saveResp; }
+        if (msg?.action === 'scanPage') { scans += 1; return { cards: scans > 1 && rescan ? rescan : cards, scanId: 'c', srcWidth: 10, srcHeight: 10, pending: 0 }; }
+        if (msg?.action === 'saveCorrection' || msg?.action === 'saveSkip' || msg?.action === 'unskip') { window.__sent.push(msg); return msg.action === 'saveCorrection' ? saveResp : { ok: true }; }
         if (msg?.action === 'findCards') return { cards: found || [] };
         if (msg?.action === 'priceCard') { window.__priceCalls.push(msg.id); return priced[msg.id] || { error: 'no price' }; }
         if (msg?.action === 'overlayWithGrid') { window.__overlay.push(msg); return { ok: true }; }
@@ -1451,6 +1452,181 @@ test.describe('Consumer extension popup', () => {
   test('with "Use my corrections" off the row says only Corrected', async () => {
     const page = await correctWrongCard({ ok: true, count: 1, remembered: false });
     await expect(page.locator('.card-row[data-idx="3"] .memory-chip')).toHaveText('Corrected');
+    await page.close();
+  });
+
+  // ─── "Can't price this": the user's way out for a card the catalog cannot name ───
+
+  const SKIP_SHOTS = path.resolve(__dirname, '../../.tmp/skip');
+  const skipNameRe = /^Skip this card: I can't price it \(not English, not a card\)$/;
+
+  test('every Choose row has a Can\'t price this button with its own accessible name, reachable by keyboard', async () => {
+    const page = await popupWithChoose(chooseScan);
+    const buttons = page.locator('.choose-row [data-skip-card]');
+    await expect(buttons).toHaveCount(4);
+    await expect(buttons.first()).toHaveText("Can't price this");
+    await expect(buttons.first()).toHaveAccessibleName(skipNameRe);
+    await page.locator('.choose-row').first().locator('[data-open-search]').focus();
+    await page.keyboard.press('Tab');
+    await expect(buttons.first()).toBeFocused();
+    fs.mkdirSync(SKIP_SHOTS, { recursive: true });
+    await page.locator('.choose-row').first().screenshot({ path: path.join(SKIP_SHOTS, 'choose-row-with-skip.png') });
+    await page.close();
+  });
+
+  test('skipping a Choose row: it moves to a collapsed Skipped (1) group, counts change, the tag is Skipped, focus and the live message follow', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row[data-idx="1"] [data-skip-card]').click();
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
+    await expect(page.locator('.choose-review')).toHaveText('Review all 3');
+    await expect(page.locator('.choose-row[data-idx="1"]')).toHaveCount(0);
+    const toggle = page.locator('.skipped-toggle');
+    await expect(toggle).toHaveText('Skipped (1)');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#skipped-list')).toBeHidden();
+    // The group is the last thing in the list.
+    expect(await page.evaluate(() => document.getElementById('results').lastElementChild.classList.contains('skipped-group'))).toBe(true);
+    // Lot: To confirm drops to 3, Sure is unchanged, Skipped 1 appears.
+    await expect(page.locator('#lot-totals .lt-guess b')).toHaveText('3');
+    await expect(page.locator('#lot-totals .lt-skipped')).toHaveText('Skipped 1');
+    await expect(page.locator('#s-value')).toHaveText('$12.50');
+    // The scanner is told, with the scan and the card; the page overlay says skipped and names nothing.
+    const sent = await page.evaluate(() => window.__sent);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ action: 'saveSkip', scanId: 'c', index: 1 });
+    const overlay = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => [c.display?.state, c.display?.name ?? null, c.display?.price ?? null]));
+    expect(overlay[1]).toEqual(['skipped', null, null]);
+    // Focus lands on the next Choose row's Confirm button, as after a confirm, and the message is announced.
+    await expect(page.locator('.choose-row[data-idx="3"] [data-confirm-best]')).toBeFocused();
+    await expect(page.locator('#msg-bar')).toHaveText('Skipped. 3 to confirm.');
+    await expect(page.locator('#msg-bar')).toHaveAttribute('role', 'status');
+    // Open the group: the crop and Put back, never a name or a price.
+    await toggle.click();
+    const row = page.locator('.skipped-row[data-idx="1"]');
+    await expect(row).toBeVisible();
+    await expect(row.locator('img.unrec-thumb')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+    await expect(row.locator('.card-price, .card-name')).toHaveCount(0);
+    await expect(row.locator('[data-put-back]')).toHaveText('Put back');
+    await expect(row.locator('[data-put-back]')).toHaveAccessibleName('Put back card 2: return it to the cards to confirm');
+    await page.screenshot({ path: path.join(SKIP_SHOTS, 'skipped-group.png') });
+    await page.close();
+  });
+
+  test('Put back returns the card to Choose with its candidates, focus on its Confirm button', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row[data-idx="1"] [data-skip-card]').click();
+    await page.locator('.skipped-toggle').click();
+    await page.locator('.skipped-row[data-idx="1"] [data-put-back]').click();
+    await expect(page.locator('.skipped-group')).toHaveCount(0);
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (4)');
+    const row = page.locator('.choose-row[data-idx="1"]');
+    await expect(row.locator('.pick-choice')).toHaveCount(3);
+    await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Rattata');
+    await expect(row.locator('[data-confirm-best]')).toBeFocused();
+    await expect(page.locator('#lot-totals .lt-skipped')).toHaveCount(0);
+    await expect(page.locator('#msg-bar')).toHaveText('Put back. 4 to confirm.');
+    const sent = await page.evaluate(() => window.__sent.map((m) => [m.action, m.index]));
+    expect(sent).toEqual([['saveSkip', 1], ['unskip', 1]]);
+    await page.close();
+  });
+
+  test('skip and Put back work from the keyboard alone', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row[data-idx="1"] [data-skip-card]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.choose-row[data-idx="3"] [data-confirm-best]')).toBeFocused();
+    await page.locator('.skipped-toggle').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.skipped-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('.skipped-row [data-put-back]')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.choose-row[data-idx="1"] [data-confirm-best]')).toBeFocused();
+    await page.close();
+  });
+
+  test('skipping the last card to confirm moves focus to Copy and says nothing is left', async () => {
+    const page = await popupWithChoose(chooseScan);
+    for (const idx of [1, 3, 4, 5]) {
+      await page.locator(`.choose-row[data-idx="${idx}"] [data-skip-card]`).focus();
+      await page.keyboard.press('Enter');
+    }
+    await expect(page.locator('.skipped-toggle')).toHaveText('Skipped (4)');
+    await expect(page.locator('.choose-group')).toHaveCount(0);
+    await expect(page.locator('#lot-totals [data-lot-copy]')).toBeFocused();
+    await expect(page.locator('#msg-bar')).toHaveText('Skipped. Nothing left to confirm.');
+    await page.close();
+  });
+
+  test('the export leaves skipped cards out and its tooltip says how many', async () => {
+    const page = await popupWithChoose(chooseScan);
+    const copy = page.locator('#lot-totals [data-lot-copy]');
+    await expect(copy).toHaveAttribute('title', '4 more cards still need confirming and are not included');
+    await page.locator('.choose-row[data-idx="1"] [data-skip-card]').click();
+    await expect(copy).toHaveText('Copy 2 confirmed');
+    await expect(copy).toHaveAttribute('title', '3 more cards still need confirming and are not included. 1 skipped card is not included');
+    await expect(page.locator('#lot-totals [data-lot-csv]')).toHaveAttribute('title', /1 skipped card is not included/);
+    await page.evaluate(() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+    });
+    await copy.evaluate((b) => b.click());
+    await expect(page.locator('#msg-bar')).toHaveText('Copied 2 cards');
+    const lines = (await page.evaluate(() => window.__copied)).split('\n').filter(Boolean);
+    expect(lines).toHaveLength(3);
+    await page.close();
+  });
+
+  test('Review all ignores skipped cards', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await page.locator('.choose-row[data-idx="3"] [data-skip-card]').click();
+    await page.locator('.choose-review').click();
+    await expect(page.locator('.bulk-pair')).toHaveCount(3);
+    await page.close();
+  });
+
+  test('a card that is not in a skipped state keeps no Skipped count in the lot strip', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await expect(page.locator('#lot-totals .lt-skipped')).toHaveCount(0);
+    await expect(page.locator('.skipped-group')).toHaveCount(0);
+    await page.close();
+  });
+
+  // A confident read of a crop like a skipped one: the scanner (background) hands it over as Choose, flagged skippedBefore.
+  const rescanScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+    const a1 = row('a-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+    const b2 = row('b-2', 'Rattata', 'Base Set', 'base1', '61', arts[1]);
+    const first = { identity: null, confidence: 0.3, abstain: true, candidates: [a1, b2], crop, box: [0, 0, 1, 1] };
+    const again = { identity: a1, confidence: 0.4, abstain: false, choose: true, skippedBefore: true, candidates: [a1, b2], smallRow: true, crop, box: [0, 0, 1, 1], market_price: 3, price_grid: grid(3) };
+    return { cards: [first], rescan: [again], priced: { 'a-1': { identity: a1, market_price: 3, price_variant: 'normal', price_grid: grid(3) } } };
+  };
+
+  test('a rescan of a skipped crop stays Choose with the You skipped this before chip and a highlighted skip button; nothing is auto-skipped or auto-confirmed', async () => {
+    const page = await popupWithChoose(rescanScan);
+    await page.locator('.choose-row[data-idx="0"] [data-skip-card]').click();
+    await expect(page.locator('.skipped-toggle')).toHaveText('Skipped (1)');
+    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    const row = page.locator('.choose-row[data-idx="0"]');
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('.memory-chip')).toHaveText('You skipped this before');
+    await expect(row.locator('[data-skip-card]')).toHaveClass(/skip-btn-hot/);
+    await expect(row.locator('[data-skip-card]')).toBeVisible();
+    await expect(page.locator('.skipped-group')).toHaveCount(0);
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (1)');
+    // Not named, not priced, even though it is a cheap small-photo card that would otherwise be promoted.
+    await expect(row.locator('.card-price')).toHaveText('—');
+    await expect(page.locator('#s-value')).toHaveText('—');
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => window.__priceCalls)).toEqual([]);
+    await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Pidgey');
+    const overlay = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => c.display?.state));
+    expect(overlay).toEqual(['choose']);
+    await page.screenshot({ path: path.join(SKIP_SHOTS, 'skipped-before-chip.png') });
+    // The user's own confirm still works and prices it.
+    await row.locator('[data-confirm-best]').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
     await page.close();
   });
 

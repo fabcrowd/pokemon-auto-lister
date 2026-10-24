@@ -3,7 +3,8 @@ import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirme
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
-import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, tickAllLabel } from "./lib/choose-flow.js";
+import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
+import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
 import { userWhy } from "./lib/why.js";
@@ -75,6 +76,7 @@ let _whyOpen = new Set();       // card indexes whose "Why this card?" text is o
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _showChoose = true;         // the "To confirm" group is open
+let _showSkipped = false;       // the "Skipped" group is open
 let _bulk = null;               // { pairs, skipped, opener, scan } while the review-all panel is open
 let _searchTimer = null;
 let _pickSeq = 0;
@@ -253,6 +255,7 @@ btnClear.addEventListener("click", () => {
   _whyOpen = new Set();
   _stripMore = new Set();
   _showUnrecognised = false;
+  _showSkipped = false;
   _showChoose = true;
   closeBulk(false);
   examStrip.hidden = true;
@@ -396,7 +399,7 @@ function demoteExpensive(cards) {
 // nothing is saved as a correction or sent for learning, and "Wrong card?" is still on the row.
 function promoteCheap(scan) {
   scan.cards.forEach((card, idx) => {
-    if (card.smallRow !== true || chooseState(card) !== "choose") return;
+    if (card.smallRow !== true || card.skippedBefore === true || chooseState(card) !== "choose") return;
     const top = candidatesOfCard(card)[0];
     if (!top?.id) return;
     candidatePrice(top.id).then((resp) => {
@@ -583,6 +586,7 @@ function renderLotTotals(cards, choiceFor) {
   if (!lotTotalsEl) return;
   const list = (cards || []).filter((card) => !card.cardBack);
   if (!list.length) { lotTotalsEl.hidden = true; return; }
+  const skipped = skippedCount(cards);
   const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
   const cond = enabledConditions()[0] || "NM";
@@ -596,6 +600,7 @@ function renderLotTotals(cards, choiceFor) {
   const hadCopyFocus = lotTotalsEl.contains(document.activeElement) ? document.activeElement.closest("[data-lot-copy], [data-lot-csv]") : null;
   lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(cond)}</span></span>`
     + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
+    + (skipped ? `<span class="lt-item lt-skipped" title="Cards you skipped. They are not priced or exported."><span class="lt-lbl">Skipped</span> <b>${skipped}</b></span>` : "")
     + actions;
   lotTotalsEl.hidden = false;
   // The strip is rewritten on every card change; a keyboard user on Copy or Download stays on it.
@@ -609,8 +614,8 @@ function currentLot() {
   return lotExportRows(cards, choiceFor, enabledConditions());
 }
 function currentLotCounts(cards, choiceFor) {
-  const { count, notIncluded } = lotExportRows(cards, choiceFor, enabledConditions());
-  return [count, notIncluded];
+  const { count, notIncluded, skipped } = lotExportRows(cards, choiceFor, enabledConditions());
+  return [count, notIncluded, skipped];
 }
 
 // The clipboard API needs no extra permission from a click; the textarea route is for when it refuses.
@@ -626,7 +631,7 @@ function copyWithTextarea(text) {
 
 async function copyLot() {
   const lot = currentLot();
-  const labels = lotExportLabels(lot.count, lot.notIncluded);
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped);
   if (!labels) return;
   const text = lotToTsv(lot.rows);
   let copied = false;
@@ -641,7 +646,7 @@ async function copyLot() {
 
 function downloadLot() {
   const lot = currentLot();
-  const labels = lotExportLabels(lot.count, lot.notIncluded);
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped);
   if (!labels) return;
   const name = lotFileName(new Date());
   // The byte order mark makes Excel read the file as UTF-8.
@@ -738,12 +743,13 @@ function renderResults() {
   if (cards.length === 0) { resetResults(); return; }
   emptyHint.remove();
 
-  const { shown, hidden } = splitByRecognition(cards);
+  const { shown, hidden, skipped } = splitByRecognition(cards);
   const toChoose = shown.filter((idx) => chooseState(cards[idx]) === "choose");
   const confirmed = shown.filter((idx) => chooseState(cards[idx]) !== "choose");
   resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
     + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
-    + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
+    + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised)
+    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]))).join(""), skipped.length, _showSkipped);
 }
 
 function renderCardRow(card, idx) {
@@ -887,7 +893,7 @@ function renderChooseRow(card, idx) {
       <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
       <div class="picker-sub">${candidates.length ? "Closest matches, best one first" : "No close matches"}</div>
       <div class="pick-row">${renderScannedCard(card, idx)}${renderCandidateCards(card, idx)}</div>
-      <div class="choose-actions">${confirm}${search}</div>
+      <div class="choose-actions">${confirm}${search}${renderSkipButton(idx, card.skippedBefore === true)}</div>
     </div>
     ${renderSearchPanel(idx)}
   </div>`;
@@ -1045,13 +1051,42 @@ function confirmedNote(name) {
   const left = toConfirmCount();
   return `Confirmed ${name || "card"}. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`;
 }
-function advanceAfterConfirm(idx, name) {
+function advanceAfterConfirm(idx, name, note = null) {
   const rows = [...resultsEl.querySelectorAll(".choose-row[data-idx]")];
   const next = rows.find((row) => Number(row.dataset.idx) > idx) || rows[0];
   const target = (next?.querySelector("button[data-confirm-best]") || next?.querySelector("button[data-pick], [data-open-search]"))
     || lotTotalsEl?.querySelector("[data-lot-copy]") || btnScan;
   target.focus({ preventScroll: false });
-  showMessage(confirmedNote(name));
+  showMessage(note ?? confirmedNote(name));
+}
+
+// "Can't price this": the card leaves the list, the lot and the export, and the scanner remembers it locally (a similar
+// crop is then never confirmed on its own). Focus goes where a confirm sends it: the next row's Confirm button.
+function skipAt(idx) {
+  const scan = _lastResult;
+  const card = scan?.cards?.[idx];
+  if (!card || chooseState(card) !== "choose") return;
+  _picker.delete(idx);
+  const guess = guessWithWhy(card);
+  chrome.runtime.sendMessage({ action: "saveSkip", scanId: scan.bgScanId, index: idx, guess })
+    .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
+    .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  replaceCard(idx, skipCard(card));
+  const left = toConfirmCount();
+  advanceAfterConfirm(idx, null, `Skipped. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`);
+}
+
+function putBackAt(idx) {
+  const scan = _lastResult;
+  const card = scan?.cards?.[idx];
+  if (!card?.skipped) return;
+  chrome.runtime.sendMessage({ action: "unskip", scanId: scan.bgScanId, index: idx })
+    .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
+    .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  _showChoose = true;
+  replaceCard(idx, putBackCard(card));
+  resultsEl.querySelector(`.choose-row[data-idx="${idx}"] [data-confirm-best], .choose-row[data-idx="${idx}"] [data-open-search]`)?.focus();
+  showMessage(`Put back. ${toConfirmCount()} to confirm.`);
 }
 
 resultsEl.addEventListener("click", (e) => {
@@ -1063,6 +1098,12 @@ resultsEl.addEventListener("click", (e) => {
     button.setAttribute("aria-expanded", String(_showUnrecognised));
     button.textContent = unrecognisedLabel(resultsEl.querySelectorAll(".unrec-row").length, _showUnrecognised);
     resultsEl.querySelector("#unrec-list").hidden = !_showUnrecognised;
+    return;
+  }
+  if ("skippedToggle" in button.dataset) {
+    _showSkipped = !_showSkipped;
+    button.setAttribute("aria-expanded", String(_showSkipped));
+    resultsEl.querySelector("#skipped-list").hidden = !_showSkipped;
     return;
   }
   if ("chooseToggle" in button.dataset) {
@@ -1079,6 +1120,10 @@ resultsEl.addEventListener("click", (e) => {
   if ("confirmBest" in button.dataset) {
     const best = candidatesOfCard(_lastResult?.cards?.[idx])[0];
     if (best?.id) pickCard(idx, best.id, "candidates", best);
+  } else if ("skipCard" in button.dataset) {
+    skipAt(idx);
+  } else if ("putBack" in button.dataset) {
+    putBackAt(idx);
   } else if ("variantConfirm" in button.dataset) {
     const suggested = _variantSuggest.get(idx);
     if (!suggested) return;
@@ -1505,7 +1550,7 @@ function pushOverlay() {
 
 function computeDisplayForOverlay(card, idx) {
   // A card to choose shows neither a name nor a price on the page.
-  if (card.abstain || chooseState(card) === "choose") return null;
+  if (card.abstain || chooseState(card) === "choose" || chooseState(card) === "skipped") return null;
   const id = card.identity || {};
   if (!isSetConfirmed(card)) {
     const range = setRangeNote(card.setRange, enabledConditions());

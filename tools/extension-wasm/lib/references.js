@@ -3,6 +3,7 @@
 
 import { EMBEDDING_VERSION } from "./embed.js";
 import { BAR_EPSILON, CONFLICT_GAP, referenceBar } from "./reference-bars.js";
+import { SKIP_ID, skipHit } from "./skip.js";
 
 export const EMBEDDING_DIM = 512;
 const UNIT_TOLERANCE = 1e-3;
@@ -204,6 +205,14 @@ export function negativeHit(query, refs, wrongId, { height = 0 } = {}) {
  * @returns {{hits: object[], referencedId: string|null, memory: object|null}} memory: {level: 'confirm'|'boost'|'negative', cardId, cos, refId, n, ts, ...}
  */
 export function applyMemory(rawEmbedding, rows, hits, rawTop, meta, { height = 0, pack = [] } = {}) {
+  // A skip row is not a card reference: it only ever stops a confirmation (lib/skip.js skipHit).
+  const own = rows.filter((row) => row.cardId !== SKIP_ID);
+  const base = applyCardMemory(rawEmbedding, own, hits, rawTop, meta, { height, pack });
+  const skip = own.length === rows.length ? null : skipHit(rawEmbedding, rows, { height });
+  return skip ? { ...base, skip } : base;
+}
+
+function applyCardMemory(rawEmbedding, rows, hits, rawTop, meta, { height = 0, pack = [] } = {}) {
   const none = { hits, referencedId: null, memory: null };
   if (!rows.length && !pack.length) return none;
   let hit = memoryHit(rawEmbedding, rows, rawTop, { height });

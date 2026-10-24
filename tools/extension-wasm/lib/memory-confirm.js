@@ -35,3 +35,16 @@ export function memoryVerdict(fused, memory, { hits, meta }) {
   }
   return same;
 }
+
+/**
+ * Negative memory for a skip: the crop looks like one the user skipped ("can't price this"). A confirmed read, whether
+ * from the picture or from a correction, goes back to Choose; nothing here ever skips the card for the user.
+ */
+export function skipVerdict(verdict) {
+  const { fused } = verdict;
+  const confirmedNow = fused && !fused.abstain && Boolean(fused.identity) && fused.reason !== "choose";
+  if (!confirmedNow && !verdict.confirmedBy) return verdict;
+  if (!fused) return verdict;
+  const next = { ...fused, confidence: Math.min(fused.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), reason: "choose", choose: true };
+  return { fused: next, confirmedBy: null, negative: verdict.negative, printingExact: false };
+}

@@ -7,7 +7,7 @@ import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
 import { sanitizeWhy } from "./why.js";
 
-const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed"];
+const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed", "skip", "unskip"];
 const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
 
 export { isUnsure };
@@ -227,7 +227,7 @@ export function matchesLabel(count) {
 }
 
 /** One saved answer. Throws on a record that would be useless as a label. */
-export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion, why, wrongId, count, history }) {
+export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion, why, wrongId, count, history, type }) {
   if (!VIAS.includes(via)) throw new Error(`correction via must be one of ${VIAS.join(", ")}`);
   if (typeof pickedId !== "string" || !pickedId) throw new Error("correction needs a pickedId");
   const cleanWhy = sanitizeWhy(why);
@@ -248,6 +248,8 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
     },
     pickedId,
     via,
+    // Only skips carry a type (lib/skip.js); every older row has none.
+    ...(type === "skip" ? { type } : {}),
     crop: typeof crop === "string" && JPEG_DATA_URL.test(crop) ? crop : null,
     extVersion: typeof extVersion === "string" ? extVersion : null,
     // Local only. why: what the scanner believed about the row being corrected; wrongId: the card it showed that was wrong.

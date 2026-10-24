@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (feat/skip-card: "Can't price this")
+
+### Added
+- A one-tap "Can't price this" button on every Choose row (accessible name "Skip this card: I can't price it (not English, not a card)"). The card moves to a collapsed "Skipped (n)" group at the bottom of the list (crop and "Put back"), leaves "To confirm", the lot total, the status line's "need your pick", "Review all" and the Copy / CSV export (the buttons' tooltip says "N skipped cards are not included"), and its page tag is grey "Skipped". The lot strip shows "Skipped N" only when N > 0. After a skip, focus goes to the next Choose row's Confirm button and the message bar says "Skipped. N to confirm.". "Put back" returns the card to Choose with its candidates.
+- Memory: a skip is stored locally as a correction row (`type: "skip"`, `pickedId: "skip"`, with the scanner's why-record, guess and the crop, and the crop's embedding as a reference). It shares the 400 cap, history, count and protection rules; old rows are unaffected. A new crop whose embedding reaches the boost bar of its height band against a skipped crop (`lib/skip.js` `skipHit`, bars from `lib/reference-bars.js`) is never auto-confirmed or auto-promoted: it stays Choose with the chip "You skipped this before" and a highlighted "Can't price this" (`memory-confirm.js` `skipVerdict`, `skippedBefore`). Nothing is skipped for the user. "Use my corrections" off disables it like the other memory. Put back supersedes the skip row (it stays in history) and drops its reference.
+- Skips are local only: shared learning never receives them (asserted in `tests/skip.test.js`); one sentence added to `docs/store/privacy-policy.md`.
+
+### Tests
+- `tests/skip.test.js` (new), a case in `tests/content-pure.test.js`, and nine popup e2e tests in `tests/e2e/extension-wasm-popup.spec.js` (the `popupWithChoose` mock now records `saveSkip` / `unskip` and can return a second scan).
+
 ## 3.1.0 (release/3.1: fewer taps, no stale text, honest lot strip)
 
 ### Changed

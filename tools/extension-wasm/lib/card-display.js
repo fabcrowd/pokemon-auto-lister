@@ -283,7 +283,9 @@ export function isUnsure(card) {
 
 /** A card the scanner named, is not guessing about, and whose set is settled. */
 export function isIdentified(card) {
-  if (!card || card.cardBack) return false;
+  if (!card || card.cardBack || card.skipped === true) return false;
+  // A crop that looks like one the user skipped is never named on its own: it waits for the user's pick.
+  if (card.skippedBefore === true && card.userConfirmed !== true) return false;
   return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && (isSetConfirmed(card) || hasSetRange(card));
 }
 
@@ -315,19 +317,22 @@ export function needsPrinting(card) {
  * when there are any. unrecognised: only a card back, which is not a card to identify.
  */
 export function classifyCard(card) {
+  if (card?.skipped === true) return 'skipped';
   if (isIdentified(card)) return 'identified';
   if (card?.cardBack) return 'unrecognised';
   return 'pick';
 }
 
-/** Indexes of the cards for the main list and of those folded into "not recognised". */
+/** Indexes of the cards for the main list, those folded into "not recognised", and those the user skipped. */
 export function splitByRecognition(cards) {
   const shown = [];
   const hidden = [];
+  const skipped = [];
   (cards || []).forEach((card, index) => {
-    (classifyCard(card) === 'unrecognised' ? hidden : shown).push(index);
+    const kind = classifyCard(card);
+    (kind === 'skipped' ? skipped : kind === 'unrecognised' ? hidden : shown).push(index);
   });
-  return { shown, hidden };
+  return { shown, hidden, skipped };
 }
 
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -336,7 +341,7 @@ const plural = (n, one, many) => (n === 1 ? one : many);
 export function scanStatus(cards) {
   const list = cards || [];
   if (list.length === 0) return '';
-  const counts = { identified: 0, pick: 0, unrecognised: 0 };
+  const counts = { identified: 0, pick: 0, unrecognised: 0, skipped: 0 };
   let printing = 0;
   for (const card of list) {
     counts[classifyCard(card)] += 1;
@@ -390,7 +395,7 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
   const condition = enabledConditions?.[0] || 'NM';
   const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0, noPrice: 0 };
   for (const card of cards || []) {
-    if (card?.cardBack) continue;
+    if (card?.cardBack || card?.skipped === true) continue;
     out.total += 1;
     if (!isIdentified(card)) {
       out.toIdentify += 1;

@@ -7,8 +7,9 @@ import { escHtml, thumbUrl } from "./card-picker.js";
 import { choiceName } from "./set-choice.js";
 import { CLEAR_GAP } from "./fusion.js";
 
-/** 'confirmed' | 'choose' | 'back'. A card the user just picked and is still pricing is already confirmed. */
+/** 'confirmed' | 'choose' | 'back' | 'skipped'. A card the user just picked and is still pricing is already confirmed. */
 export function chooseState(card) {
+  if (card?.skipped === true) return "skipped";
   if (!card || card.cardBack) return "back";
   if (card.pricing === true) return "confirmed";
   return isIdentified(card) ? "confirmed" : "choose";
@@ -17,6 +18,7 @@ export function chooseState(card) {
 /** What the page overlay's frame and tag show for a card: identified, printing, choose, or none (a card back). */
 export function overlayStateOf(card) {
   const state = chooseState(card);
+  if (state === "skipped") return "skipped";
   if (state === "back") return "none";
   if (state === "choose") return "choose";
   return needsPrinting(card) ? "printing" : "identified";
@@ -125,4 +127,33 @@ export function renderChooseGroup(rowsHtml, count, expanded, reviewCount = 0) {
     </div>
     <div id="choose-list" class="choose-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
   </section>`;
+}
+
+export const skippedHeading = (count) => `Skipped (${count})`;
+export const SKIP_LABEL = "Can't price this";
+export const SKIP_NAME = "I can't price it (not English, not a card)";
+
+/** The one-tap "Can't price this" button of a Choose row; highlighted when the crop looks like one skipped before. */
+export function renderSkipButton(idx, highlighted = false) {
+  return `<button type="button" class="link-btn skip-btn${highlighted ? " skip-btn-hot" : ""}" data-skip-card data-idx="${idx}" aria-label="${escHtml(`Skip this card: ${SKIP_NAME}`)}" title="Skip this card. It is left out of the lot and the export.">${escHtml(SKIP_LABEL)}</button>`;
+}
+
+/** The collapsed "Skipped (N)" group at the bottom of the list; rows are already-escaped HTML. */
+export function renderSkippedGroup(rowsHtml, count, expanded) {
+  if (!count) return "";
+  return `<div class="skipped-group">
+    <button type="button" class="unrec-toggle skipped-toggle" id="skipped-heading" data-skipped-toggle aria-expanded="${expanded}" aria-controls="skipped-list">${escHtml(skippedHeading(count))}</button>
+    <div id="skipped-list" class="unrec-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
+  </div>`;
+}
+
+/** One skipped card: its crop and "Put back". Never a name or a price. */
+export function renderSkippedRow(idx, crop) {
+  return `<div class="card-row unrec-row skipped-row" data-idx="${idx}">
+    <div class="unrec-line">
+      ${crop ? `<img class="unrec-thumb" src="${escHtml(crop)}" alt="" width="34" height="48">` : ""}
+      <span class="unrec-name">Card ${idx + 1}: skipped</span>
+      <button type="button" class="link-btn" data-put-back data-idx="${idx}" aria-label="${escHtml(`Put back card ${idx + 1}: return it to the cards to confirm`)}">Put back</button>
+    </div>
+  </div>`;
 }

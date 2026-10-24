@@ -526,3 +526,17 @@ test('tag rows: Choose never reads "Tap to c...", a price is never cut mid-numbe
   assert.equal(rows(range, true, 80)[1], 'from $1.43');
   assert.deepEqual(rows(range, true, 50), ['Chariz…']);
 });
+
+test('a skipped card has a grey Skipped tag with no name or price, even if the card carries a price', () => {
+  const id = { name: 'Charizard', number: '4' };
+  const card = { identity: id, price_grid: { variants: { normal: { market: 9 } } }, display: { state: 'skipped' } };
+  assert.equal(pure.cardState(card), 'skipped');
+  const tag = JSON.parse(JSON.stringify(pure.tagText(card)));
+  assert.deepEqual(tag.lines, ['Skipped']);
+  assert.equal(tag.short, 'Skipped');
+  const measure = (text) => text.length * 7;
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(card), true, 100, measure))), ['Skipped']);
+  const label = JSON.parse(JSON.stringify(pure.labelText(card)));
+  assert.equal(label.name, 'Skipped');
+  assert.doesNotMatch(JSON.stringify(label), /Charizard|\$/);
+});

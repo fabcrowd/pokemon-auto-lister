@@ -14,8 +14,11 @@ export function memoryChipHtml(card, { choose = false } = {}) {
   const chip = (text, title) => ` <span class="memory-chip" title="${escHtml(title)}">${escHtml(text)}</span>`;
   const memory = card?.memory && !card.memory.pack ? card.memory : null;
   if (choose) {
-    if (!memory) return "";
-    return chip(`You corrected this before${times(memory.n || 1)}`, "A card you corrected earlier looks like this one. Its answer is first.");
+    const skipped = card?.skippedBefore
+      ? chip("You skipped this before", "A card you skipped with \"Can't price this\" looks like this one. It is not confirmed for you: choose a card, or skip it again.")
+      : "";
+    if (!memory) return skipped;
+    return skipped + chip(`You corrected this before${times(memory.n || 1)}`, "A card you corrected earlier looks like this one. Its answer is first.");
   }
   if (card?.corrected) {
     const { count = 1, remembered } = card.corrected;
