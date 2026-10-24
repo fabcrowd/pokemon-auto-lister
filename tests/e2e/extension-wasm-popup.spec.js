@@ -343,7 +343,7 @@ test.describe('Consumer extension popup', () => {
     });
     const totals = page.locator('#lot-totals');
     await expect(totals).toBeVisible();
-    await expect(totals.locator('.lt-item').first()).toContainText('Sure $5.00 (1)');
+    await expect(totals.locator('.lt-item').first()).toContainText('Confirmed value $5.00 (1)');
     const toConfirm = totals.locator('.lt-guess');
     await expect(toConfirm).toContainText('To confirm');
     await expect(toConfirm.locator('b')).toHaveText('2');
@@ -360,13 +360,13 @@ test.describe('Consumer extension popup', () => {
       ];
     });
     const sure = page.locator('#lot-totals .lt-item').first();
-    await expect(sure).toContainText('Sure $5.00 (2, 1 without price)');
+    await expect(sure).toContainText('Confirmed value $5.00 (2, 1 without price)');
     await expect(sure.locator('.lt-n')).toHaveAttribute('title', '1 confirmed card has no price data');
     await page.close();
   });
 
   const exportLot = () => {
-    const grid = (nm) => ({ source: 'pokemontcg', updatedAt: '2026-10-20T00:00:00.000Z', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const grid = (nm) => ({ source: 'pokemontcg', updatedAt: new Date().toISOString(), variants: { normal: { market: nm, conditions: { NM: nm } } } });
     const pika = { identity: { id: 'x-1', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false, market_price: 5, price_grid: grid(5), box: [0, 0, 1, 1] };
     return [
       pika,
@@ -471,7 +471,7 @@ test.describe('Consumer extension popup', () => {
     const tip = 'Prices are Near Mint market prices unless your price-service key provides other conditions';
     await expect(page.locator('#s-cond')).toHaveText('NM');
     await expect(page.locator('#s-cond')).toHaveAttribute('title', tip);
-    await expect(page.locator('#lot-totals .lt-cond')).toHaveText('NM');
+    await expect(page.locator('#lot-totals .lt-cond')).toHaveText('Near Mint');
     await expect(page.locator('#lot-totals .lt-cond')).toHaveAttribute('title', tip);
     await page.locator('#btn-clear').evaluate((b) => b.click());
     await expect(page.locator('#s-cond')).toBeHidden();
@@ -745,7 +745,8 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (2)');
     await expect(page.locator('.choose-row')).toHaveCount(2);
     const sent = await page.evaluate(() => window.__sent.map((m) => [m.index, m.pickedId, m.via]));
-    expect(sent).toEqual([[1, 'b-2', 'candidates'], [4, 'c-3', 'candidates']]);
+    // Pair 1 was the scanner's own preselection (confirmed, not saved); pair 4 was a Check pair ticked by hand (saved).
+    expect(sent).toEqual([[4, 'c-3', 'candidates']]);
     await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$4.00');
     await expect(page.locator('.card-row[data-idx="4"] .card-price')).toHaveText('$6.00');
     await page.close();
@@ -823,6 +824,46 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  // Self-contained (it runs inside the page): #0 leads on score (preticked), #1 is a Check pair; both priced.
+  const bulkSaveScan = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+    const a1 = row('a-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+    const a2 = row('a-2', 'Pidgey', 'Base Set', 'base1', '57', arts[1]);
+    const b2 = row('b-2', 'Rattata', 'Base Set', 'base1', '61', arts[2]);
+    const sc = (...p) => p.map(([id, score]) => ({ id, rank: score, score }));
+    return {
+      cards: [
+        { identity: null, confidence: 0.2, abstain: true, candidates: [a1, b2], ranked: sc(['a-1', 0.9], ['b-2', 0.8]), crop, box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.2, abstain: true, candidates: [a1, a2], ranked: sc(['a-1', 0.9], ['a-2', 0.7]), crop, box: [0, 0, 1, 1] },
+      ],
+      priced: { 'a-1': { identity: a1, market_price: 3, price_variant: 'normal', price_grid: grid(3) } },
+    };
+  };
+
+  test('review all: Tick all confirms for the session but saves no correction; a Check pair ticked by hand is saved', async () => {
+    const page = await popupWithChoose(bulkSaveScan);
+    await page.locator('.choose-review').click();
+    const panel = page.locator('#bulk-panel');
+    await panel.getByRole('button', { name: 'Tick all' }).click();
+    await page.locator('#bulk-confirm').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
+    await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$3.00');
+    await expect(page.locator('.choose-row')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__sent)).toEqual([]);
+    await page.close();
+
+    const again = await popupWithChoose(bulkSaveScan);
+    await again.locator('.choose-review').click();
+    await again.locator('#bulk-panel .bulk-keep[data-idx="1"]').check();
+    await again.locator('#bulk-confirm').click();
+    await expect(again.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$3.00');
+    // Card 0 was the scanner's own preselection (not saved); card 1 was a Check pair the user ticked themselves.
+    const sent = await again.evaluate(() => window.__sent.map((m) => [m.action, m.index]));
+    expect(sent).toEqual([['saveCorrection', 1]]);
+    await again.close();
+  });
+
   // ─── Stakes: price decides how much picture evidence a card needs ───
 
   // 0: small photo, cheap candidate (promoted)   1: small photo, expensive candidate (stays Choose)
@@ -848,6 +889,7 @@ test.describe('Consumer extension popup', () => {
     ];
     const priced = {
       'c-1': { identity: cheap, market_price: 3, price_variant: 'normal', price_grid: grid(3) },
+      'c-2': { identity: cheap2, market_price: 2, price_variant: 'normal', price_grid: grid(2) },
       'x-1': { identity: dear, market_price: 120, price_variant: 'normal', price_grid: grid(120) },
       'h-1': { identity: held, market_price: 80, price_variant: 'normal', price_grid: grid(80) },
     };
@@ -874,7 +916,27 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.choose-row[data-idx="1"] .card-price')).toHaveText('—');
     await expect(page.locator('.choose-row[data-idx="5"]')).toHaveCount(1);
     const calls = await page.evaluate(() => window.__priceCalls);
-    expect([...calls].sort()).toEqual(['c-1', 'u-1', 'x-1']);
+    expect([...calls].sort()).toEqual(['c-1', 'c-2', 'u-1', 'x-1', 'x-2']);
+    await page.close();
+  });
+
+  test('a cheap small-photo card with a pricier runner-up among its candidates stays a choice', async () => {
+    const page = await popupWithChoose((crop, arts) => {
+      const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+      const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+      const cheap = row('c-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+      const promo = row('p-1', 'Pidgey', 'Promo', 'basep', '9', arts[1]);
+      return {
+        cards: [{ identity: null, confidence: 0.49, abstain: true, unsure: true, smallRow: true, smallRowCos: 0.7, readHeight: 150, candidates: [cheap, promo], crop, box: [0, 0, 1, 1] }],
+        priced: {
+          'c-1': { identity: cheap, market_price: 3, price_variant: 'normal', price_grid: grid(3) },
+          'p-1': { identity: promo, market_price: 60, price_variant: 'normal', price_grid: grid(60) },
+        },
+      };
+    });
+    await expect(page.locator('.choose-row[data-idx="0"]')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => window.__priceCalls.length)).toBe(2);
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('—');
     await page.close();
   });
 
@@ -922,11 +984,11 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
-  test('the lot summary follows: promoted cards are Sure, demoted ones are still to confirm', async () => {
+  test('the lot summary follows: promoted cards are Confirmed value, demoted ones are still to confirm', async () => {
     const page = await popupWithChoose(stakesScan);
     await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
     const totals = page.locator('#lot-totals');
-    await expect(totals.locator('.lt-item').first()).toContainText('Sure $163.00 (3)');
+    await expect(totals.locator('.lt-item').first()).toContainText('Confirmed value $163.00 (3)');
     await expect(totals.locator('.lt-guess b')).toHaveText('3');
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
     await page.close();
@@ -1486,7 +1548,7 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('#skipped-list')).toBeHidden();
     // The group is the last thing in the list.
     expect(await page.evaluate(() => document.getElementById('results').lastElementChild.classList.contains('skipped-group'))).toBe(true);
-    // Lot: To confirm drops to 3, Sure is unchanged, Skipped 1 appears.
+    // Lot: To confirm drops to 3, Confirmed value is unchanged, Skipped 1 appears.
     await expect(page.locator('#lot-totals .lt-guess b')).toHaveText('3');
     await expect(page.locator('#lot-totals .lt-skipped')).toHaveText('Skipped 1');
     await expect(page.locator('#s-value')).toHaveText('$12.50');

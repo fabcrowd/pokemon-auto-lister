@@ -124,6 +124,7 @@ test("crops must be small, plausible JPEGs that end properly", () => {
 test("stored form: hashed install and a server receipt time replace the raw install", () => {
   const stored = contribution({ install: "0123456789abcdef", received: "2026-10-15T12:00:00.000Z" });
   assert.equal(validateContribution(stored, { stored: true }).ok, true);
+  assert.equal(validateContribution({ ...stored, received: "2026-10-15" }, { stored: true }).ok, true, "the date-only form is what is kept now");
   assert.equal(validateContribution(contribution(), { stored: true }).ok, false);
   assert.equal(validateContribution({ ...stored, received: "yesterday" }, { stored: true }).ok, false);
   const noReceipt = { ...stored };

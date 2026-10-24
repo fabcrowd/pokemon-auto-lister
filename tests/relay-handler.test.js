@@ -44,7 +44,9 @@ test("a valid batch is accepted and stored under a server-time key with a hashed
   assert.deepEqual(await res.json(), { accepted: 2 });
   assert.deepEqual([...env.PENDING.map.keys()].sort(), [`pending/${TS}-uuid-1.json`, `pending/${TS}-uuid-2.json`]);
   const stored = JSON.parse(env.PENDING.map.get(`pending/${TS}-uuid-1.json`));
-  assert.deepEqual(stored, { ...items[0], install: hashed(items[0].install), received: TS });
+  // The privacy policy says date only: no time of day is kept with the contribution (the queue key is private).
+  assert.deepEqual(stored, { ...items[0], install: hashed(items[0].install), received: "2026-10-15" });
+  assert.doesNotMatch(JSON.stringify(stored), /12:34/);
   assert.doesNotMatch(JSON.stringify([...env.PENDING.map.values()]), /123e4567-e89b/);
   assert.equal(res.headers.get("access-control-allow-origin"), ORIGIN);
 });

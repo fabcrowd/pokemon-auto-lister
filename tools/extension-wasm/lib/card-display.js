@@ -355,6 +355,9 @@ export function scanStatus(cards) {
   return `Found ${list.length} ${plural(list.length, 'card', 'cards')}: ${parts.join(', ')}`;
 }
 
+// A $0, negative or NaN figure is a gap in the data, not a price.
+const isPositivePrice = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+
 export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   if (!isSetConfirmed(card)) return null;
   const grid = card?.price_grid;
@@ -365,14 +368,25 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   const order = enabledConditions.length ? enabledConditions : ['NM'];
   if (conditions) {
     for (const condition of order) {
-      if (conditions[condition] != null) return { price: conditions[condition], condition, printing };
+      if (isPositivePrice(conditions[condition])) return { price: conditions[condition], condition, printing };
     }
     return null;
   }
-  if (typeof card?.market_price === 'number' && names.length <= 1) {
+  if (isPositivePrice(card?.market_price) && names.length <= 1) {
     return { price: card.market_price, condition: null, printing };
   }
   return null;
+}
+
+/**
+ * The user (or the grid, with one printing) settled the printing and the set, yet that printing has no price at the
+ * conditions shown. Its price must never be borrowed from the other printings, so it is "no price", not a range.
+ */
+export function chosenPrintingHasNoPrice(card, choice, enabledConditions = ['NM']) {
+  if (!isSetConfirmed(card)) return false;
+  const grid = card?.price_grid;
+  if (listPrintings(grid).length < 2 || !isPrintingConfirmed(grid, choice)) return false;
+  return quotedPrice(card, choice, enabledConditions) === null;
 }
 
 // A range that already exists on the row for the condition being shown, or null.
@@ -382,8 +396,22 @@ export function rowRange(card, condition) {
   return range.byCondition?.[condition] ?? (condition === 'NM' || !range.byCondition ? range : null);
 }
 
-// A price that stays out of the totals: it came from an old fallback grid.
-export const isStale = (card) => card?.price_grid?.stale === true;
+/** A price older than this many days is shown as old and stays out of the totals and the export. */
+export const STALE_PRICE_DAYS = 30;
+
+/**
+ * True when the grid's own date is more than STALE_PRICE_DAYS old, whichever source it came from. A grid with no
+ * date, or one that does not parse, is unknown rather than stale. A grid already flagged `stale` stays stale.
+ */
+export function isGridStale(grid, now = Date.now()) {
+  if (!grid) return false;
+  if (grid.stale === true) return true;
+  const stamp = Date.parse(typeof grid.updatedAt === 'string' ? grid.updatedAt : '');
+  return Number.isFinite(stamp) && now - stamp > STALE_PRICE_DAYS * DAY_MS;
+}
+
+// A price that stays out of the totals: its grid is older than STALE_PRICE_DAYS.
+export const isStale = (card, now = Date.now()) => isGridStale(card?.price_grid, now);
 
 /**
  * What the whole lot could be worth, for one condition: a confirmed price counts at both ends, a name whose
@@ -391,7 +419,7 @@ export const isStale = (card) => card?.price_grid?.stale === true;
  * card, a card with no price) counts $0 and is counted in `toIdentify` (cards still to confirm) until the user
  * picks. A price from an old fallback grid is counted in `toCheck`. Card backs are left out.
  */
-export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
+export function lotEstimate(cards, choiceFor, enabledConditions = ['NM'], now = Date.now()) {
   const condition = enabledConditions?.[0] || 'NM';
   const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0, noPrice: 0 };
   for (const card of cards || []) {
@@ -401,7 +429,7 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
       out.toIdentify += 1;
       continue;
     }
-    if (isStale(card)) {
+    if (isStale(card, now)) {
       out.toCheck += 1;
       continue;
     }
@@ -410,6 +438,10 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
     if (quote) {
       out.low += quote.price;
       out.high += quote.price;
+      continue;
+    }
+    if (chosenPrintingHasNoPrice(card, choiceFor(card), enabledConditions)) {
+      out.noPrice += 1;
       continue;
     }
     const range = !isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]);
@@ -423,7 +455,7 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
   return out;
 }
 
-/** The lot strip's note beside "Sure": confirmed cards, those with no price data at all, and stale prices; the tooltip only when some lack a price. */
+/** The lot strip's note beside "Confirmed value": confirmed cards, those with no price data at all, and stale prices; the tooltip only when some lack a price. */
 export function sureNote(lot) {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const parts = [String(lot.identified)];
@@ -474,9 +506,9 @@ export function readFromSmallCrop(card) {
   return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
 }
 
-/** Whole days since the grid's own date when it is a stale fallback grid, else null. */
+/** Whole days since the grid's own date when the grid is stale, else null. */
 export function staleDays(grid, now = Date.now()) {
-  if (grid?.stale !== true) return null;
+  if (!isGridStale(grid, now)) return null;
   const stamp = Date.parse(grid.updatedAt || '');
   return Number.isFinite(stamp) ? Math.floor((now - stamp) / DAY_MS) : null;
 }

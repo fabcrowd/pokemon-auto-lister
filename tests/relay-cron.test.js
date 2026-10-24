@@ -51,7 +51,9 @@ test("pending items become one commit on the inbox branch, filed under the serve
     assert.equal(e.type, "blob");
     assert.equal(JSON.parse(e.content).v, 1);
   }
-  assert.deepEqual(JSON.parse(gh.state.treeBody.tree.find((e) => e.path.includes("2026-10-16")).content), b);
+  // A queued item written with a full timestamp is committed with its date only.
+  assert.deepEqual(JSON.parse(gh.state.treeBody.tree.find((e) => e.path.includes("2026-10-16")).content), { ...b, received: "2026-10-16" });
+  for (const e of gh.state.treeBody.tree) assert.match(JSON.parse(e.content).received, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(gh.state.commitBody.tree, "tree-new-1");
   assert.deepEqual(gh.state.commitBody.parents, ["commit-base"]);
   assert.match(gh.state.commitBody.message, /3/);

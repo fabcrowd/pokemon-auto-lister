@@ -25,7 +25,7 @@ Works fully offline after the one-time model download. No account required.
 
 6. **First launch — download the models.**
    Click the scanner icon in the toolbar. A small window opens. Click
-   **Download models**. This downloads ~140 MB of card-identification data
+   **Download models**. This downloads about 147 MB of card-identification data
    and takes 1–3 minutes. **SCAN PAGE** stays off until that finishes.
 
 Once the pill in the top-right reads **AI ready**, you're set.

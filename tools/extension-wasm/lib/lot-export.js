@@ -1,8 +1,8 @@
 // The confirmed lot as rows a seller can paste into a sheet or open in Excel. Pure: popup.js owns the clipboard
-// and the download. Only cards the lot total counts as "Sure" are included (named, settled, not an old price), so
+// and the download. Only cards the lot total counts as "Confirmed value" are included (named, settled, not an old price), so
 // the file equals the screen. No page address, image or seller data is ever part of a row.
 
-import { isIdentified, isSetConfirmed, isStale, listPrintings, quotedPrice, rowRange, setRangeOf, sourceName } from './card-display.js';
+import { chosenPrintingHasNoPrice, isIdentified, isSetConfirmed, isStale, listPrintings, quotedPrice, rowRange, setRangeOf, sourceName } from './card-display.js';
 import { formatPrinting } from './option-strip.js';
 import { skipNote } from './skip.js';
 
@@ -45,6 +45,7 @@ function priceOf(card, choice, conditions) {
   const active = conditions?.[0] || 'NM';
   const quote = quotedPrice(card, choice, conditions);
   if (quote) return { condition: quote.condition || 'NM', printing: quote.printing, price: quote.price, low: quote.price, high: quote.price };
+  if (chosenPrintingHasNoPrice(card, choice, conditions)) return { condition: active, printing: choice, price: null, low: null, high: null };
   const range = !isSetConfirmed(card) ? rowRange(card, active) : setRangeOf([card], [active]);
   const names = listPrintings(card.price_grid);
   const open = names.length > 1 || (!isSetConfirmed(card) && Boolean(range));
@@ -63,7 +64,7 @@ export function lotExportRows(cards, choiceFor, enabledConditions = ['NM'], now 
   for (const card of cards || []) {
     if (card?.skipped === true) { skipped += 1; continue; }
     if (card?.cardBack) continue;
-    if (!isIdentified(card) || isStale(card)) { notIncluded += 1; continue; }
+    if (!isIdentified(card) || isStale(card, now)) { notIncluded += 1; continue; }
     const found = priceOf(card, choiceFor(card), enabledConditions);
     const identity = card.identity || {};
     const who = identity.id || [identity.name, identity.set, identity.number].join('|');

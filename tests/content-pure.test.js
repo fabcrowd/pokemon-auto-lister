@@ -229,7 +229,7 @@ test('a card label shows only its name and one price', () => {
   const id = { name: 'Charmeleon', set: 'Base Set', number: '24' };
   const label = (card) => ({ ...pure.labelText(card) });
   assert.deepEqual(label({ identity: id, display: { price: 4.5, printing: 'Normal', condition: 'NM', footer: 'TCGPlayer' } }), { name: 'Charmeleon', price: '$4.50' });
-  assert.deepEqual(label({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63' } }), { name: 'Charmeleon', price: '$0.71–$8.63' });
+  assert.deepEqual(label({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63' } }), { name: 'Charmeleon', price: '$0.71–$8.63', caveat: 'set not sure' });
   const grid = { variants: { normal: { market: 1.25 }, holofoil: { market: 38.99 } } };
   assert.deepEqual(label({ identity: id, price_grid: grid }), { name: 'Charmeleon', price: '$1.25–$38.99' });
   assert.deepEqual(label({ identity: id, market_price: 2 }), { name: 'Charmeleon', price: '$2.00' });
@@ -238,6 +238,24 @@ test('a card label shows only its name and one price', () => {
   assert.equal(label({ identity: null, abstain: true }).name, 'Choose a card');
   assert.equal(label({ identity: id, display: { state: 'choose' } }).name, 'Choose a card');
   assert.equal(label({ cardBack: true, display: { state: 'none' } }).name, 'Not recognised');
+});
+
+test('a card with an old price shows its name and "Old price", never the price', () => {
+  const id = { name: 'Charmeleon', number: '24' };
+  assert.deepEqual({ ...pure.labelText({ identity: id, display: { price: 4.5, stale: true } }) }, { name: 'Charmeleon', price: 'Old price', muted: true });
+  assert.deepEqual({ ...pure.labelText({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63', stale: true } }) }, { name: 'Charmeleon', price: 'Old price', muted: true });
+  const tag = JSON.parse(JSON.stringify(pure.tagText({ identity: id, display: { state: 'identified', price: 4.5, stale: true } })));
+  assert.deepEqual(tag.lines, ['Charmeleon #24', 'Old price']);
+  assert.ok(!JSON.stringify(tag).includes('4.50'));
+  // A fresh price is unchanged.
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagText({ identity: id, display: { state: 'identified', price: 4.5 } }).lines)), ['Charmeleon #24', '$4.50']);
+});
+
+test('the overlay takes only trusted clicks, never one a page script dispatched', () => {
+  assert.equal(pure.acceptClick({ isTrusted: true }), true);
+  assert.equal(pure.acceptClick({ isTrusted: false }), false);
+  assert.equal(pure.acceptClick({}), false);
+  assert.equal(pure.acceptClick(null), false);
 });
 
 test('hovering picks the smallest card frame under the pointer', () => {
@@ -365,6 +383,8 @@ test('every card tag says its state: identified, printing to pick, choose, card 
   const tag = (card) => JSON.parse(JSON.stringify(pure.tagText(card)));
   assert.deepEqual(tag({ identity: id, display: { state: 'identified', price: 954.65 } }).lines, ['Charizard #4', '$954.65']);
   assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: 'set not sure · $120.00–$950.00' } }).lines,
+    ['Charizard #4', 'Set not sure · $120.00–$950.00']);
+  assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: '3 variants · $120.00–$950.00' } }).lines,
     ['Charizard #4', '$120.00–$950.00 · pick printing']);
   // Choose: no name and no price, only the ask.
   assert.deepEqual(tag({ identity: id, display: { state: 'choose' } }).lines, ['Choose', 'Tap to choose']);

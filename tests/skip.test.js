@@ -29,7 +29,7 @@ const skipRef = (score, extra = {}) => ({ id: 's:0', cardId: SKIP_ID, ts: NOW, v
 const choose = (over = {}) => ({ identity: null, abstain: true, confidence: 0.3, candidates: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], ...over });
 const sure = (over = {}) => ({
   identity: { id: 'base1-58', name: 'Pikachu', set: 'Base', setCode: 'base1', number: '58' }, confidence: 0.9, abstain: false,
-  price_grid: { source: 'pokemontcg', updatedAt: '2026-10-20T00:00:00.000Z', variants: { normal: { market: 5, conditions: { NM: 5 } } } }, ...over,
+  price_grid: { source: 'pokemontcg', variants: { normal: { market: 5, conditions: { NM: 5 } } } }, ...over,
 });
 const none = () => null;
 

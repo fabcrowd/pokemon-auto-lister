@@ -17,6 +17,7 @@ export const LOW_STAKES_MAX_USD = 5;
 export const HIGH_STAKES_MIN_USD = 50;
 
 const isPrice = (value) => typeof value === "number" && Number.isFinite(value);
+const isCheap = (value) => isPrice(value) && value <= LOW_STAKES_MAX_USD;
 
 /**
  * 'promote' | 'demote' | 'keep'.
@@ -24,9 +25,12 @@ const isPrice = (value) => typeof value === "number" && Number.isFinite(value);
  *   userConfirmed?: boolean, priceHigh?: number|null, priceTypical?: number|null}} input
  *   priceHigh (promotion) is the single quoted price, or the high end of the price range while the printing is still
  *   open: "cheap" means every printing is cheap. priceTypical (demotion) is priceTypicalOf: the likely price of the card.
+ *   rivalHighs (promotion) is the same figure for every other close candidate: one that is dearer than the bar, or whose
+ *   price is unknown (null), keeps the card a CHOOSE, so a cheap top guess cannot hide a pricier reprint or promo. Leaving
+ *   it undefined (rivals not priced) never promotes.
  *   Either is null/undefined when unknown, which never promotes or demotes.
  */
-export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical, confirmedBy, correctionCos } = {}) {
+export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical, rivalHighs, confirmedBy, correctionCos } = {}) {
   if (userConfirmed) return "keep";
   // The user's own earlier correction confirmed it: at HIGH_STAKES_MIN_USD or more that needs the high bar (reference-bars.js),
   // whatever the title line says. Below the bar it goes back to CHOOSE with the card preselected.
@@ -34,7 +38,7 @@ export function stakesDecision({ state, tier, titleConfirmed = false, smallRow =
     const strong = typeof correctionCos === "number" && correctionCos + BAR_EPSILON >= HIGH_PRICE_BAR;
     return isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD && !strong ? "demote" : "keep";
   }
-  if (state === "choose" && smallRow === true && isPrice(priceHigh) && priceHigh <= LOW_STAKES_MAX_USD) return "promote";
+  if (state === "choose" && smallRow === true && isCheap(priceHigh) && Array.isArray(rivalHighs) && rivalHighs.every(isCheap)) return "promote";
   if (state === "confirmed" && tier !== "high" && !titleConfirmed && isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD) return "demote";
   return "keep";
 }

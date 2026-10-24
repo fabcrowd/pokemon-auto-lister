@@ -11,6 +11,7 @@ import {
   lotExportLabels,
   CONDITION_TIP,
 } from '../tools/extension-wasm/lib/lot-export.js';
+import { fromTcgdexPayload } from '../tools/extension-wasm/lib/condition-pricing.js';
 import { lotEstimate } from '../tools/extension-wasm/lib/card-display.js';
 
 const NOW = Date.parse('2026-10-23T12:00:00.000Z');
@@ -81,12 +82,17 @@ test('a valueCheck (demoted) card is not exported', () => {
 });
 
 test('a stale-grid card is excluded exactly as the lot total excludes it', () => {
-  const stale = card({ identity: { id: 'x-2', name: 'Mew' }, price_grid: grid({ normal: nm(9) }, { stale: true }) });
+  // Built by the real TCGdex grid builder, 661 days old: no hand-set flag.
+  const old = fromTcgdexPayload(
+    { name: 'Mew', localId: '9', set: { id: 'x' }, pricing: { tcgplayer: { updated: '2025-01-01T00:00:00.000Z', normal: { marketPrice: 9 } } } },
+    { name: 'Mew', setCode: 'x', number: '9' },
+  );
+  const stale = card({ identity: { id: 'x-2', name: 'Mew' }, price_grid: old });
   const cards = [card(), stale];
   const out = rows(cards);
   assert.equal(out.count, 1);
   assert.equal(out.notIncluded, 1);
-  const lot = lotEstimate(cards, none, ['NM']);
+  const lot = lotEstimate(cards, none, ['NM'], NOW);
   assert.equal(out.count, lot.identified);
   assert.equal(out.notIncluded, lot.toIdentify + lot.toCheck);
 });
@@ -97,7 +103,7 @@ test('the file equals the screen: the priced rows sum to the Sure total', () => 
   const choiceFor = (c) => (c === holo ? 'holofoil' : null);
   const out = rows(cards, choiceFor);
   const sum = out.rows.reduce((acc, r) => acc + Number(r[col('Price')]) * r[col('Qty')], 0);
-  assert.equal(sum, lotEstimate(cards, choiceFor, ['NM']).high);
+  assert.equal(sum, lotEstimate(cards, choiceFor, ['NM'], NOW).high);
 });
 
 test('the same card, printing and condition merge into one row with Qty', () => {

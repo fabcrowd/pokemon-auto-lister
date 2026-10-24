@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (feat/audit-fixes: audit findings)
+
+### Fixed
+- Stale prices for every source: a grid dated more than 30 days ago is old whichever source built it (`isGridStale` / `isStale(card, now)` in `lib/card-display.js`; a missing or unparseable date is unknown, not stale). It shows "Old price: N days", and is left out of the lot total (`toCheck`) and the export. Before, only the pokemontcg.io fallback was flagged; a 661-day-old TCGdex grid was priced, totalled and exported.
+- A printing the user picked that has no price at the shown condition is "No price for this printing" (`chosenPrintingHasNoPrice`): counted in "without price", never priced from a range over the other printings, in the lot total, the export row (blank figures) and the overlay.
+- Review all / Tick all no longer saves every preselected card as a correction. Only a Check pair the user ticked by hand is saved (`bulkRememberedPairs`); ticking the scanner's own preselection confirms it for the session and writes no correction or why-memory. One-tap confirm on a row is unchanged.
+- Cheap auto-promotion of small-photo Choose cards needs every close candidate (top 5) to be priced at $5 or less (`stakesDecision` `rivalHighs`); a pricier or unpriced candidate keeps the card a Choose. This prices up to 5 candidates per such card (same `priceCard` call, same 6-at-a-time limit).
+- A $0, negative or NaN price is no price (`quotedPrice`).
+- The page overlay keeps the "set not sure" caveat with a range, and ignores clicks that are not `isTrusted`.
+- Relay: the stored and committed `received` is the UTC date (`YYYY-MM-DD`) only, as the privacy policy says (`tools/relay/src/handler.js`, `cron.js`); queued items with a full timestamp are truncated when committed, and `validate.js` accepts both forms.
+- Setup screen and INSTALL.md quote the real download (about 147 MB, pinned by a test against `lib/setup.js`); the page overlay shows "Old price" instead of a price older than 30 days.
+
+### Changed
+- Lot strip: "Sure" is now "Confirmed value", and the condition chip reads "Near Mint" (was "NM"). The strip is an `aria-live="polite"` region.
+
+### Tests
+- New: `tests/stale-prices.test.js`, `tests/chosen-printing.test.js`, `tests/popup-markup.test.js`; cases in `stakes`, `choose-flow`, `content-pure`, `relay-*` tests; popup e2e: two new tests (bulk saves, pricier runner-up). The lot-export stale test now builds its grid with `fromTcgdexPayload`. Fixtures with a fixed 2026-10 price date (`skip.test.js`, e2e `exportLot`) no longer age into "stale".
+
 ## Unreleased (feat/skip-card: "Can't price this")
 
 ### Added

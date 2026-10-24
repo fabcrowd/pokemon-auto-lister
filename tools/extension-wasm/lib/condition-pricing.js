@@ -25,6 +25,7 @@
 //   }
 
 import { getPptKey } from "./ppt-key.js";
+import { STALE_PRICE_DAYS, isGridStale } from "./card-display.js";
 
 // dev-only:start
 const BACKEND_URL = "http://127.0.0.1:3000/api/price-grid";
@@ -219,7 +220,7 @@ export function normalizePpt(card) {
  * — minus per-condition data. Each printing gets {conditions: {NM: <market>, LP: null, ...}}.
  * This exists so the overlay always has SOMETHING to show even when neither backend nor PPT answer.
  */
-export const STALE_PRICE_DAYS = 30;
+export { STALE_PRICE_DAYS };
 
 export function fromPokemontcgPayload(prices, updatedAt = null, now = Date.now()) {
   const variants = {};
@@ -233,8 +234,7 @@ export function fromPokemontcgPayload(prices, updatedAt = null, now = Date.now()
     };
   }
   if (Object.keys(variants).length === 0) return null;
-  const stamp = Date.parse(typeof updatedAt === "string" ? updatedAt : "");
-  const stale = Number.isFinite(stamp) && now - stamp > STALE_PRICE_DAYS * 24 * 60 * 60 * 1000;
+  const stale = isGridStale({ updatedAt }, now);
   return {
     source: "pokemontcg",
     variants,

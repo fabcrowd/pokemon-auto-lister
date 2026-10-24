@@ -99,6 +99,15 @@ export function bulkPairs(cards) {
     .filter((pair) => pair.candidate?.id);
 }
 
+/**
+ * The kept pairs whose confirm is saved as the user's correction. A pair the scanner already preselected as decisive
+ * is only confirmed for this session; a "Check" pair counts as the user's own answer only when they ticked it
+ * themselves, not through Tick all. Bulk-ticking never writes a correction the user did not decide.
+ */
+export function bulkRememberedPairs(kept, explicit) {
+  return kept.filter((pair) => !pair.decisive && explicit.has(pair.idx));
+}
+
 export const chooseHeading = (count) => `To confirm (${count})`;
 export const confirmLabel = (count) => `Confirm ${count}`;
 /** The bulk panel's all-or-none toggle: it offers to tick everything until everything is ticked. */

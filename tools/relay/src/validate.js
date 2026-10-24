@@ -7,7 +7,8 @@ export const MAX_CROP_CHARS = 40000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX16 = /^[0-9a-f]{16}$/;
-const RECEIVED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// The date only. The full timestamp is accepted too, for items queued before the date-only form.
+const RECEIVED = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}\.\d{3}Z)?$/;
 const MAX_DAY_SKEW_MS = 2 * 86400000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const CARD_ID = /^[A-Za-z0-9._-]{1,64}$/;

@@ -421,7 +421,13 @@
 
   // A click on a guess or question tag opens its pick list in the scanner; on the pill, the full-size photo.
   // Only clicks inside a drawn tag are taken; everything else reaches the page as before.
+  // A page script can dispatch a click at the overlay; only a real user click (isTrusted) is taken.
+  function acceptClick(e) {
+    return e?.isTrusted === true;
+  }
+
   function onClick(e) {
+    if (!acceptClick(e)) return;
     const point = { x: e.clientX, y: e.clientY };
     const hit = [..._clickable].reverse().find((c) => inRect(c.rect, point));
     if (!hit) return;
@@ -483,11 +489,14 @@
     if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
     if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
     if (state === 'choose') return { state, lines: ['Choose', card.display?.valueCheck ? 'Check: high value' : 'Tap to choose'], short: 'Choose' };
-    const { name, price } = labelText(card);
+    const { name, price, caveat } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
     const title = number ? `${name} #${number}` : name;
     const priced = price && price !== '—' ? price : '';
-    if (state === 'printing') return { state, lines: [title, priced ? `${priced} · pick printing` : 'Pick printing'], short: priced || name, name, title, price: priced };
+    if (state === 'printing') {
+      const note = caveat && priced ? `Set not sure · ${priced}` : priced ? `${priced} · pick printing` : 'Pick printing';
+      return { state, lines: [title, note], short: priced || name, name, title, price: priced, note };
+    }
     return { state, lines: [title, priced || '—'], short: priced || name, name, title, price: priced };
   }
 
@@ -515,7 +524,7 @@
     const { name, title, price } = tag;
     if (twoLines) {
       const first = fitText(title, textMax, measure);
-      const pickNote = state === 'printing' ? (price ? `${price} · pick printing` : 'Pick printing') : '';
+      const pickNote = state === 'printing' ? tag.note : '';
       const second = pickNote && measure(pickNote) <= textMax ? pickNote
         : fitPrice(price, textMax, measure) || (state === 'printing' && measure('Pick printing') <= textMax ? 'Pick printing' : '');
       return [first, second].filter(Boolean);
@@ -653,9 +662,15 @@
     if (cardState(card) === 'choose') return { name: 'Choose a card', price: card.display?.valueCheck ? 'Check: high value. Tap to pick it in the scanner' : 'Tap to pick it in the scanner', muted: true };
     if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Turn it over to identify it', muted: true };
     const disp = card.display || null;
+    // A price older than 30 days is never shown (the popup sets `stale`): same rule as no price until trusted.
+    if (disp?.stale === true) return { name: card.identity.name, price: 'Old price', muted: true };
     if (disp?.price != null) return { name: card.identity.name, price: money(disp.price) };
     const note = disp?.printingNote || '';
-    if (note.includes('$')) return { name: card.identity.name, price: note.slice(note.indexOf('$')) };
+    // The caveat travels with the range: a set that is not sure is never shown as a plain price.
+    if (note.includes('$')) {
+      const range = note.slice(note.indexOf('$'));
+      return { name: card.identity.name, price: range, ...(/set not sure/i.test(note) ? { caveat: 'set not sure' } : {}) };
+    }
     const values = Object.values(card.price_grid?.variants || {})
       .map((v) => v?.market)
       .filter((n) => typeof n === 'number' && n > 0);
@@ -674,7 +689,8 @@
 
   /** Draws the name and price label at the top of a card's frame, kept inside the card; returns its rect. */
   function drawLabel(box, card, accentColor) {
-    const { name, price, muted } = labelText(card);
+    const { name, price: rawPrice, caveat, muted } = labelText(card);
+    const price = caveat && rawPrice ? `${caveat} · ${rawPrice}` : rawPrice;
     const PAD_X = 10;
     const PAD_Y = 7;
     const ACCENT_W = 3;
@@ -1304,6 +1320,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { acceptClick, labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

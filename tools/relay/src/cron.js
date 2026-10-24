@@ -88,7 +88,7 @@ export async function flushPending(env, deps = {}) {
       // Numbers are reserved only once the commit lands, so a retry reuses them.
       const taken = groups.filter((g) => g === group).length;
       groups.push(group);
-      entries.push({ path: `contributions/${day}/${stem}${next.get(group) + taken}.json`, mode: "100644", type: "blob", content: JSON.stringify(item) });
+      entries.push({ path: `contributions/${day}/${stem}${next.get(group) + taken}.json`, mode: "100644", type: "blob", content: JSON.stringify({ ...item, received: day }) });
     }
     const tree = await github.createTree(head.treeSha, entries);
     const days = [...new Set(chunk.map(({ item }) => item.received.slice(0, 10)))].sort();

@@ -121,7 +121,7 @@ export async function handleRequest(request, env, deps = {}) {
   const day = now.toISOString().slice(0, 10);
   const stamp = now.toISOString();
   const items = [];
-  for (const item of body.contributions) items.push({ ...item, install: await hashInstall(config.idSecret, item.install), received: stamp });
+  for (const item of body.contributions) items.push({ ...item, install: await hashInstall(config.idSecret, item.install), received: day });
 
   const retry = (seconds) => ({ ...headers, "retry-after": String(seconds) });
   const totalCards = items.reduce((n, item) => n + item.cards.length, 0);

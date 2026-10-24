@@ -1,16 +1,16 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, isIdentified, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
-import { bulkPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
+import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
 import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
 import { userWhy } from "./lib/why.js";
 import { demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
-import { CONDITION_TIP, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
+import { CONDITION_TIP, conditionName, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
@@ -395,27 +395,36 @@ function demoteExpensive(cards) {
   });
 }
 
-// A small-photo card to choose whose best candidate is cheap is confirmed without asking. This is not the user's answer:
-// nothing is saved as a correction or sent for learning, and "Wrong card?" is still on the row.
+// A small-photo card to choose is confirmed without asking only when EVERY close candidate (the top PROMOTE_CANDIDATES
+// shown in Choose) is cheap, so a pricier reprint or promo among them keeps it a CHOOSE. A candidate whose price is not
+// known also blocks it. This is not the user's answer: nothing is saved as a correction or sent for learning, and
+// "Wrong card?" is still on the row.
+const PROMOTE_CANDIDATES = 5;
 function promoteCheap(scan) {
   scan.cards.forEach((card, idx) => {
     if (card.smallRow !== true || card.skippedBefore === true || chooseState(card) !== "choose") return;
-    const top = candidatesOfCard(card)[0];
+    const close = candidatesOfCard(card).slice(0, PROMOTE_CANDIDATES);
+    const top = close[0];
     if (!top?.id) return;
-    candidatePrice(top.id).then((resp) => {
-      if (!resp || resp.error || _lastResult?.scanId !== scan.scanId) return;
+    Promise.all(close.map((candidate) => (candidate?.id ? candidatePrice(candidate.id) : null))).then((resps) => {
+      if (_lastResult?.scanId !== scan.scanId) return;
       const current = _lastResult.cards[idx];
       if (!current || current.smallRow !== true || chooseState(current) !== "choose" || _picker.has(idx)) return;
       if (candidatesOfCard(current)[0]?.id !== top.id) return;
-      const probe = { identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price };
+      const highs = resps.map((resp) => {
+        if (!resp || resp.error) return null;
+        const probe = { identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price };
+        return priceHighOf(probe, null, enabledConditions());
+      });
       const decision = stakesDecision({
         state: "choose",
         tier: confTier(current.confidence),
         smallRow: true,
         userConfirmed: Boolean(current.userConfirmed),
-        priceHigh: priceHighOf(probe, null, enabledConditions()),
+        priceHigh: highs[0],
+        rivalHighs: highs.slice(1),
       });
-      if (decision === "promote") replaceCard(idx, promoteCard(current, resp));
+      if (decision === "promote") replaceCard(idx, promoteCard(current, resps[0]));
     });
   });
 }
@@ -598,7 +607,7 @@ function renderLotTotals(cards, choiceFor) {
       + `<button type="button" class="lt-btn" data-lot-csv aria-label="${escHtml(labels.csv)}" title="${escHtml(labels.tip)}">${escHtml(labels.csv)}</button></span>`
     : "";
   const hadCopyFocus = lotTotalsEl.contains(document.activeElement) ? document.activeElement.closest("[data-lot-copy], [data-lot-csv]") : null;
-  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(cond)}</span></span>`
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Confirmed value</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(conditionName(cond))}</span></span>`
     + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
     + (skipped ? `<span class="lt-item lt-skipped" title="Cards you skipped. They are not priced or exported."><span class="lt-lbl">Skipped</span> <b>${skipped}</b></span>` : "")
     + actions;
@@ -820,11 +829,13 @@ function renderPrice(card, idx) {
       .filter(([cond, price]) => cond !== quote.condition && price != null)
       .map(([cond, price]) => `${cond} $${Number(price).toFixed(2)}`);
     const oldDays = staleDays(card.price_grid);
-    const oldTag = card.price_grid?.stale ? (oldDays != null ? `Old price: ${oldDays} days old` : "Old price") : null;
+    const oldTag = isStale(card) ? (oldDays != null ? `Old price: ${oldDays} days` : "Old price") : null;
     const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), oldTag, ...others]
       .filter(Boolean).join(" · ");
     return cell("$" + Number(quote.price).toFixed(2), title);
   }
+  // A printing the user picked has no price: say so, never borrow another printing's.
+  if (chosenPrintingHasNoPrice(card, printing, conditions)) return cell("—", "No price for this printing");
   // Set settled, printing open: the range over its printings, the same one the lot total uses.
   const printings = isSetConfirmed(card) ? setRangeOf([card], conditions) : null;
   if (printings) return cell(setRangeSpan(printings), "Printing not picked — pick it for one price");
@@ -1016,7 +1027,7 @@ examYes.addEventListener("click", async () => {
   }
 });
 
-function pickCard(idx, id, via, row) {
+function pickCard(idx, id, via, row, remember = true) {
   const scan = _lastResult;
   if (!scan?.cards?.[idx]) return;
   _picker.delete(idx);
@@ -1026,15 +1037,17 @@ function pickCard(idx, id, via, row) {
   // What the scanner believed (its why-record, the price shown) is saved with the answer, before the row says "you chose".
   const price = priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
   const guess = guessWithWhy(card, price);
-  scan.cards[idx] = { ...card, why: userWhy(card.why) };
-  chrome.runtime.sendMessage({
-    action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via,
-  }).then((resp) => {
-    if (resp?.error) { showMessage(resp.error, true); return; }
-    const corrected = correctedMark(guess, id, resp);
-    const current = _lastResult?.scanId === scan.scanId ? _lastResult.cards[idx] : null;
-    if (corrected && current) replaceCard(idx, { ...current, corrected });
-  }).catch((err) => showMessage(explainScanError(err?.message || err), true));
+  if (remember) {
+    scan.cards[idx] = { ...card, why: userWhy(card.why) };
+    chrome.runtime.sendMessage({
+      action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via,
+    }).then((resp) => {
+      if (resp?.error) { showMessage(resp.error, true); return; }
+      const corrected = correctedMark(guess, id, resp);
+      const current = _lastResult?.scanId === scan.scanId ? _lastResult.cards[idx] : null;
+      if (corrected && current) replaceCard(idx, { ...current, corrected });
+    }).catch((err) => showMessage(explainScanError(err?.message || err), true));
+  }
   const priced = pickSet(idx, id, row ?? { id });
   if (advance) advanceAfterConfirm(idx, row?.name || card.identity?.name);
   return priced;
@@ -1263,7 +1276,7 @@ function openBulk(opener) {
   const scan = _lastResult;
   const pairs = bulkPairs(scan?.cards);
   if (!pairs.length) return;
-  _bulk = { pairs, skipped: new Set(pairs.filter((pair) => !pair.decisive).map((pair) => pair.idx)), opener: opener || document.activeElement, scan };
+  _bulk = { pairs, explicit: new Set(), skipped: new Set(pairs.filter((pair) => !pair.decisive).map((pair) => pair.idx)), opener: opener || document.activeElement, scan };
   bulkList.innerHTML = pairs.map(bulkPairHtml).join("");
   updateBulkCount();
   bulkPanel.hidden = false;
@@ -1284,12 +1297,14 @@ function closeBulk(restoreFocus = true) {
 
 function confirmBulk() {
   if (!_bulk) return;
-  const { pairs, skipped, scan } = _bulk;
+  const { pairs, skipped, scan, explicit } = _bulk;
   const kept = pairs.filter((pair) => !skipped.has(pair.idx));
+  const remembered = new Set(bulkRememberedPairs(kept, explicit).map((pair) => pair.idx));
   closeBulk(false);
   if (_lastResult !== scan) return;
-  // Each pair goes through the same pick as a single confirm, so the saved answer and the price are the same.
-  for (const pair of kept) pickCard(pair.idx, pair.candidate.id, "candidates", pair.candidate);
+  // Each pair goes through the same pick as a single confirm, so the price is the same. Only a Check pair the user
+  // ticked by hand is saved as their correction; ticking the scanner's own preselection confirms it for this session.
+  for (const pair of kept) pickCard(pair.idx, pair.candidate.id, "candidates", pair.candidate, remembered.has(pair.idx));
   showMessage(`Confirmed ${kept.length} ${kept.length === 1 ? "card" : "cards"}. Prices are loading.`);
   (resultsEl.querySelector("[data-review-all], [data-choose-toggle]") || btnScan).focus();
 }
@@ -1297,8 +1312,8 @@ function confirmBulk() {
 bulkList.addEventListener("change", (e) => {
   if (!_bulk || !e.target.matches("[data-bulk-keep]")) return;
   const idx = Number(e.target.dataset.idx);
-  if (e.target.checked) _bulk.skipped.delete(idx);
-  else _bulk.skipped.add(idx);
+  if (e.target.checked) { _bulk.skipped.delete(idx); _bulk.explicit.add(idx); }
+  else { _bulk.skipped.add(idx); _bulk.explicit.delete(idx); }
   e.target.closest(".bulk-pair").classList.toggle("skipped", !e.target.checked);
   updateBulkCount();
 });
@@ -1536,6 +1551,7 @@ function pushOverlay() {
       ...computeDisplayForOverlay(c, idx),
       state: overlayStateOf(c),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
+      ...(isStale(c) ? { stale: true } : {}),
       ...(c.valueCheck && chooseState(c) === "choose" ? { valueCheck: true } : {}),
     },
   }));
@@ -1567,7 +1583,7 @@ function computeDisplayForOverlay(card, idx) {
     condition: quote?.condition || null,
     price: quote ? quote.price : null,
     spreadRatio: card.price_grid?.spreadRatio || 1,
-    printingNote: quote ? null : printingNote(card.price_grid),
+    printingNote: quote ? null : chosenPrintingHasNoPrice(card, printing, enabledConditions()) ? "No price for this printing" : printingNote(card.price_grid),
     footer: sourceFooter(card.price_grid),
   };
 }

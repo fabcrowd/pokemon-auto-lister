@@ -6,7 +6,7 @@ import {
 import { chooseState } from '../tools/extension-wasm/lib/choose-flow.js';
 import { lotEstimate } from '../tools/extension-wasm/lib/card-display.js';
 
-const choose = { state: 'choose', tier: 'low', smallRow: true, priceHigh: 3 };
+const choose = { state: 'choose', tier: 'low', smallRow: true, priceHigh: 3, rivalHighs: [] };
 const confirmed = { state: 'confirmed', tier: 'medium', titleConfirmed: false, priceTypical: 80 };
 
 test('the price thresholds are the PM numbers', () => {
@@ -20,6 +20,14 @@ test('promote: a CHOOSE card with smallRow whose price is at most $5', () => {
   assert.equal(stakesDecision({ ...choose, priceHigh: 0.25 }), 'promote');
   assert.equal(stakesDecision({ ...choose, priceHigh: 5.01 }), 'keep');
   assert.equal(stakesDecision({ ...choose, priceHigh: 400 }), 'keep');
+});
+
+test('promote needs every close candidate cheap, not only the top one', () => {
+  assert.equal(stakesDecision({ ...choose, rivalHighs: [1, 5] }), 'promote');
+  assert.equal(stakesDecision({ ...choose, rivalHighs: [1, 5.01] }), 'keep', 'a pricier runner-up (reprint, promo) blocks it');
+  assert.equal(stakesDecision({ ...choose, rivalHighs: [1, null] }), 'keep', 'an unknown rival price blocks it');
+  assert.equal(stakesDecision({ ...choose, rivalHighs: [1, NaN] }), 'keep');
+  assert.equal(stakesDecision({ ...choose, rivalHighs: undefined }), 'keep', 'rivals not looked at: never promote');
 });
 
 test('promote needs smallRow: a cheap CHOOSE card without it stays a CHOOSE', () => {

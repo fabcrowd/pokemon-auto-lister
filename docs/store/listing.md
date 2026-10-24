@@ -31,12 +31,17 @@ What you get
 Privacy
 - Card recognition runs on your device. Your full photos are never uploaded.
 - No account. No analytics. No ads.
-- Optional and off by default: "Help improve recognition for everyone" sends small pictures of cards you correct or confirm, and the card you chose. No page address, no full photo, no account.
+- Optional and off by default: "Help improve recognition for everyone" sends small pictures of cards you correct or confirm, and the card you chose. No page address, no full photo, no account. These pictures are cut from photos that other people (sellers) posted, and they are stored in a public repository, so only turn it on if you are comfortable sharing them.
 - Only card identifiers are sent to the price sources.
-- The first run downloads about 140 MB of recognition models. After that, scanning works without a download.
+- The first run downloads about 147 MB of recognition models and lookup data. After that, scanning works without a download.
 
 Optional site access
 By default the extension scans a screenshot of the visible page. If you turn on "Read full-size photos on sites you scan", it can read the full-size photo for better accuracy. It asks for this permission only when you turn it on, either in the extension options or from the notice the popup can show after a scan that used a screenshot.
+
+Limits
+- Cards that are not in English can be read as a similar English card and priced as English. Check them before you rely on a price.
+- Graded cards in slabs and sealed product are not recognized as such and would show a raw card price.
+- Your unconfirmed picks are lost when the popup closes.
 
 Prices are estimates from public sources. They are not offers or guarantees.
 
@@ -74,13 +79,13 @@ Look up card prices by card identifier.
 Look up condition-based prices by card identifier, using the API key you entered. Used only if you add a key.
 
 **The developer's relay address (added to the store build only when the owner sets it)**
-Receives the opt-in contributions of "Help improve recognition for everyone" and serves the signed update of combined card fingerprints. It is requested only in a build where the owner set the address, and nothing is sent to it unless the user turned the setting on.
+Receives the opt-in contributions of "Help improve recognition for everyone". It does not serve any downloads; the signed update of combined card fingerprints comes from GitHub (see below). It is requested only in a build where the owner set the address, and nothing is sent to it unless the user turned the setting on.
 
 **github.com/fabcrowd/pokemon-auto-lister/releases/download/*, objects.githubusercontent.com, release-assets.githubusercontent.com**
-Download the recognition models and lookup data on first run (about 140 MB). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
+Download the recognition models and lookup data on first run (about 147 MB in total). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
 
 **github.com/fabcrowd/card-scanner-data/releases/***
-Once a day, the shared TCGPlayer price snapshot, and the signed learning pack when shared learning is on. The request is for a public file. Nothing about you is sent.
+Once a day, the shared TCGPlayer price snapshot, and the signed update of combined card fingerprints (the learning pack) when shared learning is on. The request is for a public file. Nothing about you is sent.
 
 ## Data usage (Privacy practices tab)
 
@@ -88,7 +93,7 @@ Collected, in the store's wording:
 
 - **Website content.** Yes. Card photos and page images from the page you scan. Processed on the device and not transmitted off the device. Crops of cards you correct are stored locally.
 - **Web history.** Yes, locally only. For each saved correction the extension stores the page address without the query string or fragment (site and path). It is not transmitted.
-- **Website content, only if the user turns on "Help improve recognition for everyone" (off by default, explicit click, explained next to the toggle).** Small cropped pictures of cards the user corrected or confirmed (card only, about 320 px), where the card sits in the photo, the card chosen, the scanner's guess, a date, a random install id, a hash of the photo, and model version codes. Transmitted to the developer's relay, which saves it in a public GitHub repository (fabcrowd/card-scanner-data), where it is publicly visible and kept until deletion is requested by install id. No page address, no full photo, no account. Not sold, not used for anything else. Turning the setting off deletes the install id and the unsent queue.
+- **Website content, only if the user turns on "Help improve recognition for everyone" (off by default, explicit click, explained next to the toggle).** Small cropped pictures of cards the user corrected or confirmed (card only, about 320 px), where the card sits in the photo, the card chosen, the scanner's guess, the UTC date only (no time of day), a random install id, a hash of the photo, and model version codes. Transmitted to the developer's relay, which saves it in a public GitHub repository (fabcrowd/card-scanner-data), where it is publicly visible and kept until deletion is requested by install id. The crops are cut from listing photos that third-party sellers posted, not photos the user took; the relay has no review step. No page address, no full photo, no account. Not sold, not used for anything else. Turning the setting off deletes the install id and the unsent queue.
 - **User activity (corrections and confirmations).** The same opt-in contributions: which card the user picked or confirmed for a crop. Tick the matching boxes in the store form for the opt-in data above.
 - **Authentication information.** Yes. The PokemonPriceTracker API key that the user enters. It is stored in the browser and sent only to www.pokemonpricetracker.com.
 
@@ -99,7 +104,7 @@ Certifications to tick:
 - I do not use or transfer user data for purposes unrelated to the item's single purpose.
 - I do not use or transfer user data to determine creditworthiness or for lending purposes.
 
-Privacy policy URL: [hosted URL of privacy-policy.md, chosen by the owner]
+Privacy policy URL: TODO-OWNER: host docs/store/privacy-policy.md at a public https URL and paste it here before submitting. No URL has been chosen. Do not submit with this line unfilled.
 
 ## Remote code
 
