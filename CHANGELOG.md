@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (feat/g5-persist: the lot survives the window closing)
+
+### Added
+- Saved lot (`lib/lot-session.js`): after a scan and after every change (confirm, printing, skip, put back, correction) the popup keeps the list in `chrome.storage.session`, per page (URL without the hash), for 24 h, capped at 5 MB with the oldest lot evicted. Cards keep a 160 px JPEG thumbnail instead of the crop. Reopening the popup on the same page restores counts, groups, picks and focus, with "Restored your last scan (N min ago)" and a Scan again button (a rescan starts the list over). Clear wipes it. Damaged storage means the normal empty state.
+- The background holds the scan the popup asked for (`scanState`, `awaitScan`): a window closed mid-scan gets the progress line and then the result when reopened, and a scan finished while closed is applied on open.
+- Privacy policy: one sentence on the saved lot. Never shared (tested).
+
 ## Unreleased (feat/audit-fixes: audit findings)
 
 ### Fixed

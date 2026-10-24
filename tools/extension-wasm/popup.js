@@ -4,6 +4,7 @@ import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
 import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
+import { clearLot, loadLot, saveLot } from "./lib/lot-session.js";
 import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
@@ -16,6 +17,9 @@ import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSit
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
+const restoreNote  = document.getElementById("restore-note");
+const restoreText  = document.getElementById("restore-text");
+const restoreRescan = document.getElementById("restore-rescan");
 const btnLabel     = document.getElementById("btn-label");
 const btnOptions   = document.getElementById("open-options");
 const examStrip    = document.getElementById("exam-strip");
@@ -246,6 +250,9 @@ eraSelect.addEventListener("change", () => {
 
 btnClear.addEventListener("click", () => {
   chrome.runtime.sendMessage({ action: "clearPageOverlay" }).catch(() => {});
+  clearTimeout(_saveTimer);
+  clearLot(lotArea(), _lotUrl).catch(() => {});
+  restoreNote.hidden = true;
   _lastResult = null;
   _variantChoice = new Map();
   _variantSuggest = new Map();
@@ -263,8 +270,7 @@ btnClear.addEventListener("click", () => {
   showMessage("");
 });
 
-async function scanPage() {
-  if (isScanning) return;
+function beginScanUi(text) {
   isScanning = true;
   btnScan.classList.add("scanning");
   btnLabel.textContent = "SCANNING…";
@@ -272,11 +278,17 @@ async function scanPage() {
   btnScan.setAttribute("aria-busy", "true");
   eraSelect.disabled = true;
   accessNotice.hidden = true;
+  restoreNote.hidden = true;
   if (fullSizeNotice) fullSizeNotice.hidden = true;
-  showMessage("Capturing page and running detection…");
+  showMessage(text);
+  chrome.runtime.onMessage.addListener(onScanProgress);
+}
+
+async function scanPage() {
+  if (isScanning) return;
+  beginScanUi("Capturing page and running detection…");
 
   let data;
-  chrome.runtime.onMessage.addListener(onScanProgress);
   try {
     data = await chrome.runtime.sendMessage({ action: "scanPage", era: eraSelect.value || null });
   } catch (err) {
@@ -298,6 +310,8 @@ async function scanPage() {
 // A scan's result in the list, the stats and the page overlay. A rescan the page started (pictures that loaded
 // later) comes here too, so the list always matches what the overlay shows.
 function applyScanResult(data) {
+  restoreNote.hidden = true;
+  if (data.tabUrl) _lotUrl = data.tabUrl;
   const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
@@ -749,6 +763,7 @@ function resetResults() {
 
 function renderResults() {
   const cards = _lastResult?.cards || [];
+  scheduleSave();
   if (cards.length === 0) { resetResults(); return; }
   emptyHint.remove();
 
@@ -1107,20 +1122,20 @@ resultsEl.addEventListener("click", (e) => {
   if (!button || !resultsEl.contains(button)) return;
   if ("unrecToggle" in button.dataset) {
     // Changed in place, not re-rendered, so keyboard focus stays on the button.
-    _showUnrecognised = !_showUnrecognised;
+    _showUnrecognised = !_showUnrecognised; scheduleSave();
     button.setAttribute("aria-expanded", String(_showUnrecognised));
     button.textContent = unrecognisedLabel(resultsEl.querySelectorAll(".unrec-row").length, _showUnrecognised);
     resultsEl.querySelector("#unrec-list").hidden = !_showUnrecognised;
     return;
   }
   if ("skippedToggle" in button.dataset) {
-    _showSkipped = !_showSkipped;
+    _showSkipped = !_showSkipped; scheduleSave();
     button.setAttribute("aria-expanded", String(_showSkipped));
     resultsEl.querySelector("#skipped-list").hidden = !_showSkipped;
     return;
   }
   if ("chooseToggle" in button.dataset) {
-    _showChoose = !_showChoose;
+    _showChoose = !_showChoose; scheduleSave();
     button.setAttribute("aria-expanded", String(_showChoose));
     resultsEl.querySelector("#choose-list").hidden = !_showChoose;
     return;
@@ -1588,11 +1603,117 @@ function computeDisplayForOverlay(card, idx) {
   };
 }
 
+/* ─── Saved lot (survives the window closing; lib/lot-session.js) ─── */
+
+const THUMB_SIDE = 160;
+const SAVE_DELAY_MS = 300;
+let _lotUrl = null;       // the page the list is about: where its saved copy is kept
+let _saveTimer = null;
+let _restoring = false;
+const _thumbCache = new Map(); // crop data URL -> its small JPEG
+
+function lotArea() { return chrome.storage?.session; }
+
+// The crop shrunk to THUMB_SIDE px on its long side as a JPEG; null when it cannot be decoded (the row then has no picture).
+async function smallCrop(crop) {
+  if (typeof crop !== "string" || !crop) return null;
+  if (_thumbCache.has(crop)) return _thumbCache.get(crop);
+  let thumb = null;
+  try {
+    const img = new Image();
+    img.src = crop;
+    await img.decode();
+    const scale = Math.min(1, THUMB_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    thumb = canvas.toDataURL("image/jpeg", 0.7);
+  } catch { thumb = null; }
+  _thumbCache.set(crop, thumb);
+  return thumb;
+}
+
+function scheduleSave() {
+  if (_restoring || !_lastResult) return;
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => { _saveTimer = null; saveSession().catch(() => {}); }, SAVE_DELAY_MS);
+}
+
+async function saveSession() {
+  const scan = _lastResult;
+  if (!scan || !scan.cards.length || _restoring) return;
+  if (!_lotUrl) _lotUrl = (await chrome.runtime.sendMessage({ action: "scanState" }).catch(() => null))?.tabUrl ?? null;
+  if (!_lotUrl) return;
+  const cards = await Promise.all(scan.cards.map(async (card) => ({ ...card, crop: await smallCrop(card.crop) })));
+  if (!_lastResult) return; // cleared meanwhile
+  await saveLot(lotArea(), _lotUrl, {
+    cards, bgScanId: scan.bgScanId, srcWidth: scan.srcWidth, srcHeight: scan.srcHeight, fullSize: scan.fullSize,
+    variantChoice: [..._variantChoice], variantSuggest: [..._variantSuggest], variantPicked: [..._variantPicked],
+    lotEdition: _lotEdition, showUnrecognised: _showUnrecognised, showChoose: _showChoose, showSkipped: _showSkipped,
+    statusTail: _statusTail,
+  });
+}
+// A window closed inside the delay still keeps its last change.
+window.addEventListener("pagehide", () => { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; saveSession().catch(() => {}); } });
+
+function restoreSession(saved) {
+  const st = saved.state;
+  _restoring = true;
+  try {
+    _lastResult = { scanId: ++_scanSeq, bgScanId: st.bgScanId, cards: st.cards, srcWidth: st.srcWidth, srcHeight: st.srcHeight,
+      fullSize: st.fullSize?.url ? st.fullSize : null };
+    _variantChoice = new Map(st.variantChoice || []);
+    _variantSuggest = new Map(st.variantSuggest || []);
+    _variantPicked = new Set(st.variantPicked || []);
+    _lotEdition = st.lotEdition || "";
+    _picker = new Map();
+    _stripMore = new Set();
+    _userEdits = false;
+    _showUnrecognised = st.showUnrecognised === true;
+    _showChoose = st.showChoose !== false;
+    _showSkipped = st.showSkipped === true;
+    _statusTail = st.statusTail || "";
+    closeBulk(false);
+    examStrip.hidden = true;
+    updateStats(_lastResult.cards);
+    renderResults();
+    showFullSizeOffer(_lastResult.fullSize);
+    refreshStatus(true);
+  } finally { _restoring = false; }
+  const mins = Math.max(0, Math.round((Date.now() - saved.savedAt) / 60000));
+  restoreText.textContent = `Restored your last scan (${mins < 1 ? "just now" : `${mins} min ago`}).`;
+  restoreNote.hidden = false;
+  resultsEl.querySelector(".choose-row [data-confirm-best], .choose-row [data-open-search]")?.focus();
+}
+restoreRescan.addEventListener("click", () => { restoreNote.hidden = true; scanPage(); });
+
+// On open: a scan still running (or finished while the window was closed) comes first, then the saved copy of this page.
+async function recoverLot() {
+  const state = await chrome.runtime.sendMessage({ action: "scanState" }).catch(() => null);
+  if (!state) return;
+  if (state.tabUrl) _lotUrl = state.tabUrl;
+  if (state.running) {
+    beginScanUi(state.progress ? `Scanning screen ${state.progress.screen} of ${state.progress.screens}…` : "Scanning…");
+    const reply = await chrome.runtime.sendMessage({ action: "awaitScan" }).catch(() => null);
+    if (reply?.data) applyScanResult(reply.data);
+    else showMessage(explainScanError(reply?.error || "Scan didn't finish. Try again."), true);
+    finishScan();
+    return;
+  }
+  const saved = await loadLot(lotArea(), state.tabUrl);
+  if (state.finishedAt && state.heldUrl && state.heldUrl === state.tabUrl && (!saved || state.finishedAt > saved.savedAt)) {
+    const reply = await chrome.runtime.sendMessage({ action: "awaitScan" }).catch(() => null);
+    if (reply?.data) { applyScanResult(reply.data); return; }
+  }
+  if (saved) restoreSession(saved);
+}
+
 /* ─── Init ─── */
 
 (async () => {
   await loadFilters();
-  try { await checkReady(); }
+  try { await checkReady(); await recoverLot().catch(() => {}); }
   catch (err) {
     setupOverlay.style.display = "flex";
     setupStatus.textContent = explainScanError(err.message);

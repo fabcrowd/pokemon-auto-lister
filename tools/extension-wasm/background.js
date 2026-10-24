@@ -317,7 +317,7 @@ async function numberReaderReady() {
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
 // send newCardsDetected and nothing else.
 const OWN_PAGE_ONLY = new Set([
-  "checkReady", "startSetup", "detect", "priceCard", "scanPage",
+  "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard",
 ]);
 
@@ -354,10 +354,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "scanPage":
-      handleScanPage(sendResponse, eraById(msg.era));
+      runHeldScan(sendResponse, eraById(msg.era));
       return true; // async
 
+    case "scanState":
+      scanState().then(sendResponse);
+      return true;
+
+    case "awaitScan":
+      if (_held?.running) _held.waiters.push(sendResponse);
+      else sendResponse(_held ? { data: _held.data, url: _held.url, finishedAt: _held.finishedAt } : { data: null });
+      return true;
+
     case "clearPageOverlay":
+      _held = null; // a cleared lot must not come back from the held scan
       relayToTab({ action: "relayClear" });
       sendResponse({ ok: true });
       return false;
@@ -433,6 +443,41 @@ function readBitmap(bitmap) {
 // A rescan nobody clicked for (pictures that loaded later): the open popup gets its result like a scan it started.
 function sendRescanResult(data) {
   if (data && !data.error) chrome.runtime.sendMessage({ action: "rescanResult", data }).catch(() => {});
+}
+
+// The newest scan the popup asked for, kept in memory so a window closed mid-scan (or just after it) loses nothing:
+// the reopened popup asks scanState, then awaitScan, and gets the result or the wait for it.
+let _held = null;
+
+function runHeldScan(sendResponse, era) {
+  const held = { running: true, startedAt: Date.now(), progress: null, data: null, url: null, finishedAt: null, waiters: [] };
+  _held = held;
+  handleScanPage(async (data) => {
+    held.running = false;
+    held.finishedAt = Date.now();
+    held.data = data && !data.error ? data : null;
+    if (held.data?.targetTabId != null) held.url = (await chrome.tabs.get(held.data.targetTabId).catch(() => null))?.url ?? null;
+    if (held.data) { held.data = { ...held.data, tabUrl: held.url }; data = held.data; }
+    const reply = { data: held.data, url: held.url, finishedAt: held.finishedAt, error: data?.error };
+    try { sendResponse(data); } catch { /* the popup is gone: the held copy is what the next one reads */ }
+    for (const waiter of held.waiters.splice(0)) { try { waiter(reply); } catch { /* closed too */ } }
+  }, era);
+}
+
+async function scanState() {
+  let tab = null;
+  if (_targetTabId !== null) tab = await chrome.tabs.get(_targetTabId).catch(() => null);
+  if (!tab || _isInternalUrl(tab.url)) {
+    const open = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+    tab = chooseFallbackTab(open, _popupWinId).tab;
+  }
+  return {
+    tabUrl: tab?.url ?? null,
+    running: Boolean(_held?.running),
+    progress: _held?.running ? _held.progress : null,
+    finishedAt: _held && !_held.running && _held.data ? _held.finishedAt : null,
+    heldUrl: _held && !_held.running && _held.data ? _held.url : null,
+  };
 }
 
 async function handleScanPage(sendResponse, era) {
@@ -624,7 +669,7 @@ async function handleScanPage(sendResponse, era) {
         let domCards = sealed ? [] : pageFocus.cards;
         if (wholePage) {
           if (cardRoom(cards.length - dropped.size) <= 0) { capped = true; break; }
-          chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length }).catch(() => {});
+          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length })).catch(() => {});
           scrolled = true;
           await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
           await stayOnPage();

@@ -549,11 +549,16 @@ test.describe('Consumer extension popup', () => {
 
   // Opens a popup whose scan returns { cards, priced } built by `build(crop, arts)` inside the page.
   // Records saveCorrection and overlay pushes; priceCard answers from `priced`.
-  async function popupWithChoose(build, saveResp = { ok: true }) {
+  async function popupWithChoose(build, saveResp = { ok: true }, { tabUrl = null, autoScan = true } = {}) {
     const crop = await swatch('#8855cc', 'jpeg');
     const arts = await Promise.all(['#cc5555', '#55aa66', '#5577cc', '#ccaa44', '#aa55aa'].map((c) => swatch(c, 'png')));
     const page = await context.newPage();
     await page.setViewportSize({ width: 420, height: 720 });
+    // The popup is a tab here, so the page it is "about" is stated: the saved lot is kept per page.
+    await page.addInitScript((url) => {
+      const real = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = async (msg) => (msg?.action === 'scanState' && url ? { tabUrl: url, running: false } : real(msg));
+    }, tabUrl);
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.evaluate(({ src, crop, arts, saveResp }) => {
       const { cards, priced, found, rescan } = new Function(`return (${src})`)()(crop, arts);
@@ -573,7 +578,7 @@ test.describe('Consumer extension popup', () => {
       };
     }, { src: build.toString(), crop, arts, saveResp });
     await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
-    await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+    if (autoScan) await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
     return page;
   }
 
@@ -1515,6 +1520,105 @@ test.describe('Consumer extension popup', () => {
     const page = await correctWrongCard({ ok: true, count: 1, remembered: false });
     await expect(page.locator('.card-row[data-idx="3"] .memory-chip')).toHaveText('Corrected');
     await page.close();
+  });
+
+
+  // ─── a saved lot survives the window closing (lib/lot-session.js) ───
+
+  const LOT_URL = 'http://127.0.0.1:8765/lot-a';
+  const toConfirmOf = (page) => page.locator('.choose-toggle');
+  const lotRecords = (page) => page.evaluate(async () => (await chrome.storage.session.get('lotSessions')).lotSessions?.lots ?? {});
+  const snapshot = (page) => page.evaluate(() => ({
+    toConfirm: document.querySelector('.choose-toggle')?.textContent ?? null,
+    rows: [...document.querySelectorAll('.card-row')].map((r) => `${r.dataset.idx}|${r.querySelector('.card-name')?.textContent}|${r.querySelector('.card-price')?.textContent}`),
+    skipped: document.querySelector('.skipped-toggle')?.textContent ?? null,
+    value: document.getElementById('s-value').textContent,
+  }));
+  const waitSaved = async (page, predicate) => {
+    await expect.poll(async () => predicate(Object.values(await lotRecords(page))[0]?.state), { timeout: 5000 }).toBe(true);
+  };
+
+  test('closing the popup and reopening it on the same page restores the lot as it was left; Clear removes it', async () => {
+    const first = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(first)).toHaveText('To confirm (4)');
+    await first.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await first.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await first.locator('.choose-row').first().locator('[data-skip-card]').click();
+    await expect(toConfirmOf(first)).toHaveText('To confirm (1)');
+    const before = await snapshot(first);
+    expect(before.skipped).not.toBeNull();
+    await waitSaved(first, (st) => st?.cards?.filter((c) => c.skipped).length === 1 && st.cards.filter((c) => c.userConfirmed).length >= 2);
+    const text = JSON.stringify(await lotRecords(first));
+    expect(text.length).toBeLessThan(500_000);
+    expect(Object.values(JSON.parse(text))[0].state.cards.every((c) => !c.crop || /^data:image\/jpeg/.test(c.crop))).toBe(true);
+    await first.close();
+
+    const again = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(again.locator('#restore-note')).toBeVisible();
+    await expect(again.locator('#restore-text')).toContainText('Restored your last scan (just now)');
+    await expect(again.locator('#restore-rescan')).toHaveText('Scan again');
+    expect(await snapshot(again)).toEqual(before);
+    await expect(again.locator('.choose-row [data-confirm-best]').first()).toBeFocused();
+    fs.mkdirSync(path.resolve(__dirname, '../../.tmp/g5'), { recursive: true });
+    await again.screenshot({ path: path.resolve(__dirname, '../../.tmp/g5/restored.png') });
+
+    await again.locator('#btn-clear').evaluate((b) => b.click());
+    await expect(again.locator('#restore-note')).toBeHidden();
+    expect(Object.keys(await lotRecords(again))).toEqual([]);
+    await again.close();
+    const empty = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(empty.locator('#empty-hint')).toBeVisible();
+    await expect(empty.locator('#restore-note')).toBeHidden();
+    await empty.close();
+  });
+
+  test('a lot saved for another page, or older than 24 h, is not restored', async () => {
+    const first = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(first)).toHaveText('To confirm (4)');
+    await waitSaved(first, (st) => st?.cards?.length === 6);
+    await first.close();
+
+    const other = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: 'http://127.0.0.1:8765/lot-b', autoScan: false });
+    await expect(other.locator('#empty-hint')).toBeVisible();
+    await expect(other.locator('#restore-note')).toBeHidden();
+    await other.evaluate(async () => {
+      const { lotSessions } = await chrome.storage.session.get('lotSessions');
+      for (const lot of Object.values(lotSessions.lots)) lot.savedAt -= 25 * 3600 * 1000;
+      await chrome.storage.session.set({ lotSessions });
+    });
+    await other.close();
+    const old = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(old.locator('#empty-hint')).toBeVisible();
+    await expect(old.locator('#restore-note')).toBeHidden();
+    await old.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await old.close();
+  });
+
+  test('the background answers scanState and awaitScan with nothing held, and only to its own pages', async () => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    const reply = await page.evaluate(async () => ({
+      state: await chrome.runtime.sendMessage({ action: 'scanState' }),
+      awaited: await chrome.runtime.sendMessage({ action: 'clearPageOverlay' }).then(() => chrome.runtime.sendMessage({ action: 'awaitScan' })),
+    }));
+    expect(reply.state).toMatchObject({ running: false, finishedAt: null });
+    expect(reply.awaited.data ?? null).toBeNull();
+    await page.close();
+  });
+
+  test('Scan again on a restored lot starts a new scan', async () => {
+    const first = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(first)).toHaveText('To confirm (4)');
+    await first.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await waitSaved(first, (st) => st?.cards?.filter((c) => c.userConfirmed).length >= 1);
+    await first.close();
+    const again = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(again.locator('#restore-note')).toBeVisible();
+    await again.locator('#restore-rescan').click();
+    await expect(again.locator('#restore-note')).toBeHidden();
+    await expect(toConfirmOf(again)).toHaveText('To confirm (4)');
+    await again.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await again.close();
   });
 
   // ─── "Can't price this": the user's way out for a card the catalog cannot name ───
