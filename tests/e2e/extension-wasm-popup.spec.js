@@ -208,7 +208,7 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('#s-value')).toHaveAttribute('title', '2 of 3 cards identified · 1 still to identify');
     await expect(page.locator('#stat-value')).toHaveAttribute('aria-label', '2 of 3 cards identified · 1 still to identify');
     // The card to choose comes first, under "To confirm"; confirmed rows follow.
-    await expect(page.locator('.card-price')).toHaveText(['—', '$5.00', '$7.50']);
+    await expect(page.locator('.card-price')).toHaveText(['no price', '$5.00', '$7.50']);
     await expect(page.locator('.card-row .picker-title')).toHaveText('Which card is this?');
     await expect(page.locator('.picker-sub')).toHaveText('Closest matches, best one first');
     await expect(page.locator('.pick-card')).toHaveCount(2);
@@ -613,7 +613,7 @@ test.describe('Consumer extension popup', () => {
     return { cards, priced };
   };
 
-  test('a card below the bar is a choice: its crop beside the closest cards, best preselected, no name or price', async () => {
+  test('a card below the bar is a choice: its crop beside the closest cards, best preselected, no name, price marked unconfirmed', async () => {
     const page = await popupWithChoose(chooseScan);
     const group = page.locator('#results > .choose-group');
     await expect(group).toHaveCount(1);
@@ -632,7 +632,7 @@ test.describe('Consumer extension popup', () => {
     await expect(row.locator('.pick-choice[data-pick="b-2"] .pick-agree')).toHaveCount(1);
     await expect(row.locator('.pick-choice[data-pick="b-2"] .pick-best')).toHaveCount(1);
     await expect(row.locator('.pick-choice').nth(1)).toContainText('Pidgey');
-    await expect(row.locator('.card-price')).toHaveText('—');
+    await expect(row.locator('.card-price')).toHaveText('$4.00 · unconfirmed');
     await expect(row.locator('.card-name')).toHaveText('Card 2');
     await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Rattata');
     await expect(row.locator('[data-open-search]')).toHaveText('None of these? Search');
@@ -869,11 +869,11 @@ test.describe('Consumer extension popup', () => {
     await again.close();
   });
 
-  // ─── Stakes: price decides how much picture evidence a card needs ───
+  // ─── Price follows the chosen card: it never decides confirmation ───
 
-  // 0: small photo, cheap candidate (promoted)   1: small photo, expensive candidate (stays Choose)
-  // 2: picture-confirmed, not high, $80 (demoted) 3: high tier, $80 (untouched)
-  // 4: user-confirmed earlier, not high, $80 (untouched)   5: small photo, price unknown (stays Choose)
+  // 0: small photo, cheap best match ($3)   1: small photo, dear best match ($120)
+  // 2: picture-confirmed, not high, $80     3: high tier, title-confirmed, $80
+  // 4: user-confirmed earlier, $80          5: small photo, price unknown
   const stakesScan = (crop, arts) => {
     const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
     const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
@@ -901,78 +901,101 @@ test.describe('Consumer extension popup', () => {
     return { cards, priced };
   };
 
-  test('a cheap small-photo card is confirmed without asking, with a price, and nothing is saved or sent for learning', async () => {
+  test('a cheap small-photo card is NOT confirmed by its price: it stays a choice and shows the best match price marked unconfirmed', async () => {
     const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
-    await expect(page.locator('.choose-row[data-idx="0"]')).toHaveCount(0);
-    await expect(page.locator('.card-row[data-idx="0"] [data-open-search]')).toHaveText('Wrong card?');
-    const sent = await page.evaluate(() => window.__sent);
-    expect(sent).toEqual([]);
-    const overlay = await page.evaluate(() => window.__overlay.at(-1).cards[0].display);
-    expect(overlay).toMatchObject({ state: 'identified', name: 'Pidgey', price: 3 });
-    await page.close();
-  });
-
-  test('an expensive small-photo card stays a choice, and so does one whose price is unknown', async () => {
-    const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    await expect(page.locator('.choose-row[data-idx="1"]')).toHaveCount(1);
-    await expect(page.locator('.choose-row[data-idx="1"] .card-price')).toHaveText('—');
-    await expect(page.locator('.choose-row[data-idx="5"]')).toHaveCount(1);
-    const calls = await page.evaluate(() => window.__priceCalls);
-    expect([...calls].sort()).toEqual(['c-1', 'c-2', 'u-1', 'x-1', 'x-2']);
-    await page.close();
-  });
-
-  test('a cheap small-photo card with a pricier runner-up among its candidates stays a choice', async () => {
-    const page = await popupWithChoose((crop, arts) => {
-      const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
-      const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
-      const cheap = row('c-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
-      const promo = row('p-1', 'Pidgey', 'Promo', 'basep', '9', arts[1]);
-      return {
-        cards: [{ identity: null, confidence: 0.49, abstain: true, unsure: true, smallRow: true, smallRowCos: 0.7, readHeight: 150, candidates: [cheap, promo], crop, box: [0, 0, 1, 1] }],
-        priced: {
-          'c-1': { identity: cheap, market_price: 3, price_variant: 'normal', price_grid: grid(3) },
-          'p-1': { identity: promo, market_price: 60, price_variant: 'normal', price_grid: grid(60) },
-        },
-      };
-    });
-    await expect(page.locator('.choose-row[data-idx="0"]')).toHaveCount(1);
-    await expect.poll(() => page.evaluate(() => window.__priceCalls.length)).toBe(2);
-    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('—');
-    await page.close();
-  });
-
-  test('a picture-confirmed card that is not high and costs $50 or more becomes a choice marked as high value', async () => {
-    const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    const row = page.locator('.choose-row[data-idx="2"]');
+    const row = page.locator('.choose-row[data-idx="0"]');
     await expect(row).toHaveCount(1);
-    await expect(row.locator('.value-chip')).toHaveText('Check: high value');
-    await expect(row.locator('.pick-choice').first()).toContainText('Blastoise');
-    await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Blastoise');
-    await expect(row.locator('.card-price')).toHaveText('—');
-    const display = await page.evaluate(() => window.__overlay.at(-1).cards[2].display);
-    expect(display).toMatchObject({ state: 'choose', valueCheck: true });
-    // Confirming it is the user's answer: it is saved, and stays confirmed at that price.
-    await row.locator('[data-confirm-best]').click();
-    await expect(page.locator('.card-row[data-idx="2"] .card-price')).toHaveText('$80.00');
-    await expect(page.locator('.choose-row[data-idx="2"]')).toHaveCount(0);
-    const sent = await page.evaluate(() => window.__sent);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ action: 'saveCorrection', index: 2, pickedId: 'h-1' });
+    await expect(row.locator('.card-price')).toHaveText('$3.00 · unconfirmed');
+    await expect(page.locator('.card-row[data-idx="0"] [data-open-search]')).toHaveText('None of these? Search');
+    await expect.poll(() => page.evaluate(() => window.__overlay.at(-1).cards[0].display)).toMatchObject({ state: 'choose', guess: { name: 'Pidgey', price: 3 } });
+    expect(await page.evaluate(() => window.__sent)).toEqual([]);
     await page.close();
   });
 
-  test('a high-tier, title-confirmed or user-confirmed expensive card is untouched', async () => {
+  test('a dear small-photo card stays a choice with its price and the high-value chip; an unknown price says no price', async () => {
     const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    for (const idx of [3, 4]) {
-      await expect(page.locator(`.card-row[data-idx="${idx}"] .card-price`)).toHaveText('$80.00');
+    const row = page.locator('.choose-row[data-idx="1"]');
+    await expect(row.locator('.card-price')).toHaveText('$120.00 · unconfirmed');
+    await expect(row.locator('.value-chip')).toHaveText('High value, double-check');
+    await expect(page.locator('.choose-row[data-idx="0"] .value-chip')).toHaveCount(0);
+    await expect(page.locator('.choose-row[data-idx="5"] .card-price')).toHaveText('no price');
+    await expect.poll(() => page.evaluate(() => window.__overlay.at(-1).cards[1].display)).toMatchObject({ state: 'choose', highValue: true });
+    // Only the best match of each Choose card is priced: no rival calls.
+    const calls = await page.evaluate(() => window.__priceCalls);
+    expect([...calls].sort()).toEqual(['c-1', 'u-1', 'x-1']);
+    await page.close();
+  });
+
+  test('picking another candidate shows that card price at once; the best match price is gone', async () => {
+    const page = await popupWithChoose(stakesScan);
+    const row = page.locator('.choose-row[data-idx="0"]');
+    await expect(row.locator('.card-price')).toHaveText('$3.00 · unconfirmed');
+    await row.locator('.pick-choice[data-pick="c-2"]').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$2.00');
+    await expect(page.locator('.choose-row[data-idx="0"]')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('a picture-confirmed card stays confirmed at any price, with the chip and no state change', async () => {
+    const page = await popupWithChoose(stakesScan);
+    await expect(page.locator('.choose-row[data-idx="0"]')).toHaveCount(1);
+    for (const idx of [2, 3]) {
+      const row = page.locator(`.card-row[data-idx="${idx}"]`);
+      await expect(row.locator('.card-price')).toHaveText('$80.00');
+      await expect(row.locator('.value-chip')).toHaveText('High value, double-check');
       await expect(page.locator(`.choose-row[data-idx="${idx}"]`)).toHaveCount(0);
     }
+    const mine = page.locator('.card-row[data-idx="4"]');
+    await expect(mine.locator('.card-price')).toHaveText('$80.00');
+    await expect(mine.locator('.value-chip')).toHaveCount(0);
+    const states = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => c.display?.state));
+    expect(states).toEqual(['choose', 'choose', 'identified', 'identified', 'identified', 'choose']);
+    const flags = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => c.display?.highValue === true));
+    expect(flags).toEqual([false, true, true, true, false, false]);
+    await page.close();
+  });
+
+  test('the lot strip keeps Confirmed value apart from the Unconfirmed line; export is confirmed cards only', async () => {
+    const page = await popupWithChoose(stakesScan);
+    const totals = page.locator('#lot-totals');
+    await expect(totals.locator('.lt-unconfirmed')).toHaveText(/Unconfirmed ~\$123\.00 \(2 cards\)/);
+    await expect(totals.locator('.lt-item').first()).toContainText('Confirmed value $240.00 (3)');
+    await expect(totals.locator('.lt-guess b')).toHaveText('3');
+    await expect(totals.locator('[data-lot-copy]')).toHaveText('Copy 3 confirmed');
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
+    await expect(page.locator('#msg-bar')).toHaveText('Found 6 cards: 3 identified, 3 need your pick.');
+    fs.mkdirSync(path.resolve(__dirname, '../../.tmp/price-pick'), { recursive: true });
+    await page.screenshot({ path: path.resolve(__dirname, '../../.tmp/price-pick/lot-strip.png') });
+    await page.locator('.choose-row[data-idx="0"]').screenshot({ path: path.resolve(__dirname, '../../.tmp/price-pick/choose-row.png') });
+    await page.locator('.choose-row[data-idx="1"]').screenshot({ path: path.resolve(__dirname, '../../.tmp/price-pick/high-value-chip.png') });
+    await page.close();
+  });
+
+  test('skipping a card takes it out of the Unconfirmed line; confirming one moves its price into Confirmed value', async () => {
+    const page = await popupWithChoose(stakesScan);
+    const totals = page.locator('#lot-totals');
+    await expect(totals.locator('.lt-unconfirmed')).toHaveText(/\(2 cards\)/);
+    await page.locator('.choose-row[data-idx="1"] [data-skip-card]').click();
+    await expect(totals.locator('.lt-unconfirmed')).toHaveText(/Unconfirmed ~\$3\.00 \(1 card\)/);
+    await expect(page.locator('.skipped-row .card-price')).toHaveCount(0);
+    await page.locator('.choose-row[data-idx="0"] [data-confirm-best]').click();
+    await expect(totals.locator('.lt-item').first()).toContainText('Confirmed value $243.00 (4)');
+    await expect(totals.locator('.lt-unconfirmed')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('an old best-match price is tagged and left out of the Unconfirmed line', async () => {
+    const page = await popupWithChoose((crop, arts) => {
+      const row = (id, name, set, setCode, number, art) => ({ id, name, set, setCode, number, imageUrl: art });
+      const a = row('s-1', 'Pidgey', 'Jungle', 'base2', '57', arts[0]);
+      const grid = { source: 'pokemontcg', updatedAt: '2020-01-01T00:00:00Z', variants: { normal: { market: 4, conditions: { NM: 4 } } } };
+      return {
+        cards: [{ identity: null, confidence: 0.3, abstain: true, candidates: [a], crop, box: [0, 0, 1, 1] }],
+        priced: { 's-1': { identity: a, market_price: 4, price_variant: 'normal', price_grid: grid } },
+      };
+    });
+    await expect(page.locator('.choose-row[data-idx="0"] .card-price')).toHaveText('$4.00 · old price');
+    await expect(page.locator('#lot-totals .lt-unconfirmed')).toHaveCount(0);
     await page.close();
   });
 
@@ -986,16 +1009,6 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Potion');
     await expect(page.locator('.choose-row')).toHaveCount(0);
     await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$0.21–$103.66');
-    await page.close();
-  });
-
-  test('the lot summary follows: promoted cards are Confirmed value, demoted ones are still to confirm', async () => {
-    const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    const totals = page.locator('#lot-totals');
-    await expect(totals.locator('.lt-item').first()).toContainText('Confirmed value $163.00 (3)');
-    await expect(totals.locator('.lt-guess b')).toHaveText('3');
-    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
     await page.close();
   });
 
@@ -1180,15 +1193,6 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('.card-row .card-price')).toHaveText('$10.00');
     expect(await page.evaluate(() => window.__sent.length)).toBe(0);
     await page.screenshot({ path: path.join(PICKER_SHOTS, 'finish-chosen.png') });
-    await page.close();
-  });
-
-  test('the status line counts the cards as they are now after a cheap card is promoted', async () => {
-    const page = await popupWithChoose(stakesScan);
-    await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Pidgey');
-    await expect(page.locator('#msg-bar')).toHaveText('Found 6 cards: 3 identified, 3 need your pick.');
-    await expect(page.locator('.lt-guess b')).toHaveText('3');
-    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
     await page.close();
   });
 
@@ -1458,18 +1462,35 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
-  test('a correction-confirmed card worth $50 or more needs the high bar: below it back to Choose with the card preselected, at it kept', async () => {
+  test('a correction-confirmed card is confirmed at the same bar whatever its price; a $50+ one carries the chip', async () => {
     const page = await popupWithChoose(memoryScan);
-    const choose = page.locator('.choose-row[data-idx="1"]');
-    await expect(choose).toHaveCount(1);
-    await expect(choose.locator('.value-chip')).toHaveText('Check: high value');
-    await expect(choose.locator('.memory-chip')).toHaveText('You corrected this before');
-    await expect(choose.locator('.pick-choice').first()).toContainText('Venusaur');
-    await expect(choose.locator('[data-confirm-best]')).toHaveText('Confirm Venusaur');
-    const kept = page.locator('.card-row[data-idx="2"]');
-    await expect(kept.locator('.card-price')).toHaveText('$80.00');
-    await expect(kept.locator('.memory-chip')).toHaveText('From your correction');
-    await expect(page.locator('.choose-row[data-idx="2"]')).toHaveCount(0);
+    await expect(page.locator('.choose-row[data-idx="1"]')).toHaveCount(0);
+    for (const idx of [1, 2]) {
+      const row = page.locator(`.card-row[data-idx="${idx}"]`);
+      await expect(row.locator('.card-price')).toHaveText('$80.00');
+      await expect(row.locator('.memory-chip')).toHaveText('From your correction');
+      await expect(row.locator('.value-chip')).toHaveText('High value, double-check');
+    }
+    await expect(page.locator('.card-row[data-idx="0"] .value-chip')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('keyboard focus stays on the same control when a best-match price arrives and the rows re-render', async () => {
+    const page = await popupWithChoose(stakesScan, { ok: true }, { autoScan: false });
+    await page.evaluate(() => {
+      const wrapped = chrome.runtime.sendMessage;
+      chrome.runtime.sendMessage = async (msg) => {
+        if (msg?.action === 'priceCard') await new Promise((resolve) => setTimeout(resolve, 700));
+        return wrapped(msg);
+      };
+      const b = document.getElementById('btn-scan'); b.disabled = false; b.click();
+    });
+    const confirm = page.locator('.choose-row[data-idx="1"] [data-confirm-best]');
+    await expect(confirm).toBeVisible();
+    await confirm.focus();
+    await expect(page.locator('.choose-row[data-idx="1"] .card-price')).toHaveText('…');
+    await expect(page.locator('.choose-row[data-idx="1"] .card-price')).toHaveText('$120.00 · unconfirmed');
+    await expect(page.locator('.choose-row[data-idx="1"] [data-confirm-best]')).toBeFocused();
     await page.close();
   });
 
@@ -1781,11 +1802,10 @@ test.describe('Consumer extension popup', () => {
     await expect(row.locator('[data-skip-card]')).toBeVisible();
     await expect(page.locator('.skipped-group')).toHaveCount(0);
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (1)');
-    // Not named, not priced, even though it is a cheap small-photo card that would otherwise be promoted.
-    await expect(row.locator('.card-price')).toHaveText('—');
+    // Not named and not confirmed by its price: it shows only the unconfirmed best-match price.
+    await expect(row.locator('.card-price')).toHaveText('$3.00 · unconfirmed');
     await expect(page.locator('#s-value')).toHaveText('—');
-    await page.waitForTimeout(400);
-    expect(await page.evaluate(() => window.__priceCalls)).toEqual([]);
+    expect(await page.evaluate(() => window.__priceCalls)).toEqual(['a-1']);
     await expect(row.locator('[data-confirm-best]')).toHaveText('Confirm Pidgey');
     const overlay = await page.evaluate(() => window.__overlay.at(-1).cards.map((c) => c.display?.state));
     expect(overlay).toEqual(['choose']);

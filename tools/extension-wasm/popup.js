@@ -9,7 +9,7 @@ import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
 import { userWhy } from "./lib/why.js";
-import { demoteCard, isDemotable, priceHighOf, priceTypicalOf, promoteCard, stakesDecision } from "./lib/stakes.js";
+import { bestMatchPrice, isHighValue, priceTypicalOf, unconfirmedTotal } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { CONDITION_TIP, conditionName, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -326,7 +326,6 @@ function applyScanResult(data) {
   _showChoose = true;
   closeBulk(false);
   _lastResult.cards.forEach(seedVariant);
-  _lastResult = { ..._lastResult, cards: demoteExpensive(_lastResult.cards) };
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
   updateStats(_lastResult.cards);
@@ -346,23 +345,25 @@ function applyScanResult(data) {
 
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
-  promoteCheap(_lastResult);
+  loadBestMatchPrices(_lastResult);
 }
 
 // The top status line always counts the cards as they are now. A pick's own message ("Getting price...") replaces it
-// until the next scan; while the status is showing, every change to the cards (a promotion, a demotion, a pick) refreshes it.
+// until the next scan; while the status is showing, every change to the cards (a pick) refreshes it.
 function refreshStatus(force = false) {
   const cards = _lastResult?.cards;
   if (!cards?.length || !(force || _statusShown)) return;
   showMessage(`${scanStatus(cards)}${_statusTail}`, false, true);
 }
 
-/* ─── Stakes: price decides how much picture evidence a card needs (lib/stakes.js) ─── */
+/* ─── Best-match prices: the price of the card a Choose row would confirm (lib/stakes.js) ─── */
 
-// Only small-photo cards (smallRow) are priced here, a few at a time, one price per candidate id, from the same
-// priceCard call a pick uses. No other host is asked.
+// One priceCard call per Choose card, for its preselected best match only, a few at a time, cached by candidate id. The
+// answer is shown marked unconfirmed; it never confirms anything. A pick reuses the same answer.
 const STAKES_FETCH_LIMIT = 6;
 const _candidatePrice = new Map();
+const _candidateResp = new Map();   // candidate id -> priceCard answer, once loaded
+const _candidateFailed = new Set(); // candidate ids whose price could not be fetched: shown as "no price"
 const _stakesQueue = [];
 let _stakesActive = 0;
 
@@ -384,7 +385,8 @@ function candidatePrice(id) {
     const asked = limitedFetch(async () => {
       try { return await chrome.runtime.sendMessage({ action: "priceCard", id }); } catch (err) { return { error: explainScanError(err?.message || err) }; }
     }).then((resp) => {
-      if (!resp || resp.error) _candidatePrice.delete(id);
+      if (!resp || resp.error) _candidatePrice.delete(id); else _candidateResp.set(id, resp);
+      if (!resp || resp.error) _candidateFailed.add(id); else _candidateFailed.delete(id);
       return resp;
     });
     _candidatePrice.set(id, asked);
@@ -392,54 +394,64 @@ function candidatePrice(id) {
   return _candidatePrice.get(id);
 }
 
-// A card the picture confirmed, without the "high" tier or a title that agrees, whose price is high, is asked about instead.
-function demoteExpensive(cards) {
-  return cards.map((card, idx) => {
-    if (chooseState(card) !== "confirmed" || !isDemotable(card)) return card;
-    const decision = stakesDecision({
-      state: "confirmed",
-      tier: confTier(card.confidence),
-      titleConfirmed: Boolean(card.titleConfirmed),
-      userConfirmed: Boolean(card.userConfirmed),
-      confirmedBy: card.confirmedBy,
-      correctionCos: card.memory?.cos,
-      priceTypical: priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions()),
-    });
-    return decision === "demote" ? demoteCard(card) : card;
-  });
+function bestCandidateOf(card) { return candidatesOfCard(card)[0] || null; }
+
+// The best match's price for a Choose card, or null while it is loading (or the card has no candidate).
+function matchPriceOf(card) {
+  const best = bestCandidateOf(card);
+  if (!best?.id) return null;
+  if (_candidateFailed.has(best.id) && !_candidateResp.has(best.id)) return { price: null, kind: "none", stale: false, failed: true };
+  return bestMatchPrice(card, _candidateResp.get(best.id), enabledConditions());
 }
 
-// A small-photo card to choose is confirmed without asking only when EVERY close candidate (the top PROMOTE_CANDIDATES
-// shown in Choose) is cheap, so a pricier reprint or promo among them keeps it a CHOOSE. A candidate whose price is not
-// known also blocks it. This is not the user's answer: nothing is saved as a correction or sent for learning, and
-// "Wrong card?" is still on the row.
-const PROMOTE_CANDIDATES = 5;
-function promoteCheap(scan) {
-  scan.cards.forEach((card, idx) => {
-    if (card.smallRow !== true || card.skippedBefore === true || chooseState(card) !== "choose") return;
-    const close = candidatesOfCard(card).slice(0, PROMOTE_CANDIDATES);
-    const top = close[0];
-    if (!top?.id) return;
-    Promise.all(close.map((candidate) => (candidate?.id ? candidatePrice(candidate.id) : null))).then((resps) => {
-      if (_lastResult?.scanId !== scan.scanId) return;
-      const current = _lastResult.cards[idx];
-      if (!current || current.smallRow !== true || chooseState(current) !== "choose" || _picker.has(idx)) return;
-      if (candidatesOfCard(current)[0]?.id !== top.id) return;
-      const highs = resps.map((resp) => {
-        if (!resp || resp.error) return null;
-        const probe = { identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price };
-        return priceHighOf(probe, null, enabledConditions());
-      });
-      const decision = stakesDecision({
-        state: "choose",
-        tier: confTier(current.confidence),
-        smallRow: true,
-        userConfirmed: Boolean(current.userConfirmed),
-        priceHigh: highs[0],
-        rivalHighs: highs.slice(1),
-      });
-      if (decision === "promote") replaceCard(idx, promoteCard(current, resps[0]));
+// The typical price used for the high-value flag: the best match's for a Choose card, the card's own once confirmed.
+function typicalForFlag(card, idx) {
+  if (chooseState(card) === "choose") {
+    const match = matchPriceOf(card);
+    return match && !match.stale ? match.price : null;
+  }
+  return isStale(card) ? null : priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
+}
+
+function highValueChipHtml(card, idx) {
+  return isHighValue(card, typicalForFlag(card, idx))
+    ? ` <span class="value-chip" title="This card is worth enough to be worth a second look. It is not marked confirmed because of its price.">High value, double-check</span>`
+    : "";
+}
+
+// A price arriving re-renders the rows; a keyboard user's focus stays on the same button of the same row.
+const FOCUS_KEYS = ["data-confirm-best", "data-pick", "data-skip-card", "data-open-search", "data-show-on-page", "data-put-back"];
+function renderKeepingFocus() {
+  const active = document.activeElement;
+  const inList = resultsEl.contains(active);
+  const key = inList ? FOCUS_KEYS.find((name) => active.hasAttribute(name)) : null;
+  const idx = inList ? active.closest(".card-row[data-idx]")?.dataset.idx : null;
+  const pick = key === "data-pick" ? active.getAttribute("data-pick") : null;
+  renderResults();
+  if (!key || idx == null) return;
+  const same = [...resultsEl.querySelectorAll(`.card-row[data-idx="${idx}"] [${key}]`)].find((el) => !pick || el.getAttribute(key) === pick);
+  same?.focus({ preventScroll: true });
+}
+
+function loadBestMatchPrices(scan) {
+  let refreshQueued = false;
+  const refresh = () => {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    Promise.resolve().then(() => {
+      refreshQueued = false;
+      if (_lastResult?.scanId !== scan.scanId || _picker.size) return;
+      renderKeepingFocus();
+      updateStats(_lastResult.cards);
+      pushOverlay();
     });
+  };
+  scan.cards.forEach((card) => {
+    if (chooseState(card) !== "choose") return;
+    const best = bestCandidateOf(card);
+    if (!best?.id) return;
+    if (_candidateResp.has(best.id)) { refresh(); return; }
+    candidatePrice(best.id).then(refresh);
   });
 }
 
@@ -620,9 +632,11 @@ function renderLotTotals(cards, choiceFor) {
       + `<button type="button" class="lt-btn" data-lot-copy aria-label="${escHtml(labels.copy)}" title="${escHtml(labels.tip)}">${escHtml(labels.copy)}</button>`
       + `<button type="button" class="lt-btn" data-lot-csv aria-label="${escHtml(labels.csv)}" title="${escHtml(labels.tip)}">${escHtml(labels.csv)}</button></span>`
     : "";
+  const unconfirmed = unconfirmedTotal(cards, (card) => matchPriceOf(card));
   const hadCopyFocus = lotTotalsEl.contains(document.activeElement) ? document.activeElement.closest("[data-lot-copy], [data-lot-csv]") : null;
   lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Confirmed value</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(conditionName(cond))}</span></span>`
     + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
+    + (unconfirmed.count ? `<span class="lt-item lt-unconfirmed" title="Best-match prices of the cards still to confirm. A guess, not part of Confirmed value or the export."><span class="lt-lbl">Unconfirmed</span> <b>~${escHtml(formatUsd(unconfirmed.total))}</b> <span class="lt-n">(${unconfirmed.count} ${unconfirmed.count === 1 ? "card" : "cards"})</span></span>` : "")
     + (skipped ? `<span class="lt-item lt-skipped" title="Cards you skipped. They are not priced or exported."><span class="lt-lbl">Skipped</span> <b>${skipped}</b></span>` : "")
     + actions;
   lotTotalsEl.hidden = false;
@@ -809,7 +823,7 @@ function renderCardRow(card, idx) {
       <div class="conf-stripe ${tier}"></div>
       <div class="card-meta">
         <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}${memoryChipHtml(card)}</div>
-        <div class="card-sub">${subHtml}${photoHtml}</div>
+        <div class="card-sub">${subHtml}${photoHtml}${highValueChipHtml(card, idx)}</div>
       </div>
       ${renderPrice(card, idx)}
       <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
@@ -825,14 +839,28 @@ function renderCardRow(card, idx) {
 
 const REPEAT_NOTE = "Same name found several times in this photo. Check it.";
 
+// A Choose row's price: the preselected best match's, printing-specific, never a range, always marked unconfirmed.
+function renderUnconfirmedPrice(card, cell) {
+  if (!bestCandidateOf(card)?.id) return cell("—", "No close match to price");
+  const match = matchPriceOf(card);
+  if (!match) return cell("…", "Getting the best match's price…");
+  const note = "Price of the best match. Not confirmed: choose the card to confirm it.";
+  if (match.price == null) return cell("no price", `${match.failed ? "Price unavailable" : "No price data for the best match"}. ${note}`);
+  const money = formatUsd(match.price);
+  if (match.stale) return cell(`${money} · old price`, `Old price, left out of the lot. ${note}`);
+  if (match.kind === "typical") return cell(`${money} typical · unconfirmed`, `Typical price over the printings. ${note}`);
+  const printingNote = match.kind === "suggested" ? " At the printing the picture suggests: pick the printing to settle it." : "";
+  return cell(`${money} · unconfirmed`, `${note}${printingNote}`);
+}
+
 // One price per card, always in the head: a quote, a range while the set is open, or a dash that says why.
 function renderPrice(card, idx) {
   const cell = (text, title) => `<div class="card-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
-  // A card still to choose has no price: it is quoted only once the user picks it.
-  if (!isIdentified(card)) return cell("—", "Choose the card to see a price");
+  // A card still to choose shows its best match's price, marked unconfirmed: it is quoted for real only once picked.
+  if (!isIdentified(card)) return renderUnconfirmedPrice(card, cell);
   const conditions = enabledConditions();
   // Name sure, printing open: the range across the printings it could be, until the user picks one.
   const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
@@ -894,9 +922,7 @@ function renderChooseRow(card, idx) {
   const smallHtml = readFromSmallCrop(card)
     ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall). A full-size photo reads better.">small photo</span>`
     : "";
-  const valueHtml = card.valueCheck
-    ? ` <span class="value-chip" title="This card is worth enough that the picture alone is not trusted. Check it.">Check: high value</span>`
-    : "";
+  const valueHtml = highValueChipHtml(card, idx);
   const repeatMark = card.repeatedName
     ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
     : "";
@@ -1475,7 +1501,8 @@ async function pickSet(idx, id, picked = null) {
   }
   let resp;
   try {
-    resp = await chrome.runtime.sendMessage({ action: "priceCard", id });
+    // The same answer a Choose row showed for its best match: a pick on a loaded one prices at once.
+    resp = await candidatePrice(id);
   } catch (err) {
     resp = { error: explainScanError(err?.message || err) };
   }
@@ -1567,7 +1594,8 @@ function pushOverlay() {
       state: overlayStateOf(c),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
       ...(isStale(c) ? { stale: true } : {}),
-      ...(c.valueCheck && chooseState(c) === "choose" ? { valueCheck: true } : {}),
+      ...(isHighValue(c, typicalForFlag(c, idx)) && ["choose", "confirmed"].includes(chooseState(c)) ? { highValue: true } : {}),
+      ...overlayGuess(c),
     },
   }));
   chrome.runtime.sendMessage({
@@ -1577,6 +1605,15 @@ function pushOverlay() {
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
   }).catch(() => {});
+}
+
+// A Choose tag on the page names its best match with the unconfirmed price: 'name? ~$1.20'.
+function overlayGuess(card) {
+  if (chooseState(card) !== "choose") return {};
+  const best = bestCandidateOf(card);
+  if (!best?.name) return {};
+  const match = matchPriceOf(card);
+  return { guess: { name: best.name, price: match ? match.price : null, kind: match ? match.kind : "loading", stale: Boolean(match?.stale) } };
 }
 
 function computeDisplayForOverlay(card, idx) {
@@ -1681,6 +1718,7 @@ function restoreSession(saved) {
     showFullSizeOffer(_lastResult.fullSize);
     refreshStatus(true);
   } finally { _restoring = false; }
+  loadBestMatchPrices(_lastResult);
   const mins = Math.max(0, Math.round((Date.now() - saved.savedAt) / 60000));
   restoreText.textContent = `Restored your last scan (${mins < 1 ? "just now" : `${mins} min ago`}).`;
   restoreNote.hidden = false;

@@ -1,58 +1,57 @@
-// Price decides how much picture evidence a card needs. The product keeps two user-visible states (CONFIRMED and
-// CHOOSE, lib/choose-flow.js); this module only moves a card between them when the cost of a mistake says so:
-//   - a small-photo card (smallRow, lib/fusion.js SMALL_ROWS) is promoted when its price is at most LOW_STAKES_MAX_USD:
-//     a wrong cheap card costs little, and asking about every cheap card costs the user more than it saves;
-//   - a card the picture alone confirmed, without the "high" tier or a title line that agrees, is demoted when its
-//     price is at least HIGH_STAKES_MIN_USD: a wrong expensive card is what the QA drive found (D-1).
-// A card the user confirmed (pick, "Wrong card?" search, accepted guess, bulk confirm) is never changed, and an unknown
-// price changes nothing. The nightly gate (tools/shared-data/pipeline/gate.py) does not mirror this: its rows have
-// no heights and no prices.
+// Price never decides whether a card is confirmed. A card is CONFIRMED only by the picture/name rule (lib/fusion.js) or by
+// the user; the dollar amount is shown, not used to move a card between CHOOSE and CONFIRMED. This module holds:
+//   - the price of a Choose card's best match (bestMatchPrice), shown on its row marked unconfirmed, and the lot's
+//     separate "Unconfirmed" figure (unconfirmedTotal);
+//   - the non-state "High value, double-check" flag (isHighValue);
+// A correction-memory confirm uses the per-band confirm bar C (reference-bars.js) whatever the price.
+// The nightly gate (tools/shared-data/pipeline/gate.py) does not mirror this: its rows have no heights and no prices.
 
-import { confTier, isSetConfirmed, quotedPrice, rowRange, setRangeOf } from "./card-display.js";
-import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP } from "./fusion.js";
-import { choiceName } from "./set-choice.js";
-import { BAR_EPSILON, HIGH_PRICE_BAR } from "./reference-bars.js";
+import { detectedVariant, isGridStale, quotedPrice, suggestedVariant } from "./card-display.js";
+import { chooseState } from "./choose-flow.js";
 
-export const LOW_STAKES_MAX_USD = 5;
 export const HIGH_STAKES_MIN_USD = 50;
 
 const isPrice = (value) => typeof value === "number" && Number.isFinite(value);
-const isCheap = (value) => isPrice(value) && value <= LOW_STAKES_MAX_USD;
 
-/**
- * 'promote' | 'demote' | 'keep'.
- * @param {{state: 'confirmed'|'choose'|'back', tier: string, titleConfirmed?: boolean, smallRow?: boolean,
- *   userConfirmed?: boolean, priceHigh?: number|null, priceTypical?: number|null}} input
- *   priceHigh (promotion) is the single quoted price, or the high end of the price range while the printing is still
- *   open: "cheap" means every printing is cheap. priceTypical (demotion) is priceTypicalOf: the likely price of the card.
- *   rivalHighs (promotion) is the same figure for every other close candidate: one that is dearer than the bar, or whose
- *   price is unknown (null), keeps the card a CHOOSE, so a cheap top guess cannot hide a pricier reprint or promo. Leaving
- *   it undefined (rivals not priced) never promotes.
- *   Either is null/undefined when unknown, which never promotes or demotes.
- */
-export function stakesDecision({ state, tier, titleConfirmed = false, smallRow = false, userConfirmed = false, priceHigh, priceTypical, rivalHighs, confirmedBy, correctionCos } = {}) {
-  if (userConfirmed) return "keep";
-  // The user's own earlier correction confirmed it: at HIGH_STAKES_MIN_USD or more that needs the high bar (reference-bars.js),
-  // whatever the title line says. Below the bar it goes back to CHOOSE with the card preselected.
-  if (state === "confirmed" && confirmedBy === "correction") {
-    const strong = typeof correctionCos === "number" && correctionCos + BAR_EPSILON >= HIGH_PRICE_BAR;
-    return isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD && !strong ? "demote" : "keep";
-  }
-  if (state === "choose" && smallRow === true && isCheap(priceHigh) && Array.isArray(rivalHighs) && rivalHighs.every(isCheap)) return "promote";
-  if (state === "confirmed" && tier !== "high" && !titleConfirmed && isPrice(priceTypical) && priceTypical >= HIGH_STAKES_MIN_USD) return "demote";
-  return "keep";
+/** The "High value, double-check" flag: a card the user has not confirmed whose typical price is $50 or more. Not a state. */
+export function isHighValue(card, typicalPrice) {
+  return !card?.userConfirmed && isPrice(typicalPrice) && typicalPrice >= HIGH_STAKES_MIN_USD;
 }
 
 /**
- * The most this card could be worth at the first enabled condition: its quoted price, or the high end of the range over
- * the printings it could still be. Null when it has no price at all.
+ * What a Choose card's best match (the preselected candidate) is worth, from that candidate's priceCard answer (resp).
+ * Printing-specific, never a range: the settled printing (printed number, single printing) is quoted; else the suggested
+ * variant's price (the "pick printing" prompt stays); else the typical (lower middle) price, marked 'typical'.
+ * null while resp is not loaded; kind 'none' when the candidate has no price. stale: the grid is older than 30 days.
  */
-export function priceHighOf(card, choice, enabledConditions = ["NM"]) {
-  const quote = quotedPrice(card, choice, enabledConditions);
-  if (quote) return quote.price;
-  const condition = enabledConditions?.[0] || "NM";
-  const range = !isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]);
-  return range ? range.high : null;
+export function bestMatchPrice(card, resp, enabledConditions = ["NM"]) {
+  if (!resp || resp.error) return null;
+  const probe = {
+    identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price,
+    variant: card?.variant, firstEdition: card?.firstEdition, shadow: card?.shadow, numberRead: card?.numberRead,
+  };
+  const stale = isGridStale(resp.price_grid);
+  const settled = quotedPrice(probe, detectedVariant(probe), enabledConditions);
+  if (settled) return { price: settled.price, kind: "quoted", stale };
+  const suggested = suggestedVariant(probe);
+  const quote = suggested ? quotedPrice(probe, suggested, enabledConditions) : null;
+  if (quote) return { price: quote.price, kind: "suggested", stale };
+  const typical = priceTypicalOf(probe, null, enabledConditions);
+  return typical == null ? { price: null, kind: "none", stale } : { price: typical, kind: "typical", stale };
+}
+
+/** The lot's unconfirmed figure: best-match prices of Choose cards (not skipped, not stale, not unpriced). */
+export function unconfirmedTotal(cards, matchFor) {
+  let total = 0;
+  let count = 0;
+  (cards || []).forEach((card, idx) => {
+    if (chooseState(card) !== "choose") return;
+    const match = matchFor(card, idx);
+    if (!match || match.stale || !isPrice(match.price)) return;
+    total += match.price;
+    count += 1;
+  });
+  return { total, count };
 }
 
 /**
@@ -74,63 +73,4 @@ export function priceTypicalOf(card, choice, enabledConditions = ["NM"]) {
   const sorted = prices.filter((p) => typeof p === "number" && Number.isFinite(p) && p > 0).sort((a, b) => a - b);
   if (!sorted.length) return null;
   return sorted[(sorted.length - 1) >> 1];
-}
-
-/**
- * A picture-confirmed card that the stakes rule may demote: named by the picture, not read from the printed number,
- * not "high", not confirmed by the title line, and not already an answer of the user's or of this rule.
- */
-export function isDemotable(card) {
-  if (!card || card.cardBack || card.abstain || !(card.identity?.name || card.identity?.id)) return false;
-  if (card.userConfirmed || card.autoConfirmed || card.numberRead) return false;
-  if (card.confirmedBy === "correction") return true;
-  if (card.titleConfirmed) return false;
-  return confTier(card.confidence) !== "high";
-}
-
-/**
- * The CHOOSE card became a confirmed one: built like a pick (the candidate's identity and price, no other sets, set
- * settled) but marked autoConfirmed, not userConfirmed. Its candidates stay, so "Wrong card?" works as on any row.
- * resp is the priceCard answer for the candidate.
- */
-export function promoteCard(card, resp) {
-  const next = {
-    ...card,
-    identity: resp.identity,
-    market_price: resp.market_price,
-    price_variant: resp.price_variant,
-    price_grid: resp.price_grid,
-    setChoices: [],
-    setConfirmed: true,
-    bestGuess: undefined,
-    abstain: false,
-    confidence: BELOW_HIGH_CONFIDENCE,
-    autoConfirmed: true,
-    ...(card.why ? { why: { ...card.why, src: "promoted" } } : {}),
-    pricing: false,
-    priceError: null,
-  };
-  delete next.unsure;
-  delete next.valueCheck;
-  return next;
-}
-
-/**
- * The confirmed card became a CHOOSE card: unsure, flagged valueCheck, its own card preselected among its candidates.
- */
-export function demoteCard(card) {
-  const own = card.identity || {};
-  const list = card.candidates || [];
-  const at = list.findIndex((c) => (own.id && c.id === own.id));
-  const byName = at >= 0 ? at : list.findIndex((c) => own.name && choiceName(c.name) === choiceName(own.name));
-  const first = byName >= 0 ? list[byName] : own.id ? { ...own } : null;
-  const rest = byName >= 0 ? list.filter((_, i) => i !== byName) : list;
-  return {
-    ...card,
-    candidates: first ? [first, ...rest] : rest,
-    unsure: true,
-    valueCheck: true,
-    setConfirmed: false,
-    confidence: Math.min(card.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP),
-  };
 }

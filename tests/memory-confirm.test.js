@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  HIGH_PRICE_BAR, REFERENCE_BARS, REFERENCE_MIN_HEIGHT, referenceBar,
+  REFERENCE_BARS, REFERENCE_MIN_HEIGHT, referenceBar,
 } from '../tools/extension-wasm/lib/reference-bars.js';
 import {
   EMBEDDING_DIM, REFERENCE_MARGIN, applyMemory, memoryHit, negativeHit,
@@ -24,9 +24,8 @@ const ref = (cardId, score, extra = {}) => ({ id: `r-${cardId}`, cardId, v: V, e
 
 // Per-height bars from data/reports/g12/thresholds.json (leave-one-out: 541 fires, 0 wrong).
 test('the bars per read-height band are the measured table', () => {
-  const rows = REFERENCE_BARS.map((r) => [r.minHeight, r.boost, r.confirm, r.high]);
-  assert.deepEqual(rows, [[300, 0.83, 0.84, 0.86], [200, 0.83, 0.86, 0.86], [150, 0.81, 0.83, 0.86], [100, 0.84, 0.86, 0.86]]);
-  assert.equal(HIGH_PRICE_BAR, 0.86);
+  const rows = REFERENCE_BARS.map((r) => [r.minHeight, r.boost, r.confirm]);
+  assert.deepEqual(rows, [[300, 0.83, 0.84], [200, 0.83, 0.86], [150, 0.81, 0.83], [100, 0.84, 0.86]]);
   assert.equal(REFERENCE_MIN_HEIGHT, 100);
   assert.equal(REFERENCE_MARGIN, 0.02);
 });

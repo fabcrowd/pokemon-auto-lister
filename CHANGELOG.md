@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (feat/price-follows-pick: price never decides confirmation)
+
+### Changed
+- Removed both dollar-based state rules from `lib/stakes.js` and their callers: the cheap small-photo promotion (`promoteCheap`, `promoteCard`, `priceHighOf`, `rivalHighs`, price <= $5) and the demotion of non-high, non-title-agreed picture confirms priced at $50+ and the demotion of a correction-confirmed card at $50+ without the high bar (`stakesDecision`, `isDemotable`, `demoteCard`, `demoteExpensive`, `HIGH_PRICE_BAR` and the `high` column of `REFERENCE_BARS` are deleted). A correction-memory confirm now uses the per-band confirm bar C whatever the price: for $50+ cards the effective bar drops from 0.86 to 0.84 (300+ px) and 0.83 (150-199 px); the 200-299 and 100-149 bands were already 0.86. A card is confirmed only by the picture/name rule (`lib/fusion.js`) or by the user. Under 200 px nothing confirms from the picture.
+- A Choose row shows the price of its best match (the preselected candidate), marked "unconfirmed" (`bestMatchPrice`: settled or suggested printing, else the typical price marked "typical", else "no price"; old prices tagged and excluded). The overlay tag reads "name? ~$x". Picking another candidate shows that card's price (the pick reuses the same `priceCard` answer).
+- Lot strip: "Confirmed value" is unchanged (confirmed cards only); a separate "Unconfirmed ~$X (N cards)" line sums best-match prices of Choose cards (skipped, old and unpriced excluded). Copy / CSV stay confirmed cards only.
+- Non-state chip "High value, double-check" on popup rows and overlay tags of cards the user has not confirmed whose typical price is $50+; the old "Check: high value" chip and `valueCheck` flag are gone.
+- Fewer requests: one `priceCard` call per Choose card (its best match) instead of up to 5.
+
 ## Unreleased (feat/g5-persist: the lot survives the window closing)
 
 ### Added

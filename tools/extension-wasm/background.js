@@ -20,7 +20,6 @@ import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard }                 from "./lib/rectify.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
-import { isDemotable } from "./lib/stakes.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -1083,8 +1082,7 @@ async function handleScanPage(sendResponse, era) {
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     // An asked card carries the picture it was read from, so the user can see which card the question is about.
     // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
-    // A confirmed card the stakes rule may still demote (lib/stakes.js) carries them too, so a demotion has a picker to show.
-    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (isUnsure(card) || isDemotable(card)
+    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (isUnsure(card)
       ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
       : card));
     const asked = applyTitlePrior(withCandidates, {

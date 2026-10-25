@@ -483,21 +483,32 @@
     return 'identified';
   }
 
+  /** A Choose card's best match as 'name? ~$1.20' (unconfirmed): an old price or none is said, never shown as a figure. */
+  function guessLine(guess) {
+    if (!guess?.name) return '';
+    if (guess.price == null) return guess.kind === 'none' ? `${guess.name}? no price` : `${guess.name}?`;
+    return guess.stale ? `${guess.name}? old price` : `${guess.name}? ~${money(guess.price)}`;
+  }
+
   /** A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do. */
   function tagText(card) {
     const state = cardState(card);
     if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
     if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
-    if (state === 'choose') return { state, lines: ['Choose', card.display?.valueCheck ? 'Check: high value' : 'Tap to choose'], short: 'Choose' };
+    if (state === 'choose') {
+      const guess = guessLine(card.display?.guess);
+      const ask = card.display?.highValue ? 'High value, double-check' : 'Tap to choose';
+      return guess ? { state, lines: [guess, ask], short: guess } : { state, lines: ['Choose', ask], short: 'Choose' };
+    }
     const { name, price, caveat } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
     const title = number ? `${name} #${number}` : name;
     const priced = price && price !== '—' ? price : '';
     if (state === 'printing') {
       const note = caveat && priced ? `Set not sure · ${priced}` : priced ? `${priced} · pick printing` : 'Pick printing';
-      return { state, lines: [title, note], short: priced || name, name, title, price: priced, note };
+      return { state, lines: [title, note], short: priced || name, name, title, price: priced, note, highValue: card.display?.highValue === true };
     }
-    return { state, lines: [title, priced || '—'], short: priced || name, name, title, price: priced };
+    return { state, lines: [title, priced || '—'], short: priced || name, name, title, price: priced, highValue: card.display?.highValue === true };
   }
 
   // A price is never cut mid-number: the whole of it, or "from" its lower bound, or nothing.
@@ -525,7 +536,9 @@
     if (twoLines) {
       const first = fitText(title, textMax, measure);
       const pickNote = state === 'printing' ? tag.note : '';
-      const second = pickNote && measure(pickNote) <= textMax ? pickNote
+      const flagged = tag.highValue && price ? `${price} · High value, double-check` : '';
+      const second = flagged && measure(flagged) <= textMax ? flagged
+        : pickNote && measure(pickNote) <= textMax ? pickNote
         : fitPrice(price, textMax, measure) || (state === 'printing' && measure('Pick printing') <= textMax ? 'Pick printing' : '');
       return [first, second].filter(Boolean);
     }
@@ -659,7 +672,11 @@
   /** The two lines a card's label shows: its name and one price (or a price range while the set is open). */
   function labelText(card) {
     if (cardState(card) === 'skipped') return { name: 'Skipped', price: 'Not priced. Put it back in the scanner to price it', muted: true };
-    if (cardState(card) === 'choose') return { name: 'Choose a card', price: card.display?.valueCheck ? 'Check: high value. Tap to pick it in the scanner' : 'Tap to pick it in the scanner', muted: true };
+    if (cardState(card) === 'choose') {
+      const guess = guessLine(card.display?.guess);
+      const ask = card.display?.highValue ? 'High value, double-check. Tap to pick it in the scanner' : 'Tap to pick it in the scanner';
+      return { name: guess || 'Choose a card', price: ask, muted: true };
+    }
     if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Turn it over to identify it', muted: true };
     const disp = card.display || null;
     // A price older than 30 days is never shown (the popup sets `stale`): same rule as no price until trusted.

@@ -12,7 +12,7 @@ const UNIT_TOLERANCE = 1e-3;
 // pack rows were never measured at those bars, so they keep the old conservative cut and only ever boost.
 export const PACK_REFERENCE_MIN = 0.93;
 export const REFERENCE_MARGIN = 0.02;
-export { HIGH_PRICE_BAR, REFERENCE_BARS, referenceBar } from "./reference-bars.js";
+export { REFERENCE_BARS, referenceBar } from "./reference-bars.js";
 
 // A vector made with another art crop sits in a different place and says nothing about this one.
 // Rows saved before versions existed have no `v`; they are version 1, the stretched crop.
