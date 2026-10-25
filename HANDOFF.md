@@ -1,5 +1,7 @@
 # Handoff
 
+> Newer handoff: see `docs/handoff-2026-10-24.md` (state after 2026-10-21: skip card, independent audit, G5 persistence, labelling, next steps).
+
 Last updated: 2026-10-21 (afternoon, America/New_York). The newest work is the Facebook accuracy and UI pass on `feat/fb-accuracy-ui`, directly below. Older sections follow unchanged. Owner workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. The previous handoff is in git history (`git log -- HANDOFF.md`).
 
 ## Facebook accuracy and UI pass (2026-10-19 → 2026-10-21, branch `feat/fb-accuracy-ui`)
